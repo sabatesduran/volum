@@ -1,0 +1,48 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Volum",
+  "version": "0.1.0",
+  "identifier": "dev.didac.volum",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "title": "Volum",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 760,
+        "minHeight": 560,
+        "center": true,
+        "decorations": true,
+        "transparent": false,
+        "dragDropEnabled": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost blob: data: https:; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost https://didac.dev; script-src 'self'; font-src 'self'; object-src 'none'; frame-src 'none'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Productivity",
+    "shortDescription": "A beautiful home for your 3D models",
+    "longDescription": "A private, local-first desktop library for browsing and organizing 3D-printing files.",
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk0MTRFNEMyM0I4REUzMjQKUldRazQ0MDd3VFVbEdtNGIzZVR1M3RuUHVGM1dKdDQ1STJMTVBoY25QKzlIcWdpL21ZMTcyZ00K",
+      "endpoints": [
+        "https://github.com/sabatesduran/volum/releases/latest/download/latest.json"
+      ],
+      "windows": { "installMode": "passive" }
+    }
+  }
+}

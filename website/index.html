@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#10110f" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="description" content="Volum is a private, local-first desktop library for browsing, organizing, and previewing your 3D-printing files." />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Volum — A beautiful home for your 3D models" />
+    <meta property="og:description" content="Search every model, inspect real 3D geometry, preserve multi-plate 3MF projects, and open files in your slicer—without uploading your library." />
+    <meta property="og:image" content="./assets/og-image.jpg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Volum — Your 3D model library, finally visible" />
+    <meta name="twitter:description" content="A private, local-first desktop library built for makers." />
+    <meta name="twitter:image" content="./assets/og-image.jpg" />
+    <script>document.documentElement.classList.add("js");</script>
+    <link rel="icon" type="image/png" href="./assets/favicon.png" />
+    <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="stylesheet" href="./styles.css" />
+    <title>Volum — A beautiful home for your 3D models</title>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Volum",
+        "applicationCategory": "DesignApplication",
+        "operatingSystem": "macOS, Windows, Linux",
+        "description": "A private, local-first desktop library for browsing and organizing 3D-printing files.",
+        "softwareVersion": "0.1.0",
+        "license": "https://www.gnu.org/licenses/gpl-3.0.html",
+        "downloadUrl": "https://github.com/sabatesduran/volum/releases/latest",
+        "codeRepository": "https://github.com/sabatesduran/volum"
+      }
+    </script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header" data-header>
+      <div class="nav-shell">
+        <a class="brand" href="#top" aria-label="Volum home">
+          <img src="./assets/volum-icon.png" alt="" width="34" height="34" />
+          <span>VOL<span>U</span>M</span>
+        </a>
+
+        <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" data-nav-toggle>
+          <span></span><span></span><span></span>
+          <span class="sr-only">Open navigation</span>
+        </button>
+
+        <nav id="site-nav" class="site-nav" aria-label="Primary navigation" data-nav>
+          <a href="#library">Library</a>
+          <a href="#three-mf">3MF</a>
+          <a href="#workflow">Workflow</a>
+          <a href="#privacy">Privacy</a>
+          <a href="https://github.com/sabatesduran/volum" rel="noreferrer">Star on GitHub ★</a>
+        </nav>
+
+        <a class="button button--small button--light nav-download" href="https://github.com/sabatesduran/volum/releases/latest" data-download>
+          Download
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14" /></svg>
+        </a>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero" id="top">
+        <div class="hero-grid" aria-hidden="true"></div>
+        <div class="hero-glow" aria-hidden="true"></div>
+        <div class="hero-shell">
+          <div class="hero-copy reveal">
+            <p class="eyebrow"><span></span> Local-first 3D model library</p>
+            <h1>Your models.<br /><em>Finally visible.</em></h1>
+            <p class="hero-lede">Volum turns folders full of STL, OBJ, and 3MF files into a visual, searchable library—without moving or uploading a thing.</p>
+            <div class="hero-actions">
+              <a class="button button--accent" href="https://github.com/sabatesduran/volum/releases/latest" data-download>
+                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14" /></svg>
+                <span>Download Volum</span>
+              </a>
+              <a class="button button--ghost" href="https://github.com/sabatesduran/volum" rel="noreferrer">
+                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9L12 3Z" /></svg>
+                Star on GitHub
+              </a>
+            </div>
+            <ul class="hero-trust" aria-label="Product benefits">
+              <li>No account</li>
+              <li>No telemetry</li>
+              <li>Open source</li>
+            </ul>
+          </div>
+
+          <div class="hero-product reveal reveal--delay">
+            <div class="hero-chip hero-chip--top"><span></span> Real geometry</div>
+            <button class="shot-button" type="button" data-shot="./assets/screenshots/batraci-mini.webp" data-shot-alt="Volum previewing the Batraci Mini 3MF model on a gridded build plate">
+              <img src="./assets/screenshots/batraci-mini.webp" alt="Volum previewing the Batraci Mini 3MF model on a gridded build plate" width="2000" height="1339" fetchpriority="high" />
+            </button>
+            <div class="hero-chip hero-chip--bottom">3MF · Original color · Plate 1</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="format-rail" aria-label="Supported file formats">
+        <div class="format-rail__inner">
+          <span class="format-rail__label">Made for the files you already have</span>
+          <span>STL</span><i></i><span>3MF</span><i></i><span>OBJ</span><i></i><span>STEP / STP</span><i></i><span>ZIP</span>
+        </div>
+      </section>
+
+      <section class="intro section section--paper" id="library">
+        <div class="section-shell">
+          <div class="intro-heading reveal">
+            <p class="eyebrow eyebrow--dark">Your files, without the filing</p>
+            <h2>Stop hunting through anonymous folders.</h2>
+          </div>
+          <div class="intro-copy reveal reveal--delay">
+            <p>Point Volum at the folders you already use. It indexes them in place, renders persistent previews in the background, and keeps watching as your library changes.</p>
+            <div class="stat-row">
+              <div><strong>0</strong><span>uploads required</span></div>
+              <div><strong>5</strong><span>model formats</span></div>
+              <div><strong>∞</strong><span>local folders</span></div>
+            </div>
+          </div>
+
+          <figure class="wide-shot reveal">
+            <button class="shot-button" type="button" data-shot="./assets/screenshots/library.webp" data-shot-alt="Volum's visual 3D model library in dark mode">
+              <img src="./assets/screenshots/library.webp" alt="Volum's visual 3D model library in dark mode" width="2000" height="1339" loading="lazy" />
+            </button>
+            <figcaption>
+              <span>01 / Library</span>
+              <p>Real previews, fast search, folders, collections, favorites, recents, and duplicates—one calm place for the whole archive.</p>
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="section feature-section" id="three-mf">
+        <div class="section-shell">
+          <div class="section-heading reveal">
+            <p class="eyebrow"><span></span> 3MF, properly understood</p>
+            <h2>Not just a mesh.<br /><em>The whole print project.</em></h2>
+            <p>Volum reads plates, print profiles, printer details, filament colors, embedded thumbnails, and explicit sliced weight—then keeps each part of the project easy to inspect.</p>
+          </div>
+
+          <div class="feature-layout">
+            <figure class="feature-shot reveal">
+              <button class="shot-button" type="button" data-shot="./assets/screenshots/multi-plate.webp" data-shot-alt="A three-plate 3MF project displayed together in Volum">
+                <img src="./assets/screenshots/multi-plate.webp" alt="A three-plate 3MF project displayed together in Volum" width="2000" height="1339" loading="lazy" />
+              </button>
+            </figure>
+            <div class="feature-list">
+              <article class="feature-item reveal">
+                <span class="feature-number">01</span>
+                <div><h3>See every plate</h3><p>View the full project at once, then focus any plate from the selector or its detail card.</p></div>
+              </article>
+              <article class="feature-item reveal">
+                <span class="feature-number">02</span>
+                <div><h3>Keep original colors</h3><p>Filament assignments from Bambu Studio and OrcaSlicer remain visible in previews and the interactive viewer.</p></div>
+              </article>
+              <article class="feature-item reveal">
+                <span class="feature-number">03</span>
+                <div><h3>Read the real metadata</h3><p>Printer, nozzle, layer height, profile, plate objects, print time, and explicit sliced grams stay attached to the file.</p></div>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section section--soft" id="features">
+        <div class="section-shell">
+          <div class="section-heading section-heading--center reveal">
+            <p class="eyebrow eyebrow--dark">One library, end to end</p>
+            <h2>Built around the way makers actually work.</h2>
+          </div>
+
+          <div class="bento-grid">
+            <article class="bento-card bento-card--large reveal">
+              <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m4 7 8-4 8 4-8 4-8-4Zm0 0v10l8 4 8-4V7M12 11v10" /></svg></div>
+              <p class="card-kicker">Interactive viewer</p>
+              <h3>Orbit real geometry, not a placeholder.</h3>
+              <p>Zoom, rotate, reset, and jump to front, side, top, or isometric views. Build plates carry a readable grid and disappear underneath so they never hide the model.</p>
+              <div class="mini-viewer" aria-hidden="true">
+                <div class="mini-bed"></div>
+                <img src="./assets/volum-icon.png" alt="" />
+              </div>
+            </article>
+
+            <article class="bento-card reveal">
+              <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 6h6l2 2h10v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6Z" /></svg></div>
+              <p class="card-kicker">Your folders</p>
+              <h3>In place. Always in sync.</h3>
+              <p>Multiple local, removable, or mounted roots with recursive indexing and move detection.</p>
+            </article>
+
+            <article class="bento-card reveal">
+              <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16M7 3v4m10-4v4M6 11h4v4H6v-4Zm8 0h4v4h-4v-4ZM6 18h4m4 0h4" /></svg></div>
+              <p class="card-kicker">Collections</p>
+              <h3>Organize without moving files.</h3>
+              <p>Manual and smart collections, tags, favorites, filters, and batch actions sit above your existing folder structure.</p>
+            </article>
+
+            <article class="bento-card bento-card--wide reveal">
+              <div>
+                <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2v20M17 5.5c-1-1-2.4-1.5-4-1.5-2.2 0-4 1.3-4 3s1.8 3 4 3 4 1.3 4 3-1.8 3-4 3c-1.6 0-3-.5-4-1.5" /></svg></div>
+                <p class="card-kicker">Materials & cost</p>
+                <h3>Know what a print costs before it reaches the bed.</h3>
+                <p>Save spool prices, use explicit sliced 3MF grams, calculate per-piece and batch costs, and keep estimates with the model.</p>
+              </div>
+              <div class="cost-card" aria-label="Example print cost">
+                <span>One piece</span><strong>€1.17</strong><small>73 g · PLA Matte</small>
+              </div>
+            </article>
+
+            <article class="bento-card reveal">
+              <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3m13 5h3a2 2 0 0 0 2-2v-3M8 12h8" /></svg></div>
+              <p class="card-kicker">Duplicates</p>
+              <h3>Find copies before they become clutter.</h3>
+              <p>Review likely duplicates using file fingerprints and content hashes, without deleting anything automatically.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section imports-section" id="imports">
+        <div class="section-shell imports-grid">
+          <div class="imports-copy reveal">
+            <p class="eyebrow"><span></span> MakerWorld & Printables</p>
+            <h2>Bring the source with the model.</h2>
+            <p>Paste a public model URL to save its title, creator, description, thumbnail, and official source link. Attach downloaded files into your chosen library without sharing credentials or bypassing protected downloads.</p>
+            <ul class="check-list">
+              <li><span>✓</span> Attribution stays beside the files</li>
+              <li><span>✓</span> Provider thumbnails are cached locally</li>
+              <li><span>✓</span> Official source pages remain one click away</li>
+            </ul>
+          </div>
+          <figure class="imports-shot reveal reveal--delay">
+            <button class="shot-button" type="button" data-shot="./assets/screenshots/web-imports.webp" data-shot-alt="MakerWorld model attribution and metadata inside Volum">
+              <img src="./assets/screenshots/web-imports.webp" alt="MakerWorld model attribution and metadata inside Volum" width="2000" height="1339" loading="lazy" />
+            </button>
+          </figure>
+        </div>
+      </section>
+
+      <section class="section workflow-section" id="workflow">
+        <div class="section-shell">
+          <div class="section-heading reveal">
+            <p class="eyebrow"><span></span> A shorter path to printing</p>
+            <h2>Folder to slicer.<br /><em>Three quiet steps.</em></h2>
+          </div>
+          <ol class="workflow-list">
+            <li class="reveal"><span>01</span><div><h3>Choose your folders</h3><p>Volum indexes the library where it already lives and watches it for changes.</p></div></li>
+            <li class="reveal"><span>02</span><div><h3>Find the right model</h3><p>Search names and metadata, browse visual previews, or open a collection.</p></div></li>
+            <li class="reveal"><span>03</span><div><h3>Open in your slicer</h3><p>Launch Bambu Studio, OrcaSlicer, PrusaSlicer, Cura, or your system default.</p></div></li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="privacy-section" id="privacy">
+        <div class="privacy-grid" aria-hidden="true"></div>
+        <div class="section-shell privacy-shell">
+          <p class="privacy-mark reveal">0</p>
+          <div class="privacy-copy reveal reveal--delay">
+            <p class="eyebrow"><span></span> Uploads required</p>
+            <h2>Your library is yours.<br />It stays that way.</h2>
+            <p>Volum is local-first by design. There is no account, no analytics, no model upload pipeline, and no network connection required to browse your files.</p>
+            <div class="privacy-points">
+              <span>Local SQLite index</span>
+              <span>User-approved folders only</span>
+              <span>Open-source GPL-3.0</span>
+            </div>
+            <a class="text-link" href="https://github.com/sabatesduran/volum/blob/main/SECURITY.md" rel="noreferrer">Read the security model <span aria-hidden="true">↗</span></a>
+          </div>
+        </div>
+      </section>
+
+      <section class="section faq-section" id="faq">
+        <div class="section-shell faq-shell">
+          <div class="faq-heading reveal">
+            <p class="eyebrow eyebrow--dark">A few useful answers</p>
+            <h2>Before you make room for Volum.</h2>
+          </div>
+          <div class="faq-list">
+            <details class="reveal"><summary>Does Volum move or rename my files?<span>+</span></summary><p>No. Volum indexes files in place. Collections, tags, favorites, notes, and estimates live in its local database without changing your folder structure.</p></details>
+            <details class="reveal"><summary>Which formats are supported?<span>+</span></summary><p>STL, OBJ, 3MF, STEP/STP, and ZIP files are indexed. STL, OBJ, and 3MF have interactive geometry previews; STEP/STP tessellation is intentionally marked as pending.</p></details>
+            <details class="reveal"><summary>Does web import download protected files?<span>+</span></summary><p>No. Volum reads public MakerWorld or Printables metadata and lets you attach files you downloaded through the official provider. It never asks for provider credentials.</p></details>
+            <details class="reveal"><summary>Is Volum free and open source?<span>+</span></summary><p>Yes. Volum is licensed under GPL-3.0-or-later. Source code and releases are available on GitHub. If Volum is useful to you, please star the project—it helps more makers discover it.</p></details>
+          </div>
+        </div>
+      </section>
+
+      <section class="final-cta">
+        <div class="final-cta__grid" aria-hidden="true"></div>
+        <div class="section-shell final-cta__inner reveal">
+          <img src="./assets/volum-icon.png" alt="" width="84" height="84" />
+          <p class="eyebrow"><span></span> Make the archive useful again</p>
+          <h2>A beautiful home<br />for your 3D models.</h2>
+          <p>Download Volum, choose a folder, and let your library come into view. Like the project? Give it a star on GitHub.</p>
+          <div class="hero-actions hero-actions--center">
+            <a class="button button--accent" href="https://github.com/sabatesduran/volum/releases/latest" data-download><span>Download Volum</span></a>
+            <a class="button button--ghost" href="https://github.com/sabatesduran/volum" rel="noreferrer">★ Star on GitHub</a>
+          </div>
+          <small>macOS · Windows · Linux</small>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="section-shell footer-inner">
+        <a class="brand" href="#top" aria-label="Volum home"><img src="./assets/volum-icon.png" alt="" width="30" height="30" /><span>VOL<span>U</span>M</span></a>
+        <p>Private, local-first, and built for makers.</p>
+        <div class="footer-links">
+          <a href="https://github.com/sabatesduran/volum">Star on GitHub ★</a>
+          <a href="https://github.com/sabatesduran/volum/releases">Releases</a>
+          <a href="https://github.com/sabatesduran/volum/blob/main/LICENSE">GPL-3.0</a>
+          <a href="https://didac.dev/">didac.dev ↗</a>
+        </div>
+        <small>© <span data-year></span> Volum</small>
+      </div>
+    </footer>
+
+    <dialog class="shot-dialog" data-shot-dialog aria-label="Expanded product screenshot">
+      <button class="shot-dialog__close" type="button" aria-label="Close screenshot" data-shot-close>×</button>
+      <img alt="" data-shot-image />
+      <p data-shot-caption></p>
+    </dialog>
+
+    <script type="module" src="./script.js"></script>
+  </body>
+</html>

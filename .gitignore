@@ -1,0 +1,11 @@
+node_modules/
+dist/
+website-dist/
+target/
+src-tauri/target/
+.DS_Store
+*.log
+.idea/
+.vscode/
+coverage/
+.tauri/*.key

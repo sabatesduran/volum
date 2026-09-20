@@ -1,0 +1,44 @@
+{
+  "name": "volum",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "website:dev": "vite --config website/vite.config.ts",
+    "website:build": "vite build --config website/vite.config.ts",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@react-three/fiber": "^9.3.0",
+    "@tanstack/react-query": "^5.90.2",
+    "@tanstack/react-virtual": "^3.13.12",
+    "@tauri-apps/api": "^2.8.0",
+    "@tauri-apps/plugin-dialog": "^2.4.0",
+    "@tauri-apps/plugin-process": "^2.3.0",
+    "@tauri-apps/plugin-updater": "^2.9.0",
+    "lucide-react": "^0.544.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "three": "^0.180.0",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.8.4",
+    "@testing-library/jest-dom": "^6.8.0",
+    "@testing-library/react": "^16.3.0",
+    "@types/node": "^24.5.2",
+    "@types/react": "^19.1.16",
+    "@types/react-dom": "^19.1.9",
+    "@types/three": "^0.180.0",
+    "@vitejs/plugin-react": "^5.0.3",
+    "jsdom": "^27.0.0",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.7",
+    "vitest": "^5.0.1"
+  }
+}

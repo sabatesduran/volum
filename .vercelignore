@@ -1,0 +1,7 @@
+dist/
+website-dist/
+src/
+src-tauri/
+node_modules/
+coverage/
+*.log

@@ -1,6 +1,7 @@
 node_modules/
 dist/
 website-dist/
+website/dist/
 target/
 src-tauri/target/
 .DS_Store
@@ -9,3 +10,4 @@ src-tauri/target/
 .vscode/
 coverage/
 .tauri/*.key
+.vercel/

@@ -32,12 +32,6 @@ document.querySelectorAll(".reveal").forEach((element) => {
   else element.classList.add("is-visible");
 });
 
-const platform = navigator.userAgentData?.platform || navigator.platform || "";
-const platformName = /mac/i.test(platform) ? "macOS" : /win/i.test(platform) ? "Windows" : /linux/i.test(platform) ? "Linux" : "your computer";
-document.querySelectorAll("[data-download] span").forEach((label) => {
-  label.textContent = `Download for ${platformName}`;
-});
-
 const dialog = document.querySelector("[data-shot-dialog]");
 const dialogImage = document.querySelector("[data-shot-image]");
 const dialogCaption = document.querySelector("[data-shot-caption]");

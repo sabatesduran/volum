@@ -10,7 +10,7 @@ license=('GPL-3.0-or-later')
 depends=('fuse2' 'webkit2gtk-4.1' 'xdg-utils')
 provides=("volum=${pkgver}")
 conflicts=('volum')
-options=('!strip')
+options=('!strip' '!debug')
 source=('volum.desktop' 'volum.png')
 source_x86_64=("${_pkgname}-${pkgver}.AppImage::${url}/releases/download/v${pkgver}/Volum_linux_x86_64.AppImage")
 sha256sums=('@DESKTOP_SHA256@'

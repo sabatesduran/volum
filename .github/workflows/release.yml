@@ -56,8 +56,11 @@ jobs:
           mkdir -p release appimage-inspection
           install -m755 "$APPIMAGE" release/Volum_linux_x86_64.AppImage
           cp "$SIGNATURE" release/Volum_linux_x86_64.AppImage.sig
-          sha256sum release/Volum_linux_x86_64.AppImage \
-            > release/Volum_linux_x86_64.AppImage.sha256
+          (
+            cd release
+            sha256sum Volum_linux_x86_64.AppImage \
+              > Volum_linux_x86_64.AppImage.sha256
+          )
 
           cd appimage-inspection
           ../release/Volum_linux_x86_64.AppImage --appimage-extract >/dev/null
@@ -183,7 +186,10 @@ jobs:
           set -euo pipefail
           VERSION="$(jq -r .version src-tauri/tauri.conf.json)"
           TAG="v$VERSION"
-          sha256sum -c release/Volum_linux_x86_64.AppImage.sha256
+          (
+            cd release
+            sha256sum -c Volum_linux_x86_64.AppImage.sha256
+          )
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" \
             release/Volum_linux_x86_64.AppImage \
             release/Volum_linux_x86_64.AppImage.sig \

@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { api } from "../lib/tauri/api";
+import { t } from "../lib/i18n";
 
 export type ModelView = "iso" | "front" | "side" | "top";
 export interface ViewerGeometry {
@@ -45,12 +46,12 @@ function Controls({ resetSignal, view }: { resetSignal: number; view: ModelView 
 export function normalizeObject(object: THREE.Object3D): THREE.Object3D {
   object.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(object);
-  if (box.isEmpty()) throw new Error("The model contains no displayable geometry.");
+  if (box.isEmpty()) throw new Error(t("The model contains no displayable geometry."));
   const center = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3());
   const largest = Math.max(size.x, size.y, size.z);
   if (!center.toArray().every(Number.isFinite) || !Number.isFinite(largest) || largest <= 0) {
-    throw new Error("The model has invalid geometry bounds.");
+    throw new Error(t("The model has invalid geometry bounds."));
   }
 
   // Keep centering inside a child group so scale and z-up rotation are applied
@@ -83,10 +84,10 @@ export function normalizeObject(object: THREE.Object3D): THREE.Object3D {
 }
 
 export function parseViewerMesh(buffer: ArrayBuffer): THREE.Object3D {
-  if (buffer.byteLength < 12) throw new Error("The viewer received an incomplete model.");
+  if (buffer.byteLength < 12) throw new Error(t("The viewer received an incomplete model."));
   const header = new Uint8Array(buffer, 0, 4);
   const version = String.fromCharCode(...header);
-  if (version !== "VLM1" && version !== "VLM2") throw new Error("The viewer received an unsupported model payload.");
+  if (version !== "VLM1" && version !== "VLM2") throw new Error(t("The viewer received an unsupported model payload."));
   const data = new DataView(buffer);
   const vertexCount = data.getUint32(4, true);
   const indexCount = data.getUint32(8, true);
@@ -94,7 +95,7 @@ export function parseViewerMesh(buffer: ArrayBuffer): THREE.Object3D {
   const colorOffset = indexOffset + indexCount * 4;
   const expectedLength = colorOffset + (version === "VLM2" ? vertexCount * 3 : 0);
   if (vertexCount === 0 || indexCount === 0 || expectedLength !== buffer.byteLength) {
-    throw new Error("The viewer received invalid model geometry.");
+    throw new Error(t("The viewer received invalid model geometry."));
   }
   const positions = new Float32Array(buffer, 12, vertexCount * 3);
   const indices = new Uint32Array(buffer, indexOffset, indexCount);
@@ -228,7 +229,7 @@ export function ModelViewer({ assetId, extension, modelId, plateIndex, resetSign
         </Suspense>
         <Controls resetSignal={resetSignal} view={view} />
       </Canvas>
-      {status === "loading" && <div className="viewer-loading"><LoaderCircle className="spin" size={18} /><span>Loading 3D model…</span></div>}
+      {status === "loading" && <div className="viewer-loading"><LoaderCircle className="spin" size={18} /><span>{t("Loading 3D model…")}</span></div>}
     </>
   );
 }

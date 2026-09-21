@@ -11,13 +11,14 @@ import { SettingsView } from "../features/settings/SettingsView";
 import { WebImportsView } from "../features/web-imports/WebImportsView";
 import { ImportFromWebDialog } from "../components/ImportFromWebDialog";
 import { api, onBackendEvent } from "../lib/tauri/api";
+import { t } from "../lib/i18n";
 import { useAppStore } from "./store";
 
 const ModelDetailView = lazy(() => import("../features/model-detail/ModelDetailView").then((module) => ({ default: module.ModelDetailView })));
 
 export default function App() {
   const queryClient = useQueryClient();
-  const { view, selectedModelId, theme, setSearch } = useAppStore();
+  const { view, selectedModelId, theme, language, setSearch } = useAppStore();
   const [newCollection, setNewCollection] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [webImportOpen, setWebImportOpen] = useState(false);
@@ -60,11 +61,11 @@ export default function App() {
   if (!roots?.length) return <Onboarding onComplete={() => queryClient.invalidateQueries({ queryKey: ["roots"] })} />;
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-language={language}>
       {!selectedModelId && <Sidebar onNewCollection={() => setNewCollection(true)} />}
       <main className={`app-main ${selectedModelId ? "app-main--detail" : ""}`}>
         {!selectedModelId && view !== "settings" && view !== "web" && <Topbar onImport={() => setWebImportOpen(true)} onFilters={() => setFiltersOpen((value) => !value)} />}
-        {selectedModelId ? <Suspense fallback={<div className="detail-loading"><span>Preparing viewer…</span></div>}><ModelDetailView modelId={selectedModelId} /></Suspense> : view === "settings" ? <SettingsView /> : view === "web" ? <WebImportsView onImport={() => setWebImportOpen(true)} /> : <LibraryView onNewCollection={() => setNewCollection(true)} />}
+        {selectedModelId ? <Suspense fallback={<div className="detail-loading"><span>{t("Preparing model…")}</span></div>}><ModelDetailView modelId={selectedModelId} /></Suspense> : view === "settings" ? <SettingsView /> : view === "web" ? <WebImportsView onImport={() => setWebImportOpen(true)} /> : <LibraryView onNewCollection={() => setNewCollection(true)} />}
       </main>
       {!selectedModelId && <IndexStatus roots={roots} />}
       {filtersOpen && !selectedModelId && <FilterPanel onClose={() => setFiltersOpen(false)} />}

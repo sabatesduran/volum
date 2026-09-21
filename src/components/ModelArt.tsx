@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import { t } from "../lib/i18n";
 
 const silhouettes = ["lamp", "bracket", "planter", "comb", "iris", "tray", "mount", "index", "bird"];
 
@@ -12,7 +13,7 @@ export function ModelArt({ modelId, extension, missing = false }: { modelId: str
       <div className="model-art__shape">
         <span /><span /><span /><span /><span />
       </div>
-      {missing && <span className="model-art__offline">Offline</span>}
+      {missing && <span className="model-art__offline">{t("Offline")}</span>}
       <span className="model-art__format">{extension}</span>
     </div>
   );

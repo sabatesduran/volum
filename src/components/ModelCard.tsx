@@ -5,6 +5,7 @@ import { formatDate } from "../lib/format";
 import { useAppStore } from "../app/store";
 import type { ModelSummary } from "../types";
 import { ModelThumbnail } from "./ModelThumbnail";
+import { plural, t } from "../lib/i18n";
 
 export function ModelCard({ model, context = "folder", onChanged }: { model: ModelSummary; context?: "folder" | "date" | "format"; onChanged?: () => void }) {
   const { selectModel, selectedModelIds, toggleModelSelection } = useAppStore();
@@ -26,15 +27,15 @@ export function ModelCard({ model, context = "folder", onChanged }: { model: Mod
       <div className="model-card__preview">
         <ModelThumbnail modelId={model.id} assetId={model.primaryAssetId} extension={model.primaryExtension} revision={model.modifiedAt} missing={model.missing} />
         <div className="model-card__actions">
-          <button className={`round-action ${model.favorite ? "is-active" : ""}`} onClick={toggleFavorite} aria-label={model.favorite ? "Remove from favorites" : "Add to favorites"}><Heart size={16} fill={model.favorite ? "currentColor" : "none"} /></button>
-          <button className="round-action" onClick={(event) => { event.stopPropagation(); setMenuOpen((value) => !value); }} aria-label="More actions"><MoreHorizontal size={17} /></button>
+          <button className={`round-action ${model.favorite ? "is-active" : ""}`} onClick={toggleFavorite} aria-label={t(model.favorite ? "Remove from favorites" : "Add to favorites")}><Heart size={16} fill={model.favorite ? "currentColor" : "none"} /></button>
+          <button className="round-action" onClick={(event) => { event.stopPropagation(); setMenuOpen((value) => !value); }} aria-label={t("More actions")}><MoreHorizontal size={17} /></button>
         </div>
         <span className="model-card__select">{selected ? "✓" : ""}</span>
-        {menuOpen && <div className="card-menu" onClick={(event) => event.stopPropagation()} onMouseLeave={() => setMenuOpen(false)}><button onClick={() => selectModel(model.id)}>View details</button><button disabled={!model.primaryAssetId || model.missing} onClick={() => model.primaryAssetId && api.openAsset(model.primaryAssetId)}>Open in default app</button><button disabled={!model.primaryAssetId || model.missing} onClick={() => model.primaryAssetId && api.revealAsset(model.primaryAssetId)}>Reveal file</button><button onClick={async () => { await api.toggleFavorite(model.id); setMenuOpen(false); onChanged?.(); }}>{model.favorite ? "Remove from favorites" : "Add to favorites"}</button></div>}
+        {menuOpen && <div className="card-menu" onClick={(event) => event.stopPropagation()} onMouseLeave={() => setMenuOpen(false)}><button onClick={() => selectModel(model.id)}>{t("View details")}</button><button disabled={!model.primaryAssetId || model.missing} onClick={() => model.primaryAssetId && api.openAsset(model.primaryAssetId)}>{t("Open in default app")}</button><button disabled={!model.primaryAssetId || model.missing} onClick={() => model.primaryAssetId && api.revealAsset(model.primaryAssetId)}>{t("Reveal file")}</button><button onClick={async () => { await api.toggleFavorite(model.id); setMenuOpen(false); onChanged?.(); }}>{t(model.favorite ? "Remove from favorites" : "Add to favorites")}</button></div>}
       </div>
       <div className="model-card__copy">
         <h3>{model.displayName}</h3>
-        <p>{context === "date" ? `Modified ${formatDate(model.modifiedAt)}` : context === "format" ? `${model.primaryExtension.toLocaleUpperCase()} · ${model.assetCount} ${model.assetCount === 1 ? "file" : "files"}` : model.folderName}</p>
+        <p>{context === "date" ? t("Modified {date}", { date: formatDate(model.modifiedAt) }) : context === "format" ? `${model.primaryExtension.toLocaleUpperCase()} · ${plural(model.assetCount, "{count} file", "{count} files")}` : model.folderName}</p>
       </div>
     </article>
   );

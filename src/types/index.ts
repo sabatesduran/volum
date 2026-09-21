@@ -1,6 +1,7 @@
 export type ViewId = "library" | "recent" | "favorites" | "duplicates" | "web" | "folders" | "collections" | "settings";
 export type Density = "comfortable" | "compact" | "large";
 export type Theme = "system" | "light" | "dark";
+export type LanguagePreference = "system" | "en" | "ca" | "es";
 
 export interface LibraryRoot {
   id: string;

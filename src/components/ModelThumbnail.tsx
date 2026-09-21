@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, onBackendEvent } from "../lib/tauri/api";
 import { ModelArt } from "./ModelArt";
+import { t } from "../lib/i18n";
 
 interface ThumbnailError {
   assetId: string;
@@ -48,5 +49,5 @@ export function ModelThumbnail({ modelId, assetId, extension, revision, missing 
   }, [assetId, extension, missing, modelId, revision]);
   if (modelId.startsWith("demo-")) return <ModelArt modelId={modelId} extension={extension} missing={missing} />;
   if (url) return <div className="model-thumbnail"><img src={url} alt="" /><span>{extension}</span></div>;
-  return <div className={`thumbnail-placeholder ${failed || missing ? "thumbnail-placeholder--failed" : "thumbnail-placeholder--loading"}`}><strong>{extension.toUpperCase()}</strong><small>{missing ? "Library offline" : failed ? "Preview unavailable" : "Making preview…"}</small></div>;
+  return <div className={`thumbnail-placeholder ${failed || missing ? "thumbnail-placeholder--failed" : "thumbnail-placeholder--loading"}`}><strong>{extension.toUpperCase()}</strong><small>{t(missing ? "Library offline" : failed ? "Preview unavailable" : "Making preview…")}</small></div>;
 }

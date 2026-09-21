@@ -1,5 +1,6 @@
 import { X } from "lucide-react";
 import { useEffect } from "react";
+import { t } from "../lib/i18n";
 
 export function Dialog({ title, subtitle, children, onClose, size = "small" }: { title: string; subtitle?: string; children: React.ReactNode; onClose: () => void; size?: "small" | "medium" }) {
   useEffect(() => {
@@ -10,7 +11,7 @@ export function Dialog({ title, subtitle, children, onClose, size = "small" }: {
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
       <section className={`dialog dialog--${size}`} role="dialog" aria-modal="true" aria-labelledby="dialog-title">
-        <button className="icon-button dialog__close" onClick={onClose} aria-label="Close"><X size={18} /></button>
+        <button className="icon-button dialog__close" onClick={onClose} aria-label={t("Close")}><X size={18} /></button>
         <header><h2 id="dialog-title">{title}</h2>{subtitle && <p>{subtitle}</p>}</header>
         {children}
       </section>

@@ -216,10 +216,11 @@ jobs:
             - Search, collections, tags, duplicates, materials, and cost estimates
             - MakerWorld and Printables attribution imports
             - ZIP archives are ignored instead of appearing as models
+            - English, Catalan, and European Spanish interfaces
+            - Automatic signed update checks with approval before download and restart
             - Signed with Developer ID and notarized by Apple for a smooth installation
             - Linux x86_64 AppImage and Arch Linux package
             - Native Windows x64 and ARM64 installers
-            - Improved Windows OrcaSlicer discovery and non-blocking slicer launches
 
             Windows 11 ARM64 was validated with native ARM64 Volum and OrcaSlicer builds, plus x64 Volum and PrusaSlicer through Windows emulation. Windows installers are not yet Authenticode-signed, so Microsoft Defender SmartScreen may show a warning on first install. In-app update packages are signed and verified by Volum.
           releaseDraft: false

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, CheckCircle2, Download, FolderOpen, FolderPlus, HardDrive, Moon, MoreHorizontal, Package, Plus, RefreshCw, Star, Sun, Trash2 } from "lucide-react";
+import { Check, Download, FolderOpen, FolderPlus, HardDrive, Moon, MoreHorizontal, Package, Plus, RefreshCw, Star, Sun, Trash2 } from "lucide-react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "../../app/store";
 import { api, isTauri } from "../../lib/tauri/api";
@@ -9,7 +9,9 @@ import { emptySlicerConfig, parseSlicerConfig, stringifySlicerConfig } from "../
 import { SlicerIcon } from "../../components/SlicerIcon";
 import { AboutSettings } from "../../components/AboutSettings";
 import { Dialog } from "../../components/Dialog";
-import type { SlicerConfig, Theme } from "../../types";
+import type { LanguagePreference, SlicerConfig, Theme } from "../../types";
+import { intlLocale, plural, t } from "../../lib/i18n";
+import { UpdateSettings } from "../updates/UpdateSettings";
 
 function hexToRgb(hex: string): [number, number, number] {
   const value = Number.parseInt(hex.replace("#", ""), 16);
@@ -19,14 +21,14 @@ function hexToRgb(hex: string): [number, number, number] {
 function ColorPicker({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   return (
     <div className="material-color-picker">
-      <label className="color-well" title="Choose color"><input type="color" value={value} onChange={(event) => onChange(event.target.value)} aria-label="Choose material color" /><span style={{ background: value }} /></label>
+      <label className="color-well" title={t("Choose color")}><input type="color" value={value} onChange={(event) => onChange(event.target.value)} aria-label={t("Choose material color")} /><span style={{ background: value }} /></label>
     </div>
   );
 }
 
 export function SettingsView() {
   const queryClient = useQueryClient();
-  const { theme, setTheme } = useAppStore();
+  const { theme, setTheme, language, setLanguage } = useAppStore();
   const { data: roots = [] } = useQuery({ queryKey: ["roots"], queryFn: api.roots });
   const { data: materials = [] } = useQuery({ queryKey: ["materials"], queryFn: api.materials });
   const { data: preferences = {} } = useQuery({ queryKey: ["preferences"], queryFn: api.preferences });
@@ -42,12 +44,11 @@ export function SettingsView() {
   const [materialName, setMaterialName] = useState("");
   const [price, setPrice] = useState("15.99");
   const [materialColor, setMaterialColor] = useState("#e9e2d3");
-  const [updateStatus, setUpdateStatus] = useState("");
   const [activeSection, setActiveSection] = useState("libraries");
   const [slicerPickerOpen, setSlicerPickerOpen] = useState(false);
   const [webImportFolderError, setWebImportFolderError] = useState("");
   const addRoot = async () => {
-    const path = isTauri() ? await open({ directory: true, multiple: false, title: "Choose a 3D model folder" }) : "/Users/you/New Models";
+    const path = isTauri() ? await open({ directory: true, multiple: false, title: t("Choose a 3D model folder") }) : "/Users/you/New Models";
     if (!path || Array.isArray(path)) return;
     const root = await api.addRoot(path);
     await queryClient.invalidateQueries({ queryKey: ["roots"] });
@@ -55,7 +56,7 @@ export function SettingsView() {
   };
   const chooseWebImportFolder = async () => {
     if (!isTauri()) return;
-    const path = await open({ directory: true, multiple: false, title: "Choose the Web imports folder" });
+    const path = await open({ directory: true, multiple: false, title: t("Choose the Web imports folder") });
     if (!path || Array.isArray(path)) return;
     setWebImportFolderError("");
     try {
@@ -91,7 +92,7 @@ export function SettingsView() {
   };
   const chooseSlicer = async () => {
     if (!isTauri()) return;
-    const path = await open({ directory: false, multiple: false, title: "Choose your slicer application" });
+    const path = await open({ directory: false, multiple: false, title: t("Choose your slicer application") });
     if (!path || Array.isArray(path)) return;
     const name = path.split(/[\\/]/).pop()?.replace(/\.(app|exe)$/i, "") ?? "Slicer";
     const existing = slicerConfig.customApps.find((app) => app.path === path);
@@ -111,45 +112,31 @@ export function SettingsView() {
   };
   const exportMetadata = async () => {
     if (!isTauri()) return;
-    const path = await save({ title: "Export Volum metadata", defaultPath: "volum-metadata.json", filters: [{ name: "JSON", extensions: ["json"] }] });
+    const path = await save({ title: t("Export Volum metadata"), defaultPath: "volum-metadata.json", filters: [{ name: "JSON", extensions: ["json"] }] });
     if (path) await api.exportMetadata(path);
   };
   const exportDiagnostics = async () => {
     if (!isTauri()) return;
-    const path = await save({ title: "Export redacted diagnostics", defaultPath: "volum-diagnostics.json", filters: [{ name: "JSON", extensions: ["json"] }] });
+    const path = await save({ title: t("Export redacted diagnostics"), defaultPath: "volum-diagnostics.json", filters: [{ name: "JSON", extensions: ["json"] }] });
     if (path) await api.exportDiagnostics(path, true);
-  };
-  const checkForUpdates = async () => {
-    if (!isTauri()) { setUpdateStatus("You’re using the browser preview."); return; }
-    setUpdateStatus("Checking…");
-    try {
-      const { check } = await import("@tauri-apps/plugin-updater");
-      const update = await check();
-      if (!update) { setUpdateStatus("Volum is up to date."); return; }
-      setUpdateStatus(`Downloading ${update.version}…`);
-      await update.downloadAndInstall();
-      setUpdateStatus("Restarting…");
-      const { relaunch } = await import("@tauri-apps/plugin-process");
-      await relaunch();
-    } catch (error) { setUpdateStatus(error instanceof Error ? error.message : String(error)); }
   };
   return (
     <section className="content-view settings-view">
-      <header className="view-header"><div><div className="eyebrow">Volum preferences</div><h1>Settings</h1><p>Libraries, web imports, materials, appearance, indexing, and about.</p></div></header>
+      <header className="view-header"><div><div className="eyebrow">{t("Volum preferences")}</div><h1>{t("Settings")}</h1><p>{t("Libraries, web imports, materials, appearance, indexing, and about.")}</p></div></header>
       <div className="settings-layout">
-        <nav className="settings-nav">{[["libraries", "Libraries"], ["web-imports", "Web imports"], ["appearance", "Appearance"], ["materials", "Materials"], ["applications", "Applications"], ["privacy", "Privacy & data"], ["updates", "Updates"], ["about", "About"]].map(([id, label]) => <a key={id} href={`#${id}`} className={activeSection === id ? "is-active" : ""} onClick={() => setActiveSection(id)}>{label}</a>)}</nav>
+        <nav className="settings-nav">{[["libraries", "Libraries"], ["web-imports", "Web imports"], ["appearance", "Appearance"], ["materials", "Materials"], ["applications", "Applications"], ["privacy", "Privacy & data"], ["updates", "Updates"], ["about", "About"]].map(([id, label]) => <a key={id} href={`#${id}`} className={activeSection === id ? "is-active" : ""} onClick={() => setActiveSection(id)}>{t(label)}</a>)}</nav>
         <div className="settings-content">
-          <section className="settings-section" id="libraries"><div className="settings-section__header"><div><h2>Libraries</h2><p>Volum watches these folders. Your files stay exactly where they are.</p></div><button className="button button--primary" onClick={addRoot}><FolderPlus size={16} /> Add folder</button></div><div className="root-list">{roots.map((root) => <div className="root-row" key={root.id}><span className={`root-icon root-icon--${root.status}`}><HardDrive size={20} /></span><div><strong>{root.displayName}</strong><small>{root.path}</small><small>{root.modelCount} models · Scanned {formatDate(root.lastScanAt)}</small></div><span className={`status-pill status-pill--${root.status}`}>{root.status}</span><button className="icon-button" onClick={() => api.startScan(root.id)} aria-label="Rescan"><RefreshCw size={16} /></button><button className="icon-button" onClick={async () => { await api.removeRoot(root.id); queryClient.invalidateQueries({ queryKey: ["roots"] }); }} aria-label="Remove library"><Trash2 size={16} /></button></div>)}</div></section>
-          <section className="settings-section" id="web-imports"><div className="settings-section__header"><div><h2>Web imports</h2><p>Downloaded files are copied here before Volum indexes them.</p></div><button className="button button--quiet" onClick={chooseWebImportFolder}><FolderOpen size={15} /> Choose folder</button></div><div className="web-import-folder-setting"><span><Download size={19} /></span><div><strong>{preferences.web_import_folder ? "Custom import folder" : "Default import folder"}</strong><small>{preferences.web_import_folder || (roots[0] ? `${roots[0].path}/Web Imports` : "Add a library to configure imports")}</small></div>{preferences.web_import_folder && <button className="button button--quiet" onClick={async () => { await api.savePreference("web_import_folder", ""); await queryClient.invalidateQueries({ queryKey: ["preferences"] }); }}>Use default</button>}</div>{webImportFolderError && <div className="form-error">{webImportFolderError}</div>}<p className="settings-footnote">The selected folder must be inside an indexed library. Each import is organized by provider and model.</p></section>
-          <section className="settings-section" id="appearance"><div className="settings-section__header"><div><h2>Appearance</h2><p>Use your system setting or choose a theme.</p></div></div><div className="theme-choices">{([["system", MoreHorizontal], ["light", Sun], ["dark", Moon]] as Array<[Theme, typeof Sun]>).map(([value, Icon]) => <button key={value} className={theme === value ? "is-active" : ""} onClick={() => setTheme(value)}><span><Icon size={21} /></span><strong>{value[0].toUpperCase() + value.slice(1)}</strong></button>)}</div></section>
-          <section className="settings-section" id="materials"><div className="settings-section__header"><div><h2>Materials</h2><p>Price presets for estimates—not spool inventory.</p></div></div><div className="material-list">{materials.map((material) => <div className="material-row" key={material.id}><span className="material-swatch" style={{ background: material.colorHex ?? "#e9e2d3" }} /><div><strong>{material.name}</strong><small>{material.materialType} · {material.colorHex ? `RGB ${hexToRgb(material.colorHex).join(", ")} · ` : ""}{material.spoolWeightG.toLocaleString()} g</small></div><strong>{new Intl.NumberFormat(undefined, { style: "currency", currency: material.currency }).format(material.spoolPriceMinor / 100)}</strong></div>)}</div><form className="material-form" onSubmit={saveMaterial}><div className="material-form__main"><ColorPicker value={materialColor} onChange={setMaterialColor} /><input value={materialName} onChange={(event) => setMaterialName(event.target.value)} placeholder="Material name" aria-label="Material name" /><div className="input-unit input-unit--prefix"><span>€</span><input type="number" value={price} onChange={(event) => setPrice(event.target.value)} step=".01" aria-label="Spool price" /></div><button className="button button--quiet">Add preset</button></div></form></section>
-          <section className="settings-section" id="applications"><div className="settings-section__header"><div><h2>Slicer applications</h2><p>Enabled slicers available from model actions.</p></div><button className="button button--quiet" onClick={() => setSlicerPickerOpen(true)}><Plus size={15} /> Add</button></div><div className="slicer-settings-list">{enabledSlicerApplications.map((slicer) => { const isDefault = slicerConfig.defaultId === slicer.id; return <div className={`slicer-settings-row ${!slicer.installed ? "is-unavailable" : ""}`} key={slicer.id}><SlicerIcon application={slicer} size={34} /><div className="slicer-settings-row__copy"><strong>{slicer.name}</strong><small>{slicer.installed ? slicer.path : "Not installed"}</small></div><button className="slicer-enable is-enabled" onClick={() => toggleSlicer(slicer.id)} aria-label={`Disable ${slicer.name}`}><span><Check size={12} /></span>Enabled</button><button className={`slicer-default ${isDefault ? "is-default" : ""}`} disabled={!slicer.installed} onClick={() => updateSlicerConfig({ ...slicerConfig, defaultId: slicer.id })}><Star size={13} fill={isDefault ? "currentColor" : "none"} />{isDefault ? "Default" : "Make default"}</button>{slicer.custom && <button className="icon-button icon-button--tiny" onClick={() => removeCustomSlicer(slicer.id)} aria-label={`Remove ${slicer.name}`}><Trash2 size={14} /></button>}</div>; })}{enabledSlicerApplications.length === 0 && <div className="slicer-settings-empty">No slicers are enabled. Add a slicer to use it from model actions.</div>}</div><p className="settings-footnote">Only enabled slicers are shown here and in the Open menu.</p></section>
-          <section className="settings-section" id="privacy"><div className="settings-section__header"><div><h2>Privacy & data</h2><p>Volum has no account, analytics, or model uploads. Its index and previews remain on this computer.</p></div></div><div className="privacy-note"><Package size={20} /><span><strong>Local by default</strong><small>Network access is used for update checks, About projects, and public MakerWorld or Printables metadata only when you preview a link. No library information is sent.</small></span></div><div className="settings-actions"><button className="button button--quiet" onClick={exportMetadata}>Export metadata</button><button className="button button--quiet" onClick={exportDiagnostics}>Export diagnostics</button><button className="button button--quiet" onClick={() => roots.forEach((root) => api.startScan(root.id))}><RefreshCw size={15} /> Rebuild index</button></div></section>
-          <section className="settings-section" id="updates"><div className="settings-section__header"><div><h2>Updates</h2><p>Signed update packages are verified before installation.</p></div><button className="button button--quiet" onClick={checkForUpdates}><Download size={15} /> Check for updates</button></div>{updateStatus && <div className="update-status"><CheckCircle2 size={16} />{updateStatus}</div>}</section>
+          <section className="settings-section" id="libraries"><div className="settings-section__header"><div><h2>{t("Libraries")}</h2><p>{t("Volum watches these folders. Your files stay exactly where they are.")}</p></div><button className="button button--primary" onClick={addRoot}><FolderPlus size={16} /> {t("Add folder")}</button></div><div className="root-list">{roots.map((root) => <div className="root-row" key={root.id}><span className={`root-icon root-icon--${root.status}`}><HardDrive size={20} /></span><div><strong>{root.displayName}</strong><small>{root.path}</small><small>{plural(root.modelCount, "{count} model", "{count} models")} · {t("Scanned {date}", { date: formatDate(root.lastScanAt) })}</small></div><span className={`status-pill status-pill--${root.status}`}>{t(root.status === "online" ? "Online" : root.status === "offline" ? "Offline" : root.status === "scanning" ? "Scanning" : root.status === "paused" ? "Paused" : "Error")}</span><button className="icon-button" onClick={() => api.startScan(root.id)} aria-label={t("Rescan")}><RefreshCw size={16} /></button><button className="icon-button" onClick={async () => { await api.removeRoot(root.id); queryClient.invalidateQueries({ queryKey: ["roots"] }); }} aria-label={t("Remove library")}><Trash2 size={16} /></button></div>)}</div></section>
+          <section className="settings-section" id="web-imports"><div className="settings-section__header"><div><h2>{t("Web imports")}</h2><p>{t("Downloaded files are copied here before Volum indexes them.")}</p></div><button className="button button--quiet" onClick={chooseWebImportFolder}><FolderOpen size={15} /> {t("Choose folder")}</button></div><div className="web-import-folder-setting"><span><Download size={19} /></span><div><strong>{t(preferences.web_import_folder ? "Custom import folder" : "Default import folder")}</strong><small>{preferences.web_import_folder || (roots[0] ? `${roots[0].path}/Web Imports` : t("Add a library to configure imports"))}</small></div>{preferences.web_import_folder && <button className="button button--quiet" onClick={async () => { await api.savePreference("web_import_folder", ""); await queryClient.invalidateQueries({ queryKey: ["preferences"] }); }}>{t("Use default")}</button>}</div>{webImportFolderError && <div className="form-error">{webImportFolderError}</div>}<p className="settings-footnote">{t("The selected folder must be inside an indexed library. Each import is organized by provider and model.")}</p></section>
+          <section className="settings-section" id="appearance"><div className="settings-section__header"><div><h2>{t("Appearance")}</h2><p>{t("Use your system setting or choose a theme.")}</p></div></div><div className="theme-choices">{([["system", MoreHorizontal], ["light", Sun], ["dark", Moon]] as Array<[Theme, typeof Sun]>).map(([value, Icon]) => <button key={value} className={theme === value ? "is-active" : ""} onClick={() => setTheme(value)}><span><Icon size={21} /></span><strong>{t(value === "system" ? "System" : value === "light" ? "Light" : "Dark")}</strong></button>)}</div><div className="language-setting"><div><h3>{t("Language")}</h3><p>{t("Follow the operating system language, or override it for Volum.")}</p></div><label className="field field--compact"><span>{t("App language")}</span><select value={language} onChange={(event) => setLanguage(event.target.value as LanguagePreference)}><option value="system">{t("System")}</option><option value="en">English</option><option value="ca">Català</option><option value="es">Español (España)</option></select></label></div></section>
+          <section className="settings-section" id="materials"><div className="settings-section__header"><div><h2>{t("Materials")}</h2><p>{t("Price presets for estimates—not spool inventory.")}</p></div></div><div className="material-list">{materials.map((material) => <div className="material-row" key={material.id}><span className="material-swatch" style={{ background: material.colorHex ?? "#e9e2d3" }} /><div><strong>{material.name}</strong><small>{material.materialType} · {material.colorHex ? `RGB ${hexToRgb(material.colorHex).join(", ")} · ` : ""}{material.spoolWeightG.toLocaleString(intlLocale)} g</small></div><strong>{new Intl.NumberFormat(intlLocale, { style: "currency", currency: material.currency }).format(material.spoolPriceMinor / 100)}</strong></div>)}</div><form className="material-form" onSubmit={saveMaterial}><div className="material-form__main"><ColorPicker value={materialColor} onChange={setMaterialColor} /><input value={materialName} onChange={(event) => setMaterialName(event.target.value)} placeholder={t("Material name")} aria-label={t("Material name")} /><div className="input-unit input-unit--prefix"><span>€</span><input type="number" value={price} onChange={(event) => setPrice(event.target.value)} step=".01" aria-label={t("Spool price")} /></div><button className="button button--quiet">{t("Add preset")}</button></div></form></section>
+          <section className="settings-section" id="applications"><div className="settings-section__header"><div><h2>{t("Slicer applications")}</h2><p>{t("Enabled slicers available from model actions.")}</p></div><button className="button button--quiet" onClick={() => setSlicerPickerOpen(true)}><Plus size={15} /> {t("Add")}</button></div><div className="slicer-settings-list">{enabledSlicerApplications.map((slicer) => { const isDefault = slicerConfig.defaultId === slicer.id; return <div className={`slicer-settings-row ${!slicer.installed ? "is-unavailable" : ""}`} key={slicer.id}><SlicerIcon application={slicer} size={34} /><div className="slicer-settings-row__copy"><strong>{slicer.name}</strong><small>{slicer.installed ? slicer.path : t("Not installed")}</small></div><button className="slicer-enable is-enabled" onClick={() => toggleSlicer(slicer.id)} aria-label={t("Disable {name}", { name: slicer.name })}><span><Check size={12} /></span>{t("Enabled")}</button><button className={`slicer-default ${isDefault ? "is-default" : ""}`} disabled={!slicer.installed} onClick={() => updateSlicerConfig({ ...slicerConfig, defaultId: slicer.id })}><Star size={13} fill={isDefault ? "currentColor" : "none"} />{t(isDefault ? "Default" : "Make default")}</button>{slicer.custom && <button className="icon-button icon-button--tiny" onClick={() => removeCustomSlicer(slicer.id)} aria-label={t("Remove {name}", { name: slicer.name })}><Trash2 size={14} /></button>}</div>; })}{enabledSlicerApplications.length === 0 && <div className="slicer-settings-empty">{t("No slicers are enabled. Add a slicer to use it from model actions.")}</div>}</div><p className="settings-footnote">{t("Only enabled slicers are shown here and in the Open menu.")}</p></section>
+          <section className="settings-section" id="privacy"><div className="settings-section__header"><div><h2>{t("Privacy & data")}</h2><p>{t("Volum has no account, analytics, or model uploads. Its index and previews remain on this computer.")}</p></div></div><div className="privacy-note"><Package size={20} /><span><strong>{t("Local by default")}</strong><small>{t("Network access is used for update checks, About projects, and public MakerWorld or Printables metadata only when you preview a link. No library information is sent.")}</small></span></div><div className="settings-actions"><button className="button button--quiet" onClick={exportMetadata}>{t("Export metadata")}</button><button className="button button--quiet" onClick={exportDiagnostics}>{t("Export diagnostics")}</button><button className="button button--quiet" onClick={() => roots.forEach((root) => api.startScan(root.id))}><RefreshCw size={15} /> {t("Rebuild index")}</button></div></section>
+          <UpdateSettings />
           <AboutSettings />
         </div>
       </div>
-      {slicerPickerOpen && <Dialog title="Add slicer" subtitle="Choose a supported slicer or select a custom application." onClose={() => setSlicerPickerOpen(false)}><div className="slicer-picker-list">{slicers.filter((slicer) => !slicerConfig.enabledIds.includes(slicer.id)).map((slicer) => <button key={slicer.id} className="slicer-picker-row" disabled={!slicer.installed} onClick={() => enableSlicer(slicer.id)}><SlicerIcon application={slicer} size={36} /><span><strong>{slicer.name}</strong><small>{slicer.installed ? slicer.path : "Not installed"}</small></span><span className="slicer-picker-row__action">Add</span></button>)}<button className="slicer-picker-row slicer-picker-row--custom" onClick={chooseSlicer}><span className="slicer-picker-row__custom-icon"><Plus size={18} /></span><span><strong>Custom application…</strong><small>Choose another slicer from this computer</small></span><span className="slicer-picker-row__action">Choose</span></button></div></Dialog>}
+      {slicerPickerOpen && <Dialog title={t("Add slicer")} subtitle={t("Choose a supported slicer or select a custom application.")} onClose={() => setSlicerPickerOpen(false)}><div className="slicer-picker-list">{slicers.filter((slicer) => !slicerConfig.enabledIds.includes(slicer.id)).map((slicer) => <button key={slicer.id} className="slicer-picker-row" disabled={!slicer.installed} onClick={() => enableSlicer(slicer.id)}><SlicerIcon application={slicer} size={36} /><span><strong>{slicer.name}</strong><small>{slicer.installed ? slicer.path : t("Not installed")}</small></span><span className="slicer-picker-row__action">{t("Add")}</span></button>)}<button className="slicer-picker-row slicer-picker-row--custom" onClick={chooseSlicer}><span className="slicer-picker-row__custom-icon"><Plus size={18} /></span><span><strong>{t("Custom application…")}</strong><small>{t("Choose another slicer from this computer")}</small></span><span className="slicer-picker-row__action">{t("Choose")}</span></button></div></Dialog>}
     </section>
   );
 }

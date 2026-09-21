@@ -7,6 +7,7 @@ import { api } from "../lib/tauri/api";
 import { useAppStore } from "../app/store";
 import { Brand } from "./Brand";
 import type { ViewId } from "../types";
+import { t } from "../lib/i18n";
 
 const mainItems: Array<[ViewId, string, LucideIcon]> = [
   ["library", "Library", LibraryBig],
@@ -27,10 +28,10 @@ export function Sidebar({ onNewCollection }: { onNewCollection: () => void }) {
   const item = (id: ViewId, label: string, Icon: LucideIcon, count?: number) => (
     <button
       className={`sidebar__item ${view === id && !selectedCollectionId ? "is-active" : ""}`}
-      onClick={() => selectView(id)} title={sidebarCollapsed ? label : undefined}
+      onClick={() => selectView(id)} title={sidebarCollapsed ? t(label) : undefined}
     >
       <Icon size={18} strokeWidth={1.8} />
-      {!sidebarCollapsed && <span>{label}</span>}
+      {!sidebarCollapsed && <span>{t(label)}</span>}
       {!sidebarCollapsed && count != null && <span className="sidebar__count">{count}</span>}
     </button>
   );
@@ -38,7 +39,7 @@ export function Sidebar({ onNewCollection }: { onNewCollection: () => void }) {
   return (
     <aside className={`sidebar ${sidebarCollapsed ? "sidebar--collapsed" : ""}`}>
       <div className="sidebar__brand"><Brand compact={sidebarCollapsed} /></div>
-      <nav className="sidebar__nav" aria-label="Main navigation">
+      <nav className="sidebar__nav" aria-label={t("Main navigation")}>
         <div className="sidebar__group">
           {mainItems.map(([id, label, Icon]) => <div key={id}>{item(id, label, Icon, id === "duplicates" ? duplicateStats?.groups : id === "web" ? webSources.length : undefined)}</div>)}
         </div>
@@ -49,8 +50,8 @@ export function Sidebar({ onNewCollection }: { onNewCollection: () => void }) {
         {!sidebarCollapsed && collections.length > 0 && (
           <div className="sidebar__collections">
             <div className="sidebar__section-label">
-              <span>Your collections</span>
-              <button className="icon-button icon-button--tiny" onClick={onNewCollection} aria-label="New collection"><Plus size={15} /></button>
+              <span>{t("Your collections")}</span>
+              <button className="icon-button icon-button--tiny" onClick={onNewCollection} aria-label={t("New collection")}><Plus size={15} /></button>
             </div>
             {collections.slice(0, 5).map((collection) => {
               const Icon = symbols[collection.symbol] ?? Box;

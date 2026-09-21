@@ -1,4 +1,5 @@
 import type { ConfiguredSlicer, SlicerApplication, SlicerConfig } from "../types";
+import { t } from "./i18n";
 
 export const emptySlicerConfig = (): SlicerConfig => ({ enabledIds: [], customApps: [] });
 
@@ -24,7 +25,7 @@ export function parseSlicerConfig(preferences: Record<string, string>): SlicerCo
   if (preferences.slicer_path) {
     const legacy: ConfiguredSlicer = {
       id: "custom-legacy",
-      name: preferences.slicer_name || "Custom slicer",
+      name: preferences.slicer_name || t("Custom slicer"),
       path: preferences.slicer_path
     };
     return { enabledIds: [legacy.id], defaultId: legacy.id, customApps: [legacy] };

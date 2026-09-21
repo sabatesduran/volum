@@ -3,6 +3,7 @@ import { Check, Heart, Layers3, Tags, X } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAppStore } from "../app/store";
 import { api } from "../lib/tauri/api";
+import { t } from "../lib/i18n";
 
 export function SelectionBar() {
   const queryClient = useQueryClient();
@@ -31,11 +32,11 @@ export function SelectionBar() {
   };
   return (
     <div className="selection-bar">
-      <span className="selection-bar__count"><Check size={14} />{selectedModelIds.length} selected</span>
-      <button onClick={favorite}><Heart size={15} /> Favorite</button>
-      <label><Layers3 size={15} /><select value={collectionId} onChange={(event) => { setCollectionId(event.target.value); add(event.target.value); }}><option value="">Add to collection…</option>{collections.filter((collection) => !collection.smart).map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select></label>
-      {tags.length > 0 && <label><Tags size={15} /><select value={tagId} onChange={(event) => { setTagId(event.target.value); addTag(event.target.value); }}><option value="">Add tag…</option>{tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}</select></label>}
-      <button className="selection-bar__close" onClick={clearModelSelection} aria-label="Clear selection"><X size={16} /></button>
+      <span className="selection-bar__count"><Check size={14} />{t("{count} selected", { count: selectedModelIds.length })}</span>
+      <button onClick={favorite}><Heart size={15} /> {t("Favorite")}</button>
+      <label><Layers3 size={15} /><select value={collectionId} onChange={(event) => { setCollectionId(event.target.value); add(event.target.value); }}><option value="">{t("Add to collection…")}</option>{collections.filter((collection) => !collection.smart).map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select></label>
+      {tags.length > 0 && <label><Tags size={15} /><select value={tagId} onChange={(event) => { setTagId(event.target.value); addTag(event.target.value); }}><option value="">{t("Add tag…")}</option>{tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}</select></label>}
+      <button className="selection-bar__close" onClick={clearModelSelection} aria-label={t("Clear selection")}><X size={16} /></button>
     </div>
   );
 }

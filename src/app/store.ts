@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import type { Density, ModelSort, Theme, ViewId } from "../types";
+import type { Density, LanguagePreference, ModelSort, Theme, ViewId } from "../types";
+import { resolveLanguagePreference, setAppLanguage } from "../lib/i18n";
 
 interface AppStore {
   view: ViewId;
@@ -17,6 +18,7 @@ interface AppStore {
   modelSort: ModelSort;
   density: Density;
   theme: Theme;
+  language: LanguagePreference;
   sidebarCollapsed: boolean;
   selectView: (view: ViewId) => void;
   selectFolder: (id?: string) => void;
@@ -34,6 +36,7 @@ interface AppStore {
   clearFilters: () => void;
   setDensity: (density: Density) => void;
   setTheme: (theme: Theme) => void;
+  setLanguage: (language: LanguagePreference) => void;
   toggleSidebar: () => void;
 }
 
@@ -41,6 +44,14 @@ function persisted<T>(key: string, fallback: T): T {
   const value = localStorage.getItem(key);
   return (value as T | null) ?? fallback;
 }
+
+function persistedLanguage(): LanguagePreference {
+  const value = localStorage.getItem("volum:language");
+  return value === "en" || value === "ca" || value === "es" || value === "system" ? value : "system";
+}
+
+const initialLanguage = persistedLanguage();
+setAppLanguage(resolveLanguagePreference(initialLanguage));
 
 export const useAppStore = create<AppStore>((set) => ({
   view: "library",
@@ -55,6 +66,7 @@ export const useAppStore = create<AppStore>((set) => ({
   modelSort: persisted<ModelSort>("volum:model-sort", "modified"),
   density: persisted<Density>("volum:density", "comfortable"),
   theme: persisted<Theme>("volum:theme", "system"),
+  language: initialLanguage,
   sidebarCollapsed: false,
   selectView: (view) => set({ view, selectedFolderId: undefined, selectedCollectionId: undefined, selectedModelId: undefined, selectedModelIds: [] }),
   selectFolder: (selectedFolderId) => set({ view: "folders", selectedFolderId, selectedCollectionId: undefined, selectedModelId: undefined, selectedModelIds: [] }),
@@ -81,6 +93,11 @@ export const useAppStore = create<AppStore>((set) => ({
   setTheme: (theme) => {
     localStorage.setItem("volum:theme", theme);
     set({ theme });
+  },
+  setLanguage: (language) => {
+    localStorage.setItem("volum:language", language);
+    setAppLanguage(resolveLanguagePreference(language));
+    set({ language });
   },
   toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed }))
 }));

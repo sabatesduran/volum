@@ -38,12 +38,11 @@ const dialogCaption = document.querySelector("[data-shot-caption]");
 
 document.querySelectorAll("[data-shot]").forEach((button) => button.addEventListener("click", () => {
   if (!(dialog instanceof HTMLDialogElement) || !(dialogImage instanceof HTMLImageElement)) return;
-  const source = button.getAttribute("data-shot");
-  const alt = button.getAttribute("data-shot-alt") || "Volum product screenshot";
-  if (!source) return;
-  dialogImage.src = source;
-  dialogImage.alt = alt;
-  if (dialogCaption) dialogCaption.textContent = alt;
+  const sourceImage = button.querySelector("img");
+  if (!(sourceImage instanceof HTMLImageElement)) return;
+  dialogImage.src = sourceImage.currentSrc || sourceImage.src;
+  dialogImage.alt = sourceImage.alt;
+  if (dialogCaption) dialogCaption.textContent = sourceImage.alt;
   dialog.showModal();
 }));
 

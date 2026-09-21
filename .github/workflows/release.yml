@@ -26,11 +26,36 @@ jobs:
           shared-key: volum-macos
           add-job-id-key: false
       - run: npm ci
+      - name: Prepare Apple API key
+        env:
+          APPLE_API_KEY_B64: ${{ secrets.APPLE_API_KEY_B64 }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          APPLE_API_KEY_PATH="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY}.p8"
+          export APPLE_API_KEY_PATH
+          python3 - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+
+          Path(os.environ["APPLE_API_KEY_PATH"]).write_bytes(
+              base64.b64decode(os.environ["APPLE_API_KEY_B64"])
+          )
+          PY
+          chmod 600 "$APPLE_API_KEY_PATH"
+          echo "APPLE_API_KEY_PATH=$APPLE_API_KEY_PATH" >> "$GITHUB_ENV"
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName: v__VERSION__
           releaseName: Volum v__VERSION__
@@ -41,9 +66,9 @@ jobs:
             - STL, OBJ, and rich multi-plate 3MF previews
             - Search, collections, tags, duplicates, materials, and cost estimates
             - MakerWorld and Printables attribution imports
-            - Correct Volum app icon in Finder and the DMG installer
+            - Signed with Developer ID and notarized by Apple for a smooth installation
 
-            This build is not yet Apple-notarized. If macOS blocks the first launch, Control-click Volum and choose Open. Windows and Linux releases are coming soon.
+            Windows and Linux releases are coming soon.
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true

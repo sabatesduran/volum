@@ -10,4 +10,5 @@ src-tauri/target/
 .vscode/
 coverage/
 .tauri/*.key
+signing/
 .vercel/

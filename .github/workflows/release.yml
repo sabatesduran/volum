@@ -49,16 +49,13 @@ jobs:
           VERSION="$(jq -r .version src-tauri/tauri.conf.json)"
           BUNDLE_DIR="src-tauri/target/release/bundle/appimage"
           APPIMAGE="$(find "$BUNDLE_DIR" -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
-          UPDATER="$APPIMAGE.tar.gz"
-          SIGNATURE="$UPDATER.sig"
+          SIGNATURE="$APPIMAGE.sig"
 
           test -n "$APPIMAGE"
-          test -f "$UPDATER"
           test -s "$SIGNATURE"
           mkdir -p release appimage-inspection
           install -m755 "$APPIMAGE" release/Volum_linux_x86_64.AppImage
-          cp "$UPDATER" release/Volum_linux_x86_64.AppImage.tar.gz
-          cp "$SIGNATURE" release/Volum_linux_x86_64.AppImage.tar.gz.sig
+          cp "$SIGNATURE" release/Volum_linux_x86_64.AppImage.sig
           sha256sum release/Volum_linux_x86_64.AppImage \
             > release/Volum_linux_x86_64.AppImage.sha256
 
@@ -189,17 +186,16 @@ jobs:
           sha256sum -c release/Volum_linux_x86_64.AppImage.sha256
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" \
             release/Volum_linux_x86_64.AppImage \
-            release/Volum_linux_x86_64.AppImage.tar.gz \
-            release/Volum_linux_x86_64.AppImage.tar.gz.sig \
+            release/Volum_linux_x86_64.AppImage.sig \
             release/Volum_linux_x86_64.AppImage.sha256 \
             --clobber
 
           mkdir updater
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
             --pattern latest.json --dir updater
-          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/Volum_linux_x86_64.AppImage.tar.gz"
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/Volum_linux_x86_64.AppImage"
           jq --arg url "$URL" \
-            --rawfile signature release/Volum_linux_x86_64.AppImage.tar.gz.sig \
+            --rawfile signature release/Volum_linux_x86_64.AppImage.sig \
             '.platforms["linux-x86_64"] = {url: $url, signature: ($signature | rtrimstr("\n"))}' \
             updater/latest.json > updater/latest-linux.json
           mv updater/latest-linux.json updater/latest.json

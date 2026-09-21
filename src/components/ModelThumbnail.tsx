@@ -11,7 +11,7 @@ export function ModelThumbnail({ modelId, assetId, extension, revision, missing 
   const [url, setUrl] = useState<string>();
   const [failed, setFailed] = useState(false);
   useEffect(() => {
-    if (!assetId || modelId.startsWith("demo-") || missing || !["stl", "obj", "3mf", "zip"].includes(extension)) return;
+    if (!assetId || modelId.startsWith("demo-") || missing || !["stl", "obj", "3mf"].includes(extension)) return;
     let active = true;
     let objectUrl = "";
     const unlisteners: Array<() => void> = [];

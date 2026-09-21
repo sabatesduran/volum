@@ -2,7 +2,7 @@
 
 **A beautiful home for your 3D models.**
 
-Volum is a private, local-first desktop library for STL, 3MF, OBJ, STEP/STP, and ZIP files. It mirrors the folders you already have, adds visual previews and searchable metadata, and lets you create collections without moving source files.
+Volum is a private, local-first desktop library for STL, 3MF, OBJ, and STEP/STP files. It mirrors the folders you already have, adds visual previews and searchable metadata, and lets you create collections without moving source files.
 
 ![Volum icon](src-tauri/icons/128x128.png)
 
@@ -13,7 +13,7 @@ The master icon artwork is [`volum-appicon.png`](volum-appicon.png); platform as
 - Multiple local, removable, or mounted library roots
 - Progressive recursive indexing with pause/resume, recovery, and filesystem watching
 - Stable move detection with fingerprints and a metadata grace period for unavailable files
-- STL, OBJ, and 3MF dimensions/triangle metadata; safe ZIP inspection; honest STEP placeholders
+- STL, OBJ, and 3MF dimensions/triangle metadata; ignored ZIP archives; honest STEP placeholders
 - Interactive 3D detail view and persistent background-rendered thumbnails
 - FTS5 search, folders, recents, favorites, quick filters, and virtualized grids
 - Collections via menus, multi-select, and drag-and-drop
@@ -63,7 +63,7 @@ The updater public key is committed in `src-tauri/tauri.conf.json`. The matching
 
 ## Privacy and security
 
-The React webview has no general filesystem or shell permission. File paths received over IPC are resolved from database asset IDs and revalidated against user-approved roots in Rust. ZIP traversal and decompression limits are enforced before reading archive contents.
+The React webview has no general filesystem or shell permission. File paths received over IPC are resolved from database asset IDs and revalidated against user-approved roots in Rust. Archive traversal and decompression limits are enforced when reading ZIP-based 3MF containers.
 
 See [`SECURITY.md`](SECURITY.md) for vulnerability reporting.
 

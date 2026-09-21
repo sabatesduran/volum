@@ -15,7 +15,7 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 use walkdir::WalkDir;
 
-const SUPPORTED: &[&str] = &["stl", "3mf", "obj", "step", "stp", "zip"];
+const SUPPORTED: &[&str] = &["stl", "3mf", "obj", "step", "stp"];
 
 #[derive(Clone)]
 struct ScanContext {
@@ -729,6 +729,19 @@ mod tests {
             normalize_version_key("MK3 camera mount"),
             "mk3 camera mount"
         );
+    }
+
+    #[test]
+    fn discovery_ignores_zip_archives() {
+        let library = tempfile::tempdir().unwrap();
+        std::fs::write(library.path().join("model.zip"), b"archive").unwrap();
+        std::fs::write(library.path().join("model.STL"), b"solid model").unwrap();
+
+        let files = discover(library.path()).unwrap();
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].relative, "model.STL");
+        assert_eq!(files[0].extension, "stl");
     }
 
     #[tokio::test]

@@ -26,7 +26,7 @@ export function WebImportsView({ onImport }: { onImport: () => void }) {
   };
   const chooseAndAttach = async () => {
     if (!attaching) return;
-    const path = isTauri() ? await open({ multiple: false, directory: false, title: `Attach a downloaded file to ${attaching.title}`, filters: [{ name: "3D model files", extensions: ["3mf", "zip", "stl", "obj", "step", "stp"] }] }) : "/Users/you/Downloads/model.3mf";
+    const path = isTauri() ? await open({ multiple: false, directory: false, title: `Attach a downloaded file to ${attaching.title}`, filters: [{ name: "3D model files", extensions: ["3mf", "stl", "obj", "step", "stp"] }] }) : "/Users/you/Downloads/model.3mf";
     if (!path || Array.isArray(path)) return;
     setBusy(true);
     setError("");

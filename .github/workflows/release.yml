@@ -66,6 +66,7 @@ jobs:
             - STL, OBJ, and rich multi-plate 3MF previews
             - Search, collections, tags, duplicates, materials, and cost estimates
             - MakerWorld and Printables attribution imports
+            - ZIP archives are ignored instead of appearing as models
             - Signed with Developer ID and notarized by Apple for a smooth installation
 
             Windows and Linux releases are coming soon.

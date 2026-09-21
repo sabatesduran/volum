@@ -36,5 +36,5 @@ Thumbnail cache entries are keyed by the asset fingerprint and source modificati
 - STL: binary/ASCII bounds and triangle count
 - OBJ: bounds, face count, and referenced material names
 - 3MF: archive validation, model XML bounds, object count, per-plate thumbnails and object names, printer/nozzle/layer/profile metadata, explicit sliced time and `used_g` values, and browser rendering
-- ZIP: central-directory safety validation and scoped extraction of one preview candidate
+- ZIP archives are ignored as library items; ZIP-based 3MF containers still receive central-directory safety validation
 - STEP/STP: indexed with an explicit placeholder until a production-quality cross-platform tessellator is selected

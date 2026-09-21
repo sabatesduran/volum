@@ -887,7 +887,7 @@ pub async fn request_thumbnail(
         return Ok(false);
     }
     let (path, extension) = asset_path(&asset_id, &state).await?;
-    if !matches!(extension.as_str(), "stl" | "obj" | "3mf" | "zip") {
+    if !matches!(extension.as_str(), "stl" | "obj" | "3mf") {
         return Ok(false);
     }
     {
@@ -1356,7 +1356,7 @@ fn validate_collection(input: &CollectionInput) -> CommandResult<()> {
         if rule
             .format
             .as_deref()
-            .is_some_and(|format| !["stl", "3mf", "obj", "step", "stp", "zip"].contains(&format))
+            .is_some_and(|format| !["stl", "3mf", "obj", "step", "stp"].contains(&format))
         {
             return Err("Unknown smart collection format".into());
         }

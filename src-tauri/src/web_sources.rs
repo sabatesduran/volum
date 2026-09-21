@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 type CommandResult<T> = Result<T, String>;
 const MAX_PAGE_BYTES: u64 = 3 * 1024 * 1024;
-const SUPPORTED_ATTACHMENTS: &[&str] = &["3mf", "zip", "stl", "obj", "step", "stp"];
+const SUPPORTED_ATTACHMENTS: &[&str] = &["3mf", "stl", "obj", "step", "stp"];
 
 #[tauri::command]
 pub async fn preview_web_source(url: String) -> CommandResult<WebSourcePreview> {
@@ -145,7 +145,7 @@ pub async fn attach_web_source_file(
         .unwrap_or_default()
         .to_ascii_lowercase();
     if !SUPPORTED_ATTACHMENTS.contains(&extension.as_str()) {
-        return Err("Volum can attach 3MF, ZIP, STL, OBJ, STEP, or STP files".into());
+        return Err("Volum can attach 3MF, STL, OBJ, STEP, or STP files".into());
     }
     let source_row = sqlx::query("SELECT provider, remote_id, canonical_url, title, creator, description, license, filament_grams FROM web_sources WHERE id = ?")
         .bind(&source_id)

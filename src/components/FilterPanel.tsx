@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useAppStore } from "../app/store";
 import { api } from "../lib/tauri/api";
 
-const formats = ["", "stl", "3mf", "obj", "step", "zip"];
+const formats = ["", "stl", "3mf", "obj", "step"];
 
 export function FilterPanel({ onClose }: { onClose: () => void }) {
   const { data: tags = [] } = useQuery({ queryKey: ["tags"], queryFn: api.tags });

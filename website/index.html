@@ -30,7 +30,7 @@
         "applicationCategory": "DesignApplication",
         "operatingSystem": "macOS",
         "description": "A private, local-first desktop library for browsing and organizing 3D-printing files.",
-        "softwareVersion": "0.1.3",
+        "softwareVersion": "0.1.4",
         "license": "https://www.gnu.org/licenses/gpl-3.0.html",
         "url": "https://volum.didac.dev/",
         "downloadUrl": "https://github.com/sabatesduran/volum/releases/latest",
@@ -87,7 +87,7 @@
                 Star on GitHub
               </a>
             </div>
-            <p class="platform-note"><strong>macOS available now</strong><span>Windows coming soon</span><span>Linux coming soon</span></p>
+            <p class="platform-note"><strong>macOS + Linux available now</strong><span>Windows coming soon</span></p>
             <ul class="hero-trust" aria-label="Product benefits">
               <li>No account</li>
               <li>No telemetry</li>
@@ -285,7 +285,7 @@
               <p class="eyebrow eyebrow--dark">Download Volum</p>
               <h2>Choose your platform.</h2>
             </div>
-            <p>Volum is available for macOS today. Native Windows and Linux builds are next.</p>
+            <p>Volum is available for macOS and x86_64 Linux today. Native Windows builds are next.</p>
           </div>
 
           <div class="download-grid">
@@ -302,7 +302,7 @@
               <ul class="platform-details">
                 <li>macOS 13 or later</li>
                 <li>Universal DMG</li>
-                <li>Version 0.1.3</li>
+                <li>Version 0.1.4</li>
               </ul>
               <a class="button button--accent download-card__button" href="https://github.com/sabatesduran/volum/releases/latest" data-download>
                 <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14" /></svg>
@@ -310,22 +310,25 @@
               </a>
             </article>
 
-            <article class="download-card reveal">
+            <article class="download-card download-card--available reveal">
               <div class="download-card__top">
                 <span class="platform-icon" aria-hidden="true">
                   <img src="./assets/os/linux.svg" alt="" width="28" height="28" />
                 </span>
-                <span class="availability-badge">Coming soon</span>
+                <span class="availability-badge availability-badge--live">Available now</span>
               </div>
               <p class="card-kicker">Desktop application</p>
               <h3>Linux</h3>
-              <p>Native packages for popular Linux distributions are in development.</p>
+              <p>A portable AppImage for x86_64 distributions, plus a verified Arch Linux package.</p>
               <ul class="platform-details">
-                <li>Local-first library</li>
-                <li>Native desktop experience</li>
-                <li>Release planned</li>
+                <li>x86_64 AppImage</li>
+                <li>Ubuntu 22.04 baseline</li>
+                <li>Arch package included</li>
               </ul>
-              <span class="button download-card__button download-card__button--soon" aria-disabled="true">Linux coming soon</span>
+              <a class="button button--accent download-card__button" href="https://github.com/sabatesduran/volum/releases/latest/download/Volum_linux_x86_64.AppImage">
+                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14" /></svg>
+                Download AppImage
+              </a>
             </article>
 
             <article class="download-card reveal">
@@ -375,7 +378,7 @@
             <a class="button button--accent" href="#download"><span>Choose your platform</span></a>
             <a class="button button--ghost" href="https://github.com/sabatesduran/volum" rel="noreferrer">★ Star on GitHub</a>
           </div>
-          <small>macOS available now · Windows and Linux coming soon</small>
+          <small>macOS and Linux available now · Windows coming soon</small>
         </div>
       </section>
     </main>

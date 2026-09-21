@@ -43,6 +43,13 @@ Browser-only UI preview (uses a representative local mock library):
 npm run dev
 ```
 
+## Downloads
+
+- **macOS:** universal, signed, and notarized DMG from [GitHub Releases](https://github.com/sabatesduran/volum/releases/latest)
+- **Linux x86_64:** AppImage and Arch Linux package from [GitHub Releases](https://github.com/sabatesduran/volum/releases/latest)
+
+The Linux AppImage is built on Ubuntu 22.04 for broad glibc compatibility. Automated publication of the `volum-bin` package to the AUR is prepared and will be enabled after its maintainer account is configured.
+
 Validation:
 
 ```bash

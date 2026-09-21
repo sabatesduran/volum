@@ -1,0 +1,30 @@
+# Maintainer: Volum contributors
+pkgname=volum-bin
+_pkgname=Volum
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc="A private, local-first desktop library for 3D-printing files"
+arch=('x86_64')
+url="https://github.com/sabatesduran/volum"
+license=('GPL-3.0-or-later')
+depends=('fuse2' 'webkit2gtk-4.1' 'xdg-utils')
+provides=("volum=${pkgver}")
+conflicts=('volum')
+options=('!strip')
+source=('volum.desktop' 'volum.png')
+source_x86_64=("${_pkgname}-${pkgver}.AppImage::${url}/releases/download/v${pkgver}/Volum_linux_x86_64.AppImage")
+sha256sums=('@DESKTOP_SHA256@'
+            '@ICON_SHA256@')
+sha256sums_x86_64=('@APPIMAGE_SHA256@')
+noextract=("${_pkgname}-${pkgver}.AppImage")
+
+package() {
+  install -Dm755 "${srcdir}/${_pkgname}-${pkgver}.AppImage" \
+    "${pkgdir}/opt/volum/Volum.AppImage"
+  install -Dm644 "${srcdir}/volum.desktop" \
+    "${pkgdir}/usr/share/applications/volum.desktop"
+  install -Dm644 "${srcdir}/volum.png" \
+    "${pkgdir}/usr/share/icons/hicolor/128x128/apps/volum.png"
+  install -dm755 "${pkgdir}/usr/bin"
+  ln -s /opt/volum/Volum.AppImage "${pkgdir}/usr/bin/volum"
+}

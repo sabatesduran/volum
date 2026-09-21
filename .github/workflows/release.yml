@@ -9,6 +9,71 @@ permissions:
   contents: write
 
 jobs:
+  linux-appimage:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            file \
+            libayatana-appindicator3-dev \
+            libfuse2 \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            xdg-utils
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: volum-linux
+          add-job-id-key: false
+      - run: npm ci
+      - name: Build signed AppImage
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: npm run tauri build -- --bundles appimage
+      - name: Prepare and inspect Linux artifacts
+        run: |
+          set -euo pipefail
+          VERSION="$(jq -r .version src-tauri/tauri.conf.json)"
+          BUNDLE_DIR="src-tauri/target/release/bundle/appimage"
+          APPIMAGE="$(find "$BUNDLE_DIR" -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
+          UPDATER="$APPIMAGE.tar.gz"
+          SIGNATURE="$UPDATER.sig"
+
+          test -n "$APPIMAGE"
+          test -f "$UPDATER"
+          test -s "$SIGNATURE"
+          mkdir -p release appimage-inspection
+          install -m755 "$APPIMAGE" release/Volum_linux_x86_64.AppImage
+          cp "$UPDATER" release/Volum_linux_x86_64.AppImage.tar.gz
+          cp "$SIGNATURE" release/Volum_linux_x86_64.AppImage.tar.gz.sig
+          sha256sum release/Volum_linux_x86_64.AppImage \
+            > release/Volum_linux_x86_64.AppImage.sha256
+
+          cd appimage-inspection
+          ../release/Volum_linux_x86_64.AppImage --appimage-extract >/dev/null
+          test -x squashfs-root/AppRun
+          test -n "$(find squashfs-root -type f -name '*.desktop' -print -quit)"
+          test -n "$(find squashfs-root -type f -name volum -print -quit)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: volum-linux-x86_64
+          path: release/*
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
     runs-on: macos-latest
     steps:
@@ -60,7 +125,7 @@ jobs:
           tagName: v__VERSION__
           releaseName: Volum v__VERSION__
           releaseBody: |
-            Volum for macOS, with a visual, local-first home for your 3D-printing library.
+            Volum for macOS and Linux, with a visual, local-first home for your 3D-printing library.
 
             - Visual, local-first model library
             - STL, OBJ, and rich multi-plate 3MF previews
@@ -68,8 +133,9 @@ jobs:
             - MakerWorld and Printables attribution imports
             - ZIP archives are ignored instead of appearing as models
             - Signed with Developer ID and notarized by Apple for a smooth installation
+            - Linux x86_64 AppImage and Arch Linux package
 
-            Windows and Linux releases are coming soon.
+            Windows support is coming soon.
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
@@ -103,3 +169,114 @@ jobs:
           spctl --assess --verbose=3 --type open --context context:primary-signature "$DMG"
 
           gh release upload "$TAG" "$DMG" --clobber
+
+  publish-linux:
+    needs: [publish, linux-appimage]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
+        with:
+          name: volum-linux-x86_64
+          path: release
+      - name: Upload AppImage and extend updater manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="$(jq -r .version src-tauri/tauri.conf.json)"
+          TAG="v$VERSION"
+          sha256sum -c release/Volum_linux_x86_64.AppImage.sha256
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" \
+            release/Volum_linux_x86_64.AppImage \
+            release/Volum_linux_x86_64.AppImage.tar.gz \
+            release/Volum_linux_x86_64.AppImage.tar.gz.sig \
+            release/Volum_linux_x86_64.AppImage.sha256 \
+            --clobber
+
+          mkdir updater
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern latest.json --dir updater
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/Volum_linux_x86_64.AppImage.tar.gz"
+          jq --arg url "$URL" \
+            --rawfile signature release/Volum_linux_x86_64.AppImage.tar.gz.sig \
+            '.platforms["linux-x86_64"] = {url: $url, signature: ($signature | rtrimstr("\n"))}' \
+            updater/latest.json > updater/latest-linux.json
+          mv updater/latest-linux.json updater/latest.json
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" updater/latest.json --clobber
+
+  publish-arch:
+    needs: [publish-linux, linux-appimage]
+    runs-on: ubuntu-latest
+    env:
+      AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
+        with:
+          name: volum-linux-x86_64
+          path: release
+      - name: Render and validate volum-bin
+        run: |
+          set -euo pipefail
+          VERSION="$(jq -r .version src-tauri/tauri.conf.json)"
+          APPIMAGE_SHA256="$(sha256sum release/Volum_linux_x86_64.AppImage | cut -d' ' -f1)"
+          PACKAGE_DIR="$RUNNER_TEMP/volum-bin"
+          python3 packaging/aur/render.py \
+            --version "$VERSION" \
+            --appimage-sha256 "$APPIMAGE_SHA256" \
+            --output "$PACKAGE_DIR"
+
+          docker run --rm \
+            -v "$PACKAGE_DIR:/pkg" \
+            archlinux:base-devel \
+            bash -euc '
+              useradd --create-home builder
+              chown -R builder:builder /pkg
+              su builder -c "cd /pkg && makepkg --noconfirm --nodeps"
+              su builder -c "cd /pkg && makepkg --printsrcinfo > .SRCINFO"
+            '
+
+          ARCH_PACKAGE="$(find "$PACKAGE_DIR" -maxdepth 1 -type f -name '*.pkg.tar.zst' -print -quit)"
+          test -n "$ARCH_PACKAGE"
+          cp "$ARCH_PACKAGE" "release/volum-bin-${VERSION}-1-x86_64.pkg.tar.zst"
+          tar -czf "release/volum-bin-${VERSION}-aur.tar.gz" \
+            -C "$PACKAGE_DIR" PKGBUILD .SRCINFO volum.desktop volum.png
+      - name: Upload Arch Linux packages
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="$(jq -r .version src-tauri/tauri.conf.json)"
+          gh release upload "v$VERSION" --repo "$GITHUB_REPOSITORY" \
+            release/volum-bin-*.pkg.tar.zst \
+            release/volum-bin-*-aur.tar.gz \
+            --clobber
+      - name: Publish to the AUR
+        if: ${{ env.AUR_SSH_PRIVATE_KEY != '' }}
+        run: |
+          set -euo pipefail
+          install -d -m700 "$HOME/.ssh"
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > "$HOME/.ssh/aur_volum"
+          chmod 600 "$HOME/.ssh/aur_volum"
+          ssh-keyscan -t ed25519 aur.archlinux.org > "$HOME/.ssh/known_hosts"
+          cat > "$HOME/.ssh/config" <<'EOF'
+          Host aur.archlinux.org
+            IdentityFile ~/.ssh/aur_volum
+            IdentitiesOnly yes
+          EOF
+          chmod 600 "$HOME/.ssh/config" "$HOME/.ssh/known_hosts"
+
+          AUR_REPOSITORY="$RUNNER_TEMP/aur-volum-bin"
+          git clone ssh://aur@aur.archlinux.org/volum-bin.git "$AUR_REPOSITORY"
+          cp "$RUNNER_TEMP/volum-bin/PKGBUILD" "$AUR_REPOSITORY/PKGBUILD"
+          cp "$RUNNER_TEMP/volum-bin/.SRCINFO" "$AUR_REPOSITORY/.SRCINFO"
+          cp "$RUNNER_TEMP/volum-bin/volum.desktop" "$AUR_REPOSITORY/volum.desktop"
+          cp "$RUNNER_TEMP/volum-bin/volum.png" "$AUR_REPOSITORY/volum.png"
+          git -C "$AUR_REPOSITORY" config user.name "Volum release automation"
+          git -C "$AUR_REPOSITORY" config user.email "actions@users.noreply.github.com"
+          git -C "$AUR_REPOSITORY" add PKGBUILD .SRCINFO volum.desktop volum.png
+          if ! git -C "$AUR_REPOSITORY" diff --cached --quiet; then
+            VERSION="$(jq -r .version src-tauri/tauri.conf.json)"
+            git -C "$AUR_REPOSITORY" commit -m "Update to $VERSION"
+            git -C "$AUR_REPOSITORY" push origin master
+          fi

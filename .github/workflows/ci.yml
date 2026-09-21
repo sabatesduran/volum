@@ -35,3 +35,52 @@ jobs:
         working-directory: src-tauri
       - run: cargo test
         working-directory: src-tauri
+
+  linux-bundle:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            file \
+            libayatana-appindicator3-dev \
+            libfuse2 \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            xdg-utils
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: volum-linux
+          add-job-id-key: false
+      - run: npm ci
+      - name: Build AppImage
+        run: npm run tauri build -- --bundles appimage --config '{"bundle":{"createUpdaterArtifacts":false}}'
+      - name: Inspect AppImage and AUR renderer
+        run: |
+          set -euo pipefail
+          APPIMAGE="$(find src-tauri/target/release/bundle/appimage -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
+          test -n "$APPIMAGE"
+          chmod +x "$APPIMAGE"
+          mkdir appimage-inspection
+          cd appimage-inspection
+          "../$APPIMAGE" --appimage-extract >/dev/null
+          test -x squashfs-root/AppRun
+          test -n "$(find squashfs-root -type f -name '*.desktop' -print -quit)"
+          cd ..
+          python3 packaging/aur/render.py \
+            --version 0.0.0 \
+            --appimage-sha256 "$(sha256sum "$APPIMAGE" | cut -d' ' -f1)" \
+            --output "$RUNNER_TEMP/volum-aur"
+          test -f "$RUNNER_TEMP/volum-aur/PKGBUILD"

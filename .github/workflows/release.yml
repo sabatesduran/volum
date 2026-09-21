@@ -73,3 +73,32 @@ jobs:
           prerelease: false
           includeUpdaterJson: true
           args: --target universal-apple-darwin
+      - name: Notarize DMG and verify distribution
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
+        run: |
+          VERSION="$(python3 -c 'import json; print(json.load(open("src-tauri/tauri.conf.json"))["version"])')"
+          TAG="v$VERSION"
+          BUNDLE_DIR="src-tauri/target/universal-apple-darwin/release/bundle"
+          APP="$BUNDLE_DIR/macos/Volum.app"
+          DMG="$BUNDLE_DIR/dmg/Volum_${VERSION}_universal.dmg"
+
+          xcrun notarytool submit "$DMG" \
+            --key "$APPLE_API_KEY_PATH" \
+            --key-id "$APPLE_API_KEY" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait \
+            --timeout 1h
+          xcrun stapler staple "$DMG"
+
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          xcrun stapler validate "$APP"
+          spctl --assess --verbose=3 --type execute "$APP"
+          codesign --verify --strict --verbose=2 "$DMG"
+          xcrun stapler validate "$DMG"
+          spctl --assess --verbose=3 --type open --context context:primary-signature "$DMG"
+
+          gh release upload "$TAG" "$DMG" --clobber

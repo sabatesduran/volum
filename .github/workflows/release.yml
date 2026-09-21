@@ -33,12 +33,13 @@ jobs:
           tagName: v__VERSION__
           releaseName: Volum v__VERSION__
           releaseBody: |
-            The first public Volum preview for macOS.
+            Volum for macOS, with a visual, local-first home for your 3D-printing library.
 
             - Visual, local-first model library
             - STL, OBJ, and rich multi-plate 3MF previews
             - Search, collections, tags, duplicates, materials, and cost estimates
             - MakerWorld and Printables attribution imports
+            - Correct Volum app icon in Finder and the DMG installer
 
             This build is not yet Apple-notarized. If macOS blocks the first launch, Control-click Volum and choose Open. Windows and Linux releases are coming soon.
           releaseDraft: false

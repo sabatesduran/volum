@@ -94,3 +94,53 @@ jobs:
             --appimage-sha256 "$(sha256sum "$APPIMAGE" | cut -d' ' -f1)" \
             --output "$RUNNER_TEMP/volum-aur"
           test -f "$RUNNER_TEMP/volum-aur/PKGBUILD"
+
+  windows-bundle:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            expected-machine: "0x8664"
+          - runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            expected-machine: "0xAA64"
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: volum-windows-${{ matrix.target }}
+          add-job-id-key: false
+      - run: npm ci
+      - name: Build Windows installer
+        run: npm run tauri build -- --target ${{ matrix.target }} --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":false}}'
+      - name: Inspect Windows app architecture and installer
+        shell: pwsh
+        env:
+          TARGET: ${{ matrix.target }}
+          EXPECTED_MACHINE: ${{ matrix.expected-machine }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $app = Get-Item "src-tauri/target/$env:TARGET/release/volum.exe"
+          $installer = Get-ChildItem "src-tauri/target/$env:TARGET/release/bundle/nsis" -File -Filter "*-setup.exe" | Select-Object -First 1
+          if ($null -eq $installer -or $installer.Length -eq 0) {
+            throw "Windows NSIS installer was not created"
+          }
+
+          $bytes = [System.IO.File]::ReadAllBytes($app.FullName)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          $expected = [Convert]::ToUInt16($env:EXPECTED_MACHINE.Substring(2), 16)
+          if ($machine -ne $expected) {
+            throw "Unexpected PE machine 0x$($machine.ToString('X4')); expected 0x$($expected.ToString('X4'))"
+          }

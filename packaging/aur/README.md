@@ -8,7 +8,7 @@ To render a package locally after an AppImage has been built:
 
 ```bash
 python3 packaging/aur/render.py \
-  --version 0.1.4 \
+  --version 0.1.5 \
   --appimage-sha256 "$(sha256sum Volum_linux_x86_64.AppImage | cut -d' ' -f1)" \
   --output /tmp/volum-aur
 ```

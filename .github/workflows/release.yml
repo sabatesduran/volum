@@ -84,6 +84,79 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  windows-installer:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset-arch: x86_64
+            expected-machine: "0x8664"
+          - runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            asset-arch: arm64
+            expected-machine: "0xAA64"
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: volum-windows-${{ matrix.target }}
+          add-job-id-key: false
+      - run: npm ci
+      - name: Build signed Windows installer
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: npm run tauri build -- --target ${{ matrix.target }} --bundles nsis
+      - name: Prepare and inspect Windows artifacts
+        shell: pwsh
+        env:
+          TARGET: ${{ matrix.target }}
+          ASSET_ARCH: ${{ matrix.asset-arch }}
+          EXPECTED_MACHINE: ${{ matrix.expected-machine }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $app = Get-Item "src-tauri/target/$env:TARGET/release/volum.exe"
+          $installer = Get-ChildItem "src-tauri/target/$env:TARGET/release/bundle/nsis" -File -Filter "*-setup.exe" | Select-Object -First 1
+          if ($null -eq $installer -or $installer.Length -eq 0) {
+            throw "Windows NSIS installer was not created"
+          }
+          $signature = Get-Item "$($installer.FullName).sig"
+          if ($signature.Length -eq 0) {
+            throw "Windows updater signature was not created"
+          }
+
+          $bytes = [System.IO.File]::ReadAllBytes($app.FullName)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          $expected = [Convert]::ToUInt16($env:EXPECTED_MACHINE.Substring(2), 16)
+          if ($machine -ne $expected) {
+            throw "Unexpected PE machine 0x$($machine.ToString('X4')); expected 0x$($expected.ToString('X4'))"
+          }
+
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          $destination = "release/Volum_windows_$($env:ASSET_ARCH)_setup.exe"
+          Copy-Item $installer.FullName $destination
+          Copy-Item $signature.FullName "$destination.sig"
+          $hash = (Get-FileHash -Algorithm SHA256 $destination).Hash.ToLowerInvariant()
+          "$hash  $([System.IO.Path]::GetFileName($destination))" | Set-Content -Encoding utf8NoBOM "$destination.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: volum-windows-${{ matrix.asset-arch }}
+          path: release/*
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
     runs-on: macos-latest
     steps:
@@ -135,7 +208,7 @@ jobs:
           tagName: v__VERSION__
           releaseName: Volum v__VERSION__
           releaseBody: |
-            Volum for macOS and Linux, with a visual, local-first home for your 3D-printing library.
+            Volum for macOS, Linux, and Windows, with a visual, local-first home for your 3D-printing library.
 
             - Visual, local-first model library
             - STL, OBJ, and rich multi-plate 3MF previews
@@ -144,8 +217,9 @@ jobs:
             - ZIP archives are ignored instead of appearing as models
             - Signed with Developer ID and notarized by Apple for a smooth installation
             - Linux x86_64 AppImage and Arch Linux package
+            - Native Windows x64 and ARM64 installers
 
-            Windows support is coming soon.
+            Windows installers are not yet Authenticode-signed, so Microsoft Defender SmartScreen may show a warning on first install. In-app update packages are signed and verified by Volum.
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
@@ -180,8 +254,8 @@ jobs:
 
           gh release upload "$TAG" "$DMG" --clobber
 
-  publish-linux:
-    needs: [publish, linux-appimage]
+  publish-platforms:
+    needs: [publish, linux-appimage, windows-installer]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -189,7 +263,12 @@ jobs:
         with:
           name: volum-linux-x86_64
           path: release
-      - name: Upload AppImage and extend updater manifest
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: volum-windows-*
+          path: release
+          merge-multiple: true
+      - name: Upload platform artifacts and extend updater manifest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -199,26 +278,41 @@ jobs:
           (
             cd release
             sha256sum -c Volum_linux_x86_64.AppImage.sha256
+            sha256sum -c Volum_windows_x86_64_setup.exe.sha256
+            sha256sum -c Volum_windows_arm64_setup.exe.sha256
           )
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" \
             release/Volum_linux_x86_64.AppImage \
             release/Volum_linux_x86_64.AppImage.sig \
             release/Volum_linux_x86_64.AppImage.sha256 \
+            release/Volum_windows_x86_64_setup.exe \
+            release/Volum_windows_x86_64_setup.exe.sig \
+            release/Volum_windows_x86_64_setup.exe.sha256 \
+            release/Volum_windows_arm64_setup.exe \
+            release/Volum_windows_arm64_setup.exe.sig \
+            release/Volum_windows_arm64_setup.exe.sha256 \
             --clobber
 
           mkdir updater
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
             --pattern latest.json --dir updater
-          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/Volum_linux_x86_64.AppImage"
-          jq --arg url "$URL" \
-            --rawfile signature release/Volum_linux_x86_64.AppImage.sig \
-            '.platforms["linux-x86_64"] = {url: $url, signature: ($signature | rtrimstr("\n"))}' \
-            updater/latest.json > updater/latest-linux.json
-          mv updater/latest-linux.json updater/latest.json
+          RELEASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          jq \
+            --arg linux_url "$RELEASE_URL/Volum_linux_x86_64.AppImage" \
+            --arg windows_x86_64_url "$RELEASE_URL/Volum_windows_x86_64_setup.exe" \
+            --arg windows_aarch64_url "$RELEASE_URL/Volum_windows_arm64_setup.exe" \
+            --rawfile linux_signature release/Volum_linux_x86_64.AppImage.sig \
+            --rawfile windows_x86_64_signature release/Volum_windows_x86_64_setup.exe.sig \
+            --rawfile windows_aarch64_signature release/Volum_windows_arm64_setup.exe.sig \
+            '.platforms["linux-x86_64"] = {url: $linux_url, signature: ($linux_signature | rtrimstr("\n"))}
+             | .platforms["windows-x86_64"] = {url: $windows_x86_64_url, signature: ($windows_x86_64_signature | rtrimstr("\n"))}
+             | .platforms["windows-aarch64"] = {url: $windows_aarch64_url, signature: ($windows_aarch64_signature | rtrimstr("\n"))}' \
+            updater/latest.json > updater/latest-platforms.json
+          mv updater/latest-platforms.json updater/latest.json
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" updater/latest.json --clobber
 
   publish-arch:
-    needs: [publish-linux, linux-appimage]
+    needs: [publish-platforms, linux-appimage]
     runs-on: ubuntu-latest
     env:
       AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}

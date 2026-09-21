@@ -197,6 +197,9 @@ h1 em, h2 em { color: var(--accent); font-style: normal; }
 .platform-details li::before { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); content: ""; }
 .download-card--available .platform-details { border-color: var(--line); color: var(--muted); }
 .download-card__button { width: 100%; margin-top: auto; }
+.download-card__actions { display: grid; gap: 8px; margin-top: auto; }
+.download-card__actions .download-card__button { margin-top: 0; }
+.download-card__note { min-height: 32px; margin-top: 13px; color: var(--faint); font-size: 9px; line-height: 1.55; }
 .download-card__button--soon { border-color: #d0cabe; color: #8a877e; background: rgb(255 255 255 / .24); cursor: default; }
 .download-card__button--soon:hover { transform: none; }
 
@@ -303,7 +306,7 @@ h1 em, h2 em { color: var(--accent); font-style: normal; }
   .hero-trust { gap: 9px 14px; }
   .platform-note { display: grid; gap: 6px; }
   .platform-note span::before { margin-right: 8px; }
-  .hero-product { width: 124%; margin-left: -12%; }
+  .hero-product { width: 100%; margin-left: 0; }
   .section { padding-block: 76px; }
   .intro-heading h2, .section-heading h2, .privacy-copy h2, .faq-heading h2 { font-size: 43px; }
   .stat-row { grid-template-columns: 1fr 1fr; }

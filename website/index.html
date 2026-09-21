@@ -28,9 +28,9 @@
         "@type": "SoftwareApplication",
         "name": "Volum",
         "applicationCategory": "DesignApplication",
-        "operatingSystem": "macOS",
+        "operatingSystem": "macOS, Linux, Windows 10, Windows 11",
         "description": "A private, local-first desktop library for browsing and organizing 3D-printing files.",
-        "softwareVersion": "0.1.4",
+        "softwareVersion": "0.1.6",
         "license": "https://www.gnu.org/licenses/gpl-3.0.html",
         "url": "https://volum.didac.dev/",
         "downloadUrl": "https://github.com/sabatesduran/volum/releases/latest",
@@ -80,14 +80,14 @@
             <div class="hero-actions">
               <a class="button button--accent" href="https://github.com/sabatesduran/volum/releases/latest" data-download>
                 <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14" /></svg>
-                <span>Download for macOS</span>
+                <span>Download Volum 0.1.6</span>
               </a>
               <a class="button button--ghost" href="https://github.com/sabatesduran/volum" rel="noreferrer">
                 <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9L12 3Z" /></svg>
                 Star on GitHub
               </a>
             </div>
-            <p class="platform-note"><strong>macOS + Linux available now</strong><span>Windows coming soon</span></p>
+            <p class="platform-note"><strong>macOS, Linux + Windows available now</strong><span>Local-first on every platform</span></p>
             <ul class="hero-trust" aria-label="Product benefits">
               <li>No account</li>
               <li>No telemetry</li>
@@ -285,7 +285,7 @@
               <p class="eyebrow eyebrow--dark">Download Volum</p>
               <h2>Choose your platform.</h2>
             </div>
-            <p>Volum is available for macOS and x86_64 Linux today. Native Windows builds are next.</p>
+            <p>Volum is available for macOS, x86_64 Linux, and Windows on both x64 and ARM64.</p>
           </div>
 
           <div class="download-grid">
@@ -302,7 +302,7 @@
               <ul class="platform-details">
                 <li>macOS 13 or later</li>
                 <li>Universal DMG</li>
-                <li>Version 0.1.4</li>
+                <li>Version 0.1.6</li>
               </ul>
               <a class="button button--accent download-card__button" href="https://github.com/sabatesduran/volum/releases/latest" data-download>
                 <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14" /></svg>
@@ -331,22 +331,29 @@
               </a>
             </article>
 
-            <article class="download-card reveal">
+            <article class="download-card download-card--available reveal">
               <div class="download-card__top">
                 <span class="platform-icon" aria-hidden="true">
                   <img src="./assets/os/windows.svg" alt="" width="28" height="28" />
                 </span>
-                <span class="availability-badge">Coming soon</span>
+                <span class="availability-badge availability-badge--live">Available now</span>
               </div>
               <p class="card-kicker">Desktop application</p>
               <h3>Windows</h3>
-              <p>A dedicated Windows installer and desktop build are on the roadmap.</p>
+              <p>Native installers for Windows 10 and 11 on x64 and ARM64.</p>
               <ul class="platform-details">
-                <li>Windows 10 and 11</li>
-                <li>Native desktop experience</li>
-                <li>Release planned</li>
+                <li>Native x64 and ARM64</li>
+                <li>Version 0.1.6</li>
+                <li>Updater-signed packages</li>
               </ul>
-              <span class="button download-card__button download-card__button--soon" aria-disabled="true">Windows coming soon</span>
+              <div class="download-card__actions">
+                <a class="button button--accent download-card__button" href="https://github.com/sabatesduran/volum/releases/latest/download/Volum_windows_x86_64_setup.exe">
+                  <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14" /></svg>
+                  Download x64
+                </a>
+                <a class="button button--ghost download-card__button" href="https://github.com/sabatesduran/volum/releases/latest/download/Volum_windows_arm64_setup.exe">Download ARM64</a>
+              </div>
+              <small class="download-card__note">Not Authenticode-signed yet. SmartScreen may ask for confirmation.</small>
             </article>
           </div>
         </div>
@@ -378,7 +385,7 @@
             <a class="button button--accent" href="#download"><span>Choose your platform</span></a>
             <a class="button button--ghost" href="https://github.com/sabatesduran/volum" rel="noreferrer">★ Star on GitHub</a>
           </div>
-          <small>macOS and Linux available now · Windows coming soon</small>
+          <small>macOS, Linux, Windows x64, and Windows ARM64 available now</small>
         </div>
       </section>
     </main>

@@ -28,7 +28,8 @@ const observer = "IntersectionObserver" in window
   : undefined;
 
 document.querySelectorAll(".reveal").forEach((element) => {
-  if (observer) observer.observe(element);
+  if (element.closest(".hero")) element.classList.add("is-visible");
+  else if (observer) observer.observe(element);
   else element.classList.add("is-visible");
 });
 

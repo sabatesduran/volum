@@ -47,8 +47,12 @@ npm run dev
 
 - **macOS:** universal, signed, and notarized DMG from [GitHub Releases](https://github.com/sabatesduran/volum/releases/latest)
 - **Linux x86_64:** AppImage and Arch Linux package from [GitHub Releases](https://github.com/sabatesduran/volum/releases/latest)
+- **Windows x64:** native [NSIS installer](https://github.com/sabatesduran/volum/releases/latest/download/Volum_windows_x86_64_setup.exe)
+- **Windows ARM64:** native [NSIS installer](https://github.com/sabatesduran/volum/releases/latest/download/Volum_windows_arm64_setup.exe)
 
 The Linux AppImage is built on Ubuntu 22.04 for broad glibc compatibility. Automated publication of the `volum-bin` package to the AUR is prepared and will be enabled after its maintainer account is configured.
+
+Windows installers are not yet Authenticode-signed, so Microsoft Defender SmartScreen may ask for confirmation. Tauri updater signatures and SHA-256 checksum files are published beside both installers. The Windows 11 ARM64 release has been exercised natively, and the x64 release through Windows' built-in emulation, with STL, OBJ, 3MF, Explorer reveal, search, and installed slicers.
 
 Validation:
 
@@ -60,13 +64,13 @@ cd src-tauri && cargo test
 
 ## Release signing
 
-The updater public key is committed in `src-tauri/tauri.conf.json`. The matching development private key is generated under `.tauri/volum.key` and is gitignored. Before publishing:
+- The updater public key is committed in `src-tauri/tauri.conf.json`; its private key is stored only as a GitHub Actions secret.
+- macOS releases are universal Developer ID builds, notarized by Apple, and stapled before publication.
+- Linux AppImages and both Windows installers include Tauri updater signatures and SHA-256 checksums.
+- Windows installers are not yet Authenticode-signed. Authenticode credentials are still required for a warning-free SmartScreen experience.
+- The updater endpoint uses the canonical [`sabatesduran/volum`](https://github.com/sabatesduran/volum) repository.
 
-1. Replace the development key with a password-protected maintainer key.
-2. Update the public key in `src-tauri/tauri.conf.json`.
-3. Store `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` as GitHub Actions secrets.
-4. Configure Apple Developer ID/notarization and Windows code-signing secrets for warning-free installers.
-5. Confirm the updater endpoint matches the canonical GitHub repository.
+Private signing keys must never be committed.
 
 ## Privacy and security
 

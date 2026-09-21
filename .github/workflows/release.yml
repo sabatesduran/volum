@@ -149,7 +149,8 @@ jobs:
           Copy-Item $installer.FullName $destination
           Copy-Item $signature.FullName "$destination.sig"
           $hash = (Get-FileHash -Algorithm SHA256 $destination).Hash.ToLowerInvariant()
-          "$hash  $([System.IO.Path]::GetFileName($destination))" | Set-Content -Encoding utf8NoBOM "$destination.sha256"
+          $checksum = "$hash  $([System.IO.Path]::GetFileName($destination))`n"
+          [System.IO.File]::WriteAllText("$destination.sha256", $checksum, [System.Text.UTF8Encoding]::new($false))
       - uses: actions/upload-artifact@v4
         with:
           name: volum-windows-${{ matrix.asset-arch }}
@@ -218,8 +219,9 @@ jobs:
             - Signed with Developer ID and notarized by Apple for a smooth installation
             - Linux x86_64 AppImage and Arch Linux package
             - Native Windows x64 and ARM64 installers
+            - Improved Windows OrcaSlicer discovery and non-blocking slicer launches
 
-            Windows installers are not yet Authenticode-signed, so Microsoft Defender SmartScreen may show a warning on first install. In-app update packages are signed and verified by Volum.
+            Windows 11 ARM64 was validated with native ARM64 Volum and OrcaSlicer builds, plus x64 Volum and PrusaSlicer through Windows emulation. Windows installers are not yet Authenticode-signed, so Microsoft Defender SmartScreen may show a warning on first install. In-app update packages are signed and verified by Volum.
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true

@@ -1437,7 +1437,7 @@ fn discover_slicer_apps(
             name: "OrcaSlicer",
             brand_color: "#1f9ad6",
             aliases: &["OrcaSlicer", "Orca Slicer"],
-            executables: &["orca-slicer", "OrcaSlicer.exe"],
+            executables: &["orca-slicer", "orca-slicer.exe", "OrcaSlicer.exe"],
         },
         KnownSlicer {
             id: "prusa-slicer",
@@ -1685,8 +1685,15 @@ fn open_with(path: &Path, application: &str) -> CommandResult<()> {
         .arg(app)
         .arg(path)
         .status();
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    return std::process::Command::new(app)
+        .arg(path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string());
+    #[cfg(target_os = "linux")]
     let status = std::process::Command::new(app).arg(path).status();
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     status
         .map_err(|error| error.to_string())
         .and_then(|status| {

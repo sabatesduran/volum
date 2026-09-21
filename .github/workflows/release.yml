@@ -26,7 +26,8 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libxdo-dev \
             patchelf \
-            xdg-utils
+            xdg-utils \
+            xvfb
       - uses: actions/setup-node@v5
         with:
           node-version: 22
@@ -67,6 +68,15 @@ jobs:
           test -x squashfs-root/AppRun
           test -n "$(find squashfs-root -type f -name '*.desktop' -print -quit)"
           test -n "$(find squashfs-root -type f -name volum -print -quit)"
+          set +e
+          timeout 20s xvfb-run -a env WEBKIT_DISABLE_COMPOSITING_MODE=1 \
+            squashfs-root/AppRun > appimage-smoke.log 2>&1
+          STATUS=$?
+          set -e
+          if [ "$STATUS" -ne 124 ]; then
+            cat appimage-smoke.log
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: volum-linux-x86_64

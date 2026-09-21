@@ -53,7 +53,8 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libxdo-dev \
             patchelf \
-            xdg-utils
+            xdg-utils \
+            xvfb
       - uses: actions/setup-node@v5
         with:
           node-version: 22
@@ -78,6 +79,15 @@ jobs:
           "../$APPIMAGE" --appimage-extract >/dev/null
           test -x squashfs-root/AppRun
           test -n "$(find squashfs-root -type f -name '*.desktop' -print -quit)"
+          set +e
+          timeout 20s xvfb-run -a env WEBKIT_DISABLE_COMPOSITING_MODE=1 \
+            squashfs-root/AppRun > appimage-smoke.log 2>&1
+          STATUS=$?
+          set -e
+          if [ "$STATUS" -ne 124 ]; then
+            cat appimage-smoke.log
+            exit 1
+          fi
           cd ..
           python3 packaging/aur/render.py \
             --version 0.0.0 \

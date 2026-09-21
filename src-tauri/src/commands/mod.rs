@@ -994,6 +994,7 @@ struct KnownSlicer {
     id: &'static str,
     name: &'static str,
     brand_color: &'static str,
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     aliases: &'static [&'static str],
     executables: &'static [&'static str],
 }
@@ -1665,6 +1666,7 @@ fn application_icon(_application: &Path, _cache_dir: &Path) -> Option<Vec<u8>> {
     None
 }
 
+#[cfg(target_os = "macos")]
 fn normalize_application_name(name: &str) -> String {
     name.chars()
         .filter(|character| character.is_ascii_alphanumeric())

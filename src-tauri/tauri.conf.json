@@ -38,11 +38,13 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk0MTRFNEMyM0I4REUzMjQKUldRazQ0MDd3VFVbEdtNGIzZVR1M3RuUHVGM1dKdDQ1STJMTVBoY25QKzlIcWdpL21ZMTcyZ00K",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk0MTRFNEMyM0I4REUzMjQKUldRazQ0MDd3dVFVbEdtNGIzZVR1M3RuUHVGM1dKdDQ1STJMTVBoY25QKzlIcWdpL21ZMTcyZ00K",
       "endpoints": [
         "https://github.com/sabatesduran/volum/releases/latest/download/latest.json"
       ],
-      "windows": { "installMode": "passive" }
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

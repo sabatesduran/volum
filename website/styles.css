@@ -184,8 +184,9 @@ h1 em, h2 em { color: var(--accent); font-style: normal; }
 .download-card--available { border-color: var(--night-3); background: var(--night-3); color: var(--ink); box-shadow: 0 28px 55px rgb(44 35 27 / .16); }
 .download-card__top { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 72px; }
 .platform-icon { width: 48px; height: 48px; display: grid; place-items: center; border: 1px solid #cec8bc; border-radius: 14px; color: var(--accent-dark); background: #f9f6ef; }
-.platform-icon svg { width: 23px; height: 23px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.6; }
-.download-card--available .platform-icon { border-color: rgb(255 255 255 / .12); color: var(--accent-bright); background: rgb(255 255 255 / .055); }
+.platform-icon img { width: 26px; height: 26px; display: block; object-fit: contain; opacity: .82; }
+.download-card--available .platform-icon { border-color: rgb(255 255 255 / .2); background: #f9f6ef; }
+.download-card--available .platform-icon img { opacity: .9; }
 .availability-badge { padding: 8px 11px; border: 1px solid #d0cabe; border-radius: 18px; color: var(--paper-muted); font-size: 10px; font-weight: 680; }
 .availability-badge--live { border-color: rgb(87 183 126 / .24); color: #7bd09d; background: rgb(87 183 126 / .08); }
 .download-card h3 { margin: 0; font-size: clamp(38px, 4vw, 58px); font-weight: 590; letter-spacing: -.055em; line-height: 1; }

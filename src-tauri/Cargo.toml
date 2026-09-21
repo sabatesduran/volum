@@ -1,6 +1,6 @@
 [package]
 name = "volum"
-version = "0.1.7"
+version = "0.1.8"
 description = "A beautiful home for your 3D models"
 authors = ["Volum contributors"]
 edition = "2021"

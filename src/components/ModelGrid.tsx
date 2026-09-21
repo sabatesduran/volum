@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Box } from "lucide-react";
 import { useAppStore } from "../app/store";
@@ -19,26 +19,39 @@ interface ModelGridProps {
 export function ModelGrid({ models, loading = false, loadingMore = false, hasMore = false, onLoadMore, context = "folder", onChanged }: ModelGridProps) {
   const density = useAppStore((state) => state.density);
   const parentRef = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(1000);
-  useEffect(() => {
-    if (!parentRef.current) return;
-    const observer = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width));
-    observer.observe(parentRef.current);
-    return () => observer.disconnect();
-  }, []);
+  const [width, setWidth] = useState(0);
+  const hasGrid = !loading && models.length > 0;
+  useLayoutEffect(() => {
+    if (!hasGrid) return;
+    const element = parentRef.current;
+    if (!element) return;
+    const measure = () => setWidth(element.clientWidth);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [hasGrid]);
   const minimum = density === "compact" ? 176 : density === "large" ? 320 : 238;
   const gap = density === "compact" ? 12 : 18;
-  const columns = Math.max(1, Math.floor((width + gap) / (minimum + gap)));
-  const cardWidth = (width - gap * (columns - 1)) / columns;
+  const measuredWidth = Math.max(width, minimum);
+  const columns = Math.max(1, Math.floor((measuredWidth + gap) / (minimum + gap)));
+  const cardWidth = (measuredWidth - gap * (columns - 1)) / columns;
   const rowHeight = cardWidth * .75 + (density === "compact" ? 60 : 72) + gap;
   const modelRows = Math.ceil(models.length / columns);
+  const estimateRowHeight = useCallback(() => rowHeight, [rowHeight]);
   const virtualizer = useVirtualizer({
     count: modelRows + (hasMore ? 1 : 0),
     getScrollElement: () => parentRef.current,
-    estimateSize: () => rowHeight,
+    estimateSize: estimateRowHeight,
     overscan: 3
   });
-  useEffect(() => virtualizer.measure(), [columns, rowHeight, virtualizer]);
+  useLayoutEffect(() => {
+    if (width > 0) virtualizer.measure();
+  }, [columns, rowHeight, virtualizer, width]);
   const skeletons = useMemo(() => Array.from({ length: 8 }), []);
   const virtualRows = virtualizer.getVirtualItems();
   const lastVisibleRow = virtualRows.at(-1)?.index ?? -1;
@@ -54,8 +67,8 @@ export function ModelGrid({ models, loading = false, loadingMore = false, hasMor
   );
   return (
     <div className="virtual-grid" ref={parentRef}>
-      <div className="virtual-grid__sizer" style={{ height: virtualizer.getTotalSize() }}>
-        {virtualRows.map((row) => row.index >= modelRows ? (
+      <div className="virtual-grid__sizer" style={{ height: width > 0 ? virtualizer.getTotalSize() : 0 }}>
+        {width > 0 && virtualRows.map((row) => row.index >= modelRows ? (
           <div className="virtual-grid__loader" key={row.key} style={{ transform: `translateY(${row.start}px)`, height: rowHeight }}><span className="spin-dot" />{t(loadingMore ? "Loading more models…" : "Scroll to load more")}</div>
         ) : (
           <div className="virtual-grid__row" key={row.key} style={{ transform: `translateY(${row.start}px)`, gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, gap }}>

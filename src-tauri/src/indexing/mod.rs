@@ -1,6 +1,9 @@
 use crate::{domain::ScanStatus, parsers, state::AppState};
 use chrono::{DateTime, Utc};
-use notify::{RecursiveMode, Watcher};
+use notify::{
+    event::{AccessKind, AccessMode},
+    EventKind, RecursiveMode, Watcher,
+};
 use sqlx::{Row, SqlitePool};
 use std::{
     collections::{HashMap, HashSet},
@@ -144,7 +147,10 @@ fn ensure_watcher(
     let pending = Arc::new(AtomicBool::new(false));
     let mut watcher =
         notify::recommended_watcher(move |result: Result<notify::Event, notify::Error>| {
-            if result.is_err() || pending.swap(true, Ordering::SeqCst) {
+            let Ok(event) = result else {
+                return;
+            };
+            if !event_requires_scan(&event.kind) || pending.swap(true, Ordering::SeqCst) {
                 return;
             }
             let root_id = watched_id.clone();
@@ -172,6 +178,14 @@ fn ensure_watcher(
         .map_err(|error| error.to_string())?;
     watchers.insert(root_id.to_string(), watcher);
     Ok(())
+}
+
+fn event_requires_scan(kind: &EventKind) -> bool {
+    match kind {
+        EventKind::Access(AccessKind::Close(AccessMode::Write)) => true,
+        EventKind::Access(_) => false,
+        _ => true,
+    }
 }
 
 async fn scan_root(
@@ -714,6 +728,23 @@ fn db_error(error: sqlx::Error) -> String {
 mod tests {
     use super::*;
     use crate::state::AppState;
+    use notify::event::{CreateKind, ModifyKind};
+
+    #[test]
+    fn watcher_ignores_access_events_from_its_own_scan() {
+        assert!(!event_requires_scan(&EventKind::Access(AccessKind::Open(
+            AccessMode::Any
+        ))));
+        assert!(!event_requires_scan(&EventKind::Access(AccessKind::Close(
+            AccessMode::Read
+        ))));
+        assert!(event_requires_scan(&EventKind::Access(AccessKind::Close(
+            AccessMode::Write
+        ))));
+        assert!(event_requires_scan(&EventKind::Create(CreateKind::File)));
+        assert!(event_requires_scan(&EventKind::Modify(ModifyKind::Any)));
+    }
+
     #[test]
     fn grouping_is_stable_for_separators() {
         assert_eq!(

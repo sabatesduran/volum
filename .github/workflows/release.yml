@@ -211,6 +211,11 @@ jobs:
           releaseBody: |
             Volum for macOS, Linux, and Windows, with a visual, local-first home for your 3D-printing library.
 
+            What's fixed in 0.1.8:
+
+            - Model cards no longer overlap when a library finishes loading or the grid is resized
+            - Linux filesystem reads no longer trigger continuous library rescans and a persistent Building previews state
+
             - Visual, local-first model library
             - STL, OBJ, and rich multi-plate 3MF previews
             - Search, collections, tags, duplicates, materials, and cost estimates

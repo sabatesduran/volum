@@ -1,11 +1,12 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, Check, ChevronDown, Grid2X2, Plus, Rows3, ScanSearch, Sparkles } from "lucide-react";
+import { ArrowRight, Check, ChevronDown, FolderPlus, Grid2X2, Plus, Rows3, ScanSearch, Sparkles } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "../../app/store";
 import { ModelGrid } from "../../components/ModelGrid";
 import { DuplicateStacks } from "../../components/DuplicateStacks";
 import { SelectionBar } from "../../components/SelectionBar";
-import { api } from "../../lib/tauri/api";
+import { api, isTauri } from "../../lib/tauri/api";
 import type { Density, ModelQuery, ModelSort } from "../../types";
 import { plural, t } from "../../lib/i18n";
 
@@ -42,6 +43,7 @@ function DensityControl() {
 
 export function LibraryView({ onNewCollection }: { onNewCollection: () => void }) {
   const queryClient = useQueryClient();
+  const [addingFolder, setAddingFolder] = useState(false);
   const { search, view, selectedFolderId, selectedCollectionId, selectFolder, selectCollection, formatFilter, availabilityFilter, tagFilter, dateField, dateFrom, dateTo, modelSort, setModelSort } = useAppStore();
   const { data: folders = [] } = useQuery({ queryKey: ["folders"], queryFn: () => api.folders() });
   const { data: collections = [] } = useQuery({ queryKey: ["collections"], queryFn: api.collections });
@@ -95,12 +97,29 @@ export function LibraryView({ onNewCollection }: { onNewCollection: () => void }
   });
   const duplicateGroups = duplicateQuery.data?.pages.flatMap((page) => page.items) ?? [];
   const invalidate = () => { queryClient.invalidateQueries({ queryKey: ["models"] }); };
+  const addFolder = async () => {
+    if (addingFolder) return;
+    setAddingFolder(true);
+    try {
+      const path = isTauri() ? await open({ directory: true, multiple: false, title: t("Choose a 3D model folder") }) : "/Users/you/New Models";
+      if (!path || Array.isArray(path)) return;
+      const root = await api.addRoot(path);
+      await api.startScan(root.id);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["roots"] }),
+        queryClient.invalidateQueries({ queryKey: ["folders"] }),
+        queryClient.invalidateQueries({ queryKey: ["models"] })
+      ]);
+    } finally {
+      setAddingFolder(false);
+    }
+  };
 
   if (view === "folders") {
     return (
       <div className="split-browser">
         <aside className="tree-panel">
-          <div className="tree-panel__header"><span>{t("Folders")}</span><button className="icon-button icon-button--tiny" aria-label={t("Folder options")}><Plus size={15} /></button></div>
+          <div className="tree-panel__header"><span>{t("Folders")}</span><button className="icon-button icon-button--tiny" onClick={() => void addFolder()} disabled={addingFolder} aria-label={t("Add folder")} title={t("Add folder")}><FolderPlus size={15} /></button></div>
           <button className={`tree-item tree-item--root ${!selectedFolderId ? "is-active" : ""}`} onClick={() => selectFolder()}><ChevronDown size={14} /><span>{t("All folders")}</span><small>{total}</small></button>
           {renderFolders()}
         </aside>
@@ -127,7 +146,7 @@ export function LibraryView({ onNewCollection }: { onNewCollection: () => void }
   }
 
   const title = search ? t("Results for “{search}”", { search }) : view === "favorites" ? t("Favorites") : view === "recent" ? t("Recent") : view === "collections" ? selectedCollection?.name ?? t("Collection") : t("Your library");
-  const subtitle = search ? t("{count} matching models", { count: total }) : view === "favorites" ? t("Models you want close at hand.") : view === "recent" ? t("Models you added, changed, or opened recently.") : view === "collections" ? selectedCollection?.smart ? t("{count} models matching this collection’s rules", { count: total }) : t("{count} models from across your folders", { count: total }) : t("Everything you’ve collected, ready to find.");
+  const subtitle = search ? t("{count} matching models", { count: total }) : view === "favorites" ? t("Models you want close at hand.") : view === "recent" ? t("Models you added, changed, or opened recently.") : view === "collections" ? selectedCollection?.smart ? t("{count} models matching this collection’s rules", { count: total }) : t("{count} models from across your folders", { count: total }) : plural(total, "{count} model in your library", "{count} models in your library");
   return (
     <section className={`content-view content-view--grid ${view === "library" && !search ? "library-home" : ""}`}>
       <header className="view-header"><div><div className="eyebrow">{view === "library" ? t("Local 3D model library") : t(view === "favorites" ? "Favorites" : view === "recent" ? "Recent" : "Collections")}</div><h1>{title}</h1><p>{subtitle}</p></div><div className="view-header__controls"><SortControl value={modelSort} onChange={setModelSort} /><DensityControl /></div></header>

@@ -211,10 +211,13 @@ jobs:
           releaseBody: |
             Volum for macOS, Linux, and Windows, with a visual, local-first home for your 3D-printing library.
 
-            What's fixed in 0.1.8:
+            What's new in 0.1.9:
 
-            - Model cards no longer overlap when a library finishes loading or the grid is resized
-            - Linux filesystem reads no longer trigger continuous library rescans and a persistent Building previews state
+            - Add a library directly from the Folders view; Volum opens the folder picker and starts indexing immediately
+            - Filter with a redesigned, localized calendar that matches Volum and keeps From/To ranges valid
+            - Read larger, clearer quick-filter controls
+            - See the total number of indexed models directly in the library header
+            - Browse a more polished product website with clearer navigation and sharing previews
 
             - Visual, local-first model library
             - STL, OBJ, and rich multi-plate 3MF previews

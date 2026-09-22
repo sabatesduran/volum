@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useAppStore } from "../app/store";
 import { api } from "../lib/tauri/api";
 import { t } from "../lib/i18n";
+import { DatePicker } from "./DatePicker";
 
 const formats = ["", "stl", "3mf", "obj", "step"];
 
@@ -16,7 +17,7 @@ export function FilterPanel({ onClose }: { onClose: () => void }) {
       <fieldset><legend>{t("Format")}</legend><div className="filter-options">{formats.map((format) => <button key={format || "all"} className={formatFilter === format ? "is-active" : ""} onClick={() => setFormatFilter(format)}>{formatFilter === format && <Check size={12} />}{format ? format.toUpperCase() : t("All formats")}</button>)}</div></fieldset>
       <fieldset><legend>{t("Availability")}</legend><div className="filter-options">{([['', "Everything"], ["available", "Available"], ["offline", "Offline"]] as const).map(([value, label]) => <button key={label} className={availabilityFilter === value ? "is-active" : ""} onClick={() => setAvailabilityFilter(value)}>{availabilityFilter === value && <Check size={12} />}{t(label)}</button>)}</div></fieldset>
       {tags.length > 0 && <fieldset><legend>{t("Tag")}</legend><label className="filter-select"><select value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}><option value="">{t("All tags")}</option>{tags.map((tag) => <option value={tag.id} key={tag.id}>{tag.name} ({tag.modelCount})</option>)}</select></label></fieldset>}
-      <fieldset><legend>{t("Date")}</legend><div className="segmented filter-date-field"><button className={dateField === "modified" ? "is-active" : ""} onClick={() => setDateField("modified")}>{t("Modified")}</button><button className={dateField === "added" ? "is-active" : ""} onClick={() => setDateField("added")}>{t("Added")}</button></div><div className="filter-date-range"><label><span>{t("From")}</span><input type="date" value={dateFrom} max={dateTo || undefined} onChange={(event) => setDateRange(event.target.value, dateTo)} /></label><label><span>{t("To")}</span><input type="date" value={dateTo} min={dateFrom || undefined} onChange={(event) => setDateRange(dateFrom, event.target.value)} /></label></div></fieldset>
+      <fieldset><legend>{t("Date")}</legend><div className="segmented filter-date-field"><button className={dateField === "modified" ? "is-active" : ""} onClick={() => setDateField("modified")}>{t("Modified")}</button><button className={dateField === "added" ? "is-active" : ""} onClick={() => setDateField("added")}>{t("Added")}</button></div><div className="filter-date-range"><DatePicker label={t("From")} value={dateFrom} max={dateTo || undefined} onChange={(value) => setDateRange(value, dateTo)} /><DatePicker label={t("To")} value={dateTo} min={dateFrom || undefined} onChange={(value) => setDateRange(dateFrom, value)} /></div></fieldset>
       {hasFilters && <button className="button button--quiet button--full" onClick={clearFilters}>{t("Clear filters")}</button>}
     </div>
   );

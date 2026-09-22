@@ -7,6 +7,9 @@
     "dev": "vite",
     "build": "vite build"
   },
+  "dependencies": {
+    "posthog-js": "^1.434.7"
+  },
   "devDependencies": {
     "vite": "^7.1.7"
   }

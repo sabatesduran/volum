@@ -7,19 +7,27 @@
     <meta name="color-scheme" content="dark" />
     <meta name="description" content="Volum is a private, local-first desktop library for browsing, organizing, and previewing your 3D-printing files." />
     <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Volum" />
+    <meta property="og:locale" content="en_US" />
     <meta property="og:url" content="https://volum.didac.dev/" />
     <meta property="og:title" content="Volum — A beautiful home for your 3D models" />
     <meta property="og:description" content="Search every model, inspect real 3D geometry, preserve multi-plate 3MF projects, and open files in your slicer—without uploading your library." />
-    <meta property="og:image" content="./assets/og-image.jpg" />
+    <meta property="og:image" content="https://volum.didac.dev/og-image.jpg" />
+    <meta property="og:image:secure_url" content="https://volum.didac.dev/og-image.jpg" />
+    <meta property="og:image:type" content="image/jpeg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Volum, a private local-first library that makes 3D models visual and searchable" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Volum — Your 3D model library, finally visible" />
     <meta name="twitter:description" content="A private, local-first desktop library built for makers." />
-    <meta name="twitter:image" content="./assets/og-image.jpg" />
+    <meta name="twitter:image" content="https://volum.didac.dev/og-image.jpg" />
+    <meta name="twitter:image:alt" content="Volum, a private local-first library that makes 3D models visual and searchable" />
     <script>document.documentElement.classList.add("js");</script>
     <link rel="canonical" href="https://volum.didac.dev/" />
-    <link rel="icon" type="image/png" href="./assets/favicon.png" />
-    <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png" />
-    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="stylesheet" href="./styles.css" />
     <title>Volum — A beautiful home for your 3D models</title>
     <script type="application/ld+json">
@@ -30,7 +38,7 @@
         "applicationCategory": "DesignApplication",
         "operatingSystem": "macOS, Linux, Windows 10, Windows 11",
         "description": "A private, local-first desktop library for browsing and organizing 3D-printing files.",
-        "softwareVersion": "0.1.7",
+        "softwareVersion": "__VOLUM_VERSION__",
         "license": "https://www.gnu.org/licenses/gpl-3.0.html",
         "url": "https://volum.didac.dev/",
         "downloadUrl": "https://github.com/sabatesduran/volum/releases/latest",
@@ -38,7 +46,7 @@
       }
     </script>
   </head>
-  <body>
+  <body data-version="__VOLUM_VERSION__">
     <a class="skip-link" href="#main">Skip to content</a>
 
     <header class="site-header" data-header>
@@ -54,14 +62,14 @@
         </button>
 
         <nav id="site-nav" class="site-nav" aria-label="Primary navigation" data-nav>
-          <a href="#library">Library</a>
-          <a href="#three-mf">3MF</a>
-          <a href="#workflow">Workflow</a>
-          <a href="#privacy">Privacy</a>
-          <a href="https://github.com/sabatesduran/volum" rel="noreferrer">Star on GitHub ★</a>
+          <a href="#library" data-section-link>Visual library</a>
+          <a href="#three-mf" data-section-link>3MF projects</a>
+          <a href="#imports" data-section-link>Web imports</a>
+          <a href="#workflow" data-section-link>How it works</a>
+          <a href="#privacy" data-section-link>Privacy</a>
         </nav>
 
-        <a class="button button--small button--light nav-download" href="#download">
+        <a class="button button--small button--light nav-download" href="#download" data-download data-download-platform="all" data-download-architecture="choose" data-download-location="navigation">
           Download
           <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14" /></svg>
         </a>
@@ -78,11 +86,11 @@
             <h1>Your models.<br /><em>Finally visible.</em></h1>
             <p class="hero-lede">Volum turns folders full of STL, OBJ, and 3MF files into a visual, searchable library—without moving or uploading a thing.</p>
             <div class="hero-actions">
-              <a class="button button--accent" href="https://github.com/sabatesduran/volum/releases/latest" data-download>
+              <a class="button button--accent" href="https://github.com/sabatesduran/volum/releases/latest" data-download data-download-platform="all" data-download-architecture="choose" data-download-location="hero">
                 <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14" /></svg>
-                <span>Download Volum 0.1.7</span>
+                <span>Download Volum __VOLUM_VERSION__</span>
               </a>
-              <a class="button button--ghost" href="https://github.com/sabatesduran/volum" rel="noreferrer">
+              <a class="button button--ghost" href="https://github.com/sabatesduran/volum" rel="noreferrer" data-github-location="hero">
                 <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9L12 3Z" /></svg>
                 Star on GitHub
               </a>
@@ -90,14 +98,14 @@
             <p class="platform-note"><strong>macOS, Linux + Windows available now</strong><span>Local-first on every platform</span></p>
             <ul class="hero-trust" aria-label="Product benefits">
               <li>No account</li>
-              <li>No telemetry</li>
+              <li>No app telemetry</li>
               <li>Open source</li>
             </ul>
           </div>
 
           <div class="hero-product reveal reveal--delay">
             <div class="hero-chip hero-chip--top"><span></span> Real geometry</div>
-            <button class="shot-button" type="button" data-shot>
+            <button class="shot-button" type="button" data-shot data-shot-name="batraci-mini">
               <img src="./assets/screenshots/batraci-mini.webp" alt="Volum previewing the Batraci Mini 3MF model on a gridded build plate" width="2000" height="1339" fetchpriority="high" />
             </button>
             <div class="hero-chip hero-chip--bottom">3MF · Original color · Plate 1</div>
@@ -122,13 +130,13 @@
             <p>Point Volum at the folders you already use. It indexes them in place, renders persistent previews in the background, and keeps watching as your library changes.</p>
             <div class="stat-row">
               <div><strong>0</strong><span>uploads required</span></div>
-              <div><strong>5</strong><span>model formats</span></div>
+              <div><strong>4</strong><span>model formats</span></div>
               <div><strong>∞</strong><span>local folders</span></div>
             </div>
           </div>
 
           <figure class="wide-shot reveal">
-            <button class="shot-button" type="button" data-shot>
+            <button class="shot-button" type="button" data-shot data-shot-name="visual-library">
               <img src="./assets/screenshots/library.webp" alt="Volum's visual 3D model library in dark mode" width="2000" height="1339" loading="lazy" />
             </button>
             <figcaption>
@@ -149,7 +157,7 @@
 
           <div class="feature-layout">
             <figure class="feature-shot reveal">
-              <button class="shot-button" type="button" data-shot>
+              <button class="shot-button" type="button" data-shot data-shot-name="multi-plate-3mf">
                 <img src="./assets/screenshots/multi-plate.webp" alt="A three-plate 3MF project displayed together in Volum" width="2000" height="1339" loading="lazy" />
               </button>
             </figure>
@@ -211,7 +219,7 @@
                 <h3>Know what a print costs before it reaches the bed.</h3>
                 <p>Save spool prices, use explicit sliced 3MF grams, calculate per-piece and batch costs, and keep estimates with the model.</p>
               </div>
-              <div class="cost-card" aria-label="Example print cost">
+              <div class="cost-card" role="group" aria-label="Example print cost">
                 <span>One piece</span><strong>€1.17</strong><small>73 g · PLA Matte</small>
               </div>
             </article>
@@ -239,7 +247,7 @@
             </ul>
           </div>
           <figure class="imports-shot reveal reveal--delay">
-            <button class="shot-button" type="button" data-shot>
+            <button class="shot-button" type="button" data-shot data-shot-name="web-imports">
               <img src="./assets/screenshots/web-imports.webp" alt="MakerWorld model attribution and metadata inside Volum" width="2000" height="1339" loading="lazy" />
             </button>
           </figure>
@@ -267,13 +275,14 @@
           <div class="privacy-copy reveal reveal--delay">
             <p class="eyebrow"><span></span> Uploads required</p>
             <h2>Your library is yours.<br />It stays that way.</h2>
-            <p>Volum is local-first by design. There is no account, no analytics, no model upload pipeline, and no network connection required to browse your files.</p>
+            <p>Volum is local-first by design. The desktop app has no account, analytics, or model upload pipeline, and no network connection is required to browse your files.</p>
             <div class="privacy-points">
               <span>Local SQLite index</span>
               <span>User-approved folders only</span>
               <span>Open-source GPL-3.0</span>
             </div>
             <a class="text-link" href="https://github.com/sabatesduran/volum/blob/main/SECURITY.md" rel="noreferrer">Read the security model <span aria-hidden="true">↗</span></a>
+            <p class="website-analytics-note">This website uses PostHog to understand visits and interactions. Website analytics are separate from the Volum app and never receive library, model, or file data. <a href="https://posthog.com/privacy" rel="noreferrer">PostHog privacy <span aria-hidden="true">↗</span></a></p>
           </div>
         </div>
       </section>
@@ -302,9 +311,9 @@
               <ul class="platform-details">
                 <li>macOS 13 or later</li>
                 <li>Universal DMG</li>
-                <li>Version 0.1.7</li>
+                <li>Version __VOLUM_VERSION__</li>
               </ul>
-              <a class="button button--accent download-card__button" href="https://github.com/sabatesduran/volum/releases/latest" data-download>
+              <a class="button button--accent download-card__button" href="https://github.com/sabatesduran/volum/releases/latest/download/Volum___VOLUM_VERSION___universal.dmg" data-download data-download-platform="macos" data-download-architecture="universal" data-download-location="platform-card">
                 <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14" /></svg>
                 Download for macOS
               </a>
@@ -325,7 +334,7 @@
                 <li>Ubuntu 22.04 baseline</li>
                 <li>Arch package included</li>
               </ul>
-              <a class="button button--accent download-card__button" href="https://github.com/sabatesduran/volum/releases/latest/download/Volum_linux_x86_64.AppImage">
+              <a class="button button--accent download-card__button" href="https://github.com/sabatesduran/volum/releases/latest/download/Volum_linux_x86_64.AppImage" data-download data-download-platform="linux" data-download-architecture="x86_64" data-download-location="platform-card">
                 <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14" /></svg>
                 Download AppImage
               </a>
@@ -343,15 +352,15 @@
               <p>Native installers for Windows 10 and 11 on x64 and ARM64.</p>
               <ul class="platform-details">
                 <li>Native x64 and ARM64</li>
-                <li>Version 0.1.7</li>
+                <li>Version __VOLUM_VERSION__</li>
                 <li>Updater-signed packages</li>
               </ul>
               <div class="download-card__actions">
-                <a class="button button--accent download-card__button" href="https://github.com/sabatesduran/volum/releases/latest/download/Volum_windows_x86_64_setup.exe">
+                <a class="button button--accent download-card__button" href="https://github.com/sabatesduran/volum/releases/latest/download/Volum_windows_x86_64_setup.exe" data-download data-download-platform="windows" data-download-architecture="x86_64" data-download-location="platform-card">
                   <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14" /></svg>
                   Download x64
                 </a>
-                <a class="button button--ghost download-card__button" href="https://github.com/sabatesduran/volum/releases/latest/download/Volum_windows_arm64_setup.exe">Download ARM64</a>
+                <a class="button button--ghost download-card__button" href="https://github.com/sabatesduran/volum/releases/latest/download/Volum_windows_arm64_setup.exe" data-download data-download-platform="windows" data-download-architecture="arm64" data-download-location="platform-card">Download ARM64</a>
               </div>
               <small class="download-card__note">Not Authenticode-signed yet. SmartScreen may ask for confirmation.</small>
             </article>
@@ -366,10 +375,10 @@
             <h2>Before you make room for Volum.</h2>
           </div>
           <div class="faq-list">
-            <details class="reveal"><summary>Does Volum move or rename my files?<span>+</span></summary><p>No. Volum indexes files in place. Collections, tags, favorites, notes, and estimates live in its local database without changing your folder structure.</p></details>
-            <details class="reveal"><summary>Which formats are supported?<span>+</span></summary><p>STL, OBJ, 3MF, and STEP/STP files are indexed. ZIP archives are ignored. STL, OBJ, and 3MF have interactive geometry previews; STEP/STP tessellation is intentionally marked as pending.</p></details>
-            <details class="reveal"><summary>Does web import download protected files?<span>+</span></summary><p>No. Volum reads public MakerWorld or Printables metadata and lets you attach files you downloaded through the official provider. It never asks for provider credentials.</p></details>
-            <details class="reveal"><summary>Is Volum free and open source?<span>+</span></summary><p>Yes. Volum is licensed under GPL-3.0-or-later. Source code and releases are available on GitHub. If Volum is useful to you, please star the project—it helps more makers discover it.</p></details>
+            <details class="reveal" data-faq-id="file-handling"><summary>Does Volum move or rename my files?<span>+</span></summary><p>No. Volum indexes files in place. Collections, tags, favorites, notes, and estimates live in its local database without changing your folder structure.</p></details>
+            <details class="reveal" data-faq-id="supported-formats"><summary>Which formats are supported?<span>+</span></summary><p>STL, OBJ, 3MF, and STEP/STP files are indexed. ZIP archives are ignored. STL, OBJ, and 3MF have interactive geometry previews; STEP/STP tessellation is intentionally marked as pending.</p></details>
+            <details class="reveal" data-faq-id="web-imports"><summary>Does web import download protected files?<span>+</span></summary><p>No. Volum reads public MakerWorld or Printables metadata and lets you attach files you downloaded through the official provider. It never asks for provider credentials.</p></details>
+            <details class="reveal" data-faq-id="open-source"><summary>Is Volum free and open source?<span>+</span></summary><p>Yes. Volum is licensed under GPL-3.0-or-later. Source code and releases are available on GitHub. If Volum is useful to you, please star the project—it helps more makers discover it.</p></details>
           </div>
         </div>
       </section>
@@ -382,8 +391,8 @@
           <h2>A beautiful home<br />for your 3D models.</h2>
           <p>Download Volum, choose a folder, and let your library come into view. Like the project? Give it a star on GitHub.</p>
           <div class="hero-actions hero-actions--center">
-            <a class="button button--accent" href="#download"><span>Choose your platform</span></a>
-            <a class="button button--ghost" href="https://github.com/sabatesduran/volum" rel="noreferrer">★ Star on GitHub</a>
+            <a class="button button--accent" href="#download" data-download data-download-platform="all" data-download-architecture="choose" data-download-location="final-cta"><span>Choose your platform</span></a>
+            <a class="button button--ghost" href="https://github.com/sabatesduran/volum" rel="noreferrer" data-github-location="final-cta">★ Star on GitHub</a>
           </div>
           <small>macOS, Linux, Windows x64, and Windows ARM64 available now</small>
         </div>
@@ -395,8 +404,8 @@
         <a class="brand" href="#top" aria-label="Volum home"><img src="./assets/volum-icon.png" alt="" width="30" height="30" /><span>VOL<span>U</span>M</span></a>
         <p>Private, local-first, and built for makers.</p>
         <div class="footer-links">
-          <a href="#download">Download</a>
-          <a href="https://github.com/sabatesduran/volum">Star on GitHub ★</a>
+          <a href="#download" data-download data-download-platform="all" data-download-architecture="choose" data-download-location="footer">Download</a>
+          <a href="https://github.com/sabatesduran/volum" data-github-location="footer">Star on GitHub ★</a>
           <a href="https://github.com/sabatesduran/volum/releases">Releases</a>
           <a href="https://github.com/sabatesduran/volum/blob/main/LICENSE">GPL-3.0</a>
           <a href="https://didac.dev/">didac.dev ↗</a>
@@ -407,7 +416,7 @@
 
     <dialog class="shot-dialog" data-shot-dialog aria-label="Expanded product screenshot">
       <button class="shot-dialog__close" type="button" aria-label="Close screenshot" data-shot-close>×</button>
-      <img alt="" data-shot-image />
+      <img src="./assets/screenshots/batraci-mini.webp" alt="" data-shot-image />
       <p data-shot-caption></p>
     </dialog>
 

@@ -1,6 +1,8 @@
 # Volum website
 
-Static product website for Volum. It has no runtime framework, analytics, trackers, or third-party assets.
+Static product website for Volum. It has no runtime framework or remotely hosted visual assets. The production build uses PostHog product analytics through the same first-party proxy and project as didac.dev; this is separate from the Volum desktop app and never receives library or model data.
+
+Copy `.env.example` to `.env.local` and provide the shared PostHog project token and ingestion host to enable analytics in production builds. Analytics stay disabled during local development.
 
 ## Development
 
@@ -17,6 +19,10 @@ npm run website:build
 ```
 
 The output is written to `website-dist/`.
+
+## Sharing image
+
+The editable 1200 × 630 source is `assets/og-image-source.svg`. Its JPEG export is kept at `public/og-image.jpg` so link preview crawlers always receive a stable, absolute URL.
 
 ## Deploying to Vercel
 

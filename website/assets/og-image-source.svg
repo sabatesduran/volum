@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientTransform="translate(1030 90) rotate(128) scale(620)">
+      <stop offset="0" stop-color="#f47452" stop-opacity=".24" />
+      <stop offset=".62" stop-color="#f47452" stop-opacity=".04" />
+      <stop offset="1" stop-color="#f47452" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="fade" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#0d0e0c" stop-opacity="1" />
+      <stop offset=".68" stop-color="#0d0e0c" stop-opacity=".54" />
+      <stop offset="1" stop-color="#0d0e0c" stop-opacity="0" />
+    </linearGradient>
+    <pattern id="grid" width="42" height="42" patternUnits="userSpaceOnUse">
+      <path d="M42 0H0V42" fill="none" stroke="#ffffff" stroke-opacity=".045" />
+    </pattern>
+    <clipPath id="screen-clip">
+      <rect x="574" y="88" width="690" height="462" rx="20" />
+    </clipPath>
+    <filter id="screen-shadow" x="-30%" y="-30%" width="170%" height="180%">
+      <feDropShadow dx="0" dy="28" stdDeviation="24" flood-color="#000000" flood-opacity=".55" />
+    </filter>
+    <filter id="icon-shadow" x="-50%" y="-50%" width="200%" height="220%">
+      <feDropShadow dx="0" dy="10" stdDeviation="8" flood-color="#000000" flood-opacity=".35" />
+    </filter>
+  </defs>
+
+  <rect width="1200" height="630" fill="#0d0e0c" />
+  <rect width="1200" height="630" fill="url(#grid)" />
+  <rect width="1200" height="630" fill="url(#glow)" />
+
+  <g filter="url(#screen-shadow)">
+    <rect x="574" y="88" width="690" height="462" rx="20" fill="#191a17" stroke="#ffffff" stroke-opacity=".14" />
+    <image x="574" y="88" width="690" height="462" xlink:href="screenshots/batraci-mini.webp" preserveAspectRatio="xMidYMid slice" clip-path="url(#screen-clip)" />
+  </g>
+  <rect x="515" width="260" height="630" fill="url(#fade)" />
+
+  <g font-family="Helvetica Neue, Arial, sans-serif">
+    <image x="68" y="57" width="58" height="58" xlink:href="volum-icon.png" filter="url(#icon-shadow)" />
+    <text x="148" y="97" fill="#f5f2eb" font-size="29" font-weight="700" letter-spacing="7">VOLUM</text>
+
+    <circle cx="75" cy="174" r="5" fill="#ff8b69" />
+    <text x="94" y="180" fill="#ff8b69" font-size="14" font-weight="700" letter-spacing="2.3">LOCAL-FIRST 3D MODEL LIBRARY</text>
+
+    <text x="68" y="276" fill="#f5f2eb" font-size="62" font-weight="600" letter-spacing="-2.6">Your 3D models.</text>
+    <text x="68" y="349" fill="#f47452" font-size="62" font-weight="600" letter-spacing="-2.6">Finally visible.</text>
+
+    <text x="71" y="420" fill="#b5b2aa" font-size="21" font-weight="400">Browse, organize, and preview every model</text>
+    <text x="71" y="450" fill="#b5b2aa" font-size="21" font-weight="400">without moving or uploading a thing.</text>
+
+    <g transform="translate(68 516)">
+      <rect width="418" height="49" rx="24.5" fill="#171815" stroke="#ffffff" stroke-opacity=".12" />
+      <circle cx="25" cy="24.5" r="4" fill="#57b77e" />
+      <text x="42" y="30" fill="#d8d5ce" font-size="13" font-weight="600" letter-spacing="1.2">PRIVATE · LOCAL-FIRST · OPEN SOURCE</text>
+    </g>
+  </g>
+</svg>

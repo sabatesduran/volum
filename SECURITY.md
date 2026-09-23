@@ -9,3 +9,5 @@ Include the Volum version, operating system, reproduction steps, and a minimal n
 ## Scope
 
 The latest release receives security fixes. Volum does not require an account and does not upload model files. Approved library roots, app-owned data, IPC validation, archive limits, and update signatures are security boundaries and should not be bypassed.
+
+Backup ZIPs contain private library metadata such as paths, notes, tags, and source links, but not original model files. They are not encrypted; protect backup folders with appropriate filesystem or NAS permissions. Direct WebDAV credentials are stored in the operating system credential manager and are excluded from both SQLite and backups.

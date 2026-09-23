@@ -20,6 +20,7 @@ pub struct AppState {
     pub watchers: std::sync::Mutex<HashMap<String, RecommendedWatcher>>,
     pub thumbnail_workers: Arc<Semaphore>,
     pub thumbnail_pending: Arc<Mutex<HashSet<String>>>,
+    pub backup_lock: Arc<Mutex<()>>,
 }
 
 impl AppState {
@@ -57,6 +58,7 @@ impl AppState {
             watchers: std::sync::Mutex::new(HashMap::new()),
             thumbnail_workers: Arc::new(Semaphore::new(2)),
             thumbnail_pending: Arc::new(Mutex::new(HashSet::new())),
+            backup_lock: Arc::new(Mutex::new(())),
         })
     }
 }

@@ -217,6 +217,72 @@ export interface ScanStatus {
   message?: string;
 }
 
+export type BackupDestinationKind = "folder" | "webdav";
+export type BackupSchedule = "manual" | "daily" | "weekly" | "monthly";
+
+export interface BackupDestination {
+  id: string;
+  name: string;
+  kind: BackupDestinationKind;
+  location: string;
+  username?: string;
+  credentialSaved: boolean;
+  schedule: BackupSchedule;
+  retentionCount: number;
+  enabled: boolean;
+  lastAttemptAt?: string;
+  lastSuccessAt?: string;
+  lastError?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BackupDestinationInput {
+  id?: string;
+  name: string;
+  kind: BackupDestinationKind;
+  location: string;
+  username?: string;
+  password?: string;
+  schedule: BackupSchedule;
+  retentionCount: number;
+  enabled: boolean;
+}
+
+export interface BackupRun {
+  id: string;
+  destinationId?: string;
+  destinationName: string;
+  reason: "manual" | "scheduled";
+  status: "running" | "complete" | "failed";
+  filename: string;
+  byteSize?: number;
+  startedAt: string;
+  completedAt?: string;
+  error?: string;
+}
+
+export interface BackupArchive {
+  key: string;
+  filename: string;
+  byteSize?: number;
+  modifiedAt?: string;
+}
+
+export interface PreparedRestore {
+  token: string;
+  appVersion: string;
+  createdAt: string;
+  byteSize: number;
+  counts: {
+    libraries: number;
+    models: number;
+    collections: number;
+    tags: number;
+    webSources: number;
+  };
+}
+
 export type ModelSort = "name" | "added" | "modified" | "opened";
 
 export interface ModelQuery {

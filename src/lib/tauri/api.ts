@@ -1,8 +1,8 @@
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
-  Collection, DuplicateGroup, DuplicateStats, Folder, LibraryRoot, Material, ModelDetail, ModelQuery, ModelSummary,
-  ConfiguredSlicer, Page, PreviewPayload, RelatedModel, ScanStatus, SlicerApplication, SmartCollectionRule, Tag, WebSource, WebSourcePreview
+  BackupArchive, BackupDestination, BackupDestinationInput, BackupRun, Collection, DuplicateGroup, DuplicateStats, Folder, LibraryRoot, Material, ModelDetail, ModelQuery, ModelSummary,
+  ConfiguredSlicer, Page, PreparedRestore, PreviewPayload, RelatedModel, ScanStatus, SlicerApplication, SmartCollectionRule, Tag, WebSource, WebSourcePreview
 } from "../../types";
 import { mockInvoke } from "./mock";
 
@@ -16,6 +16,7 @@ export const api = {
   roots: () => command<LibraryRoot[]>("list_roots"),
   addRoot: (path: string) => command<LibraryRoot>("add_library_root", { path }),
   removeRoot: (rootId: string, keepMetadata = false) => command<void>("remove_library_root", { rootId, keepMetadata }),
+  reconnectRoot: (rootId: string, path: string) => command<LibraryRoot>("reconnect_library_root", { rootId, path }),
   startScan: (rootId: string) => command<void>("start_scan", { rootId }),
   pauseScan: (rootId: string) => command<void>("pause_scan", { rootId }),
   scanStatus: (rootId: string) => command<ScanStatus>("get_scan_status", { rootId }),
@@ -60,7 +61,18 @@ export const api = {
   attachWebSource: (sourceId: string, localPath: string) => command<WebSource>("attach_web_source_file", { sourceId, localPath }),
   revealAsset: (assetId: string) => command<void>("reveal_asset", { assetId }),
   exportMetadata: (path: string) => command<void>("export_metadata", { path }),
-  exportDiagnostics: (path: string, redactPaths = true) => command<void>("export_diagnostics", { path, redactPaths })
+  exportDiagnostics: (path: string, redactPaths = true) => command<void>("export_diagnostics", { path, redactPaths }),
+  backupDestinations: () => command<BackupDestination[]>("list_backup_destinations"),
+  saveBackupDestination: (input: BackupDestinationInput) => command<BackupDestination>("save_backup_destination", { input }),
+  deleteBackupDestination: (destinationId: string) => command<void>("delete_backup_destination", { destinationId }),
+  testBackupDestination: (destinationId: string) => command<void>("test_backup_destination", { destinationId }),
+  runBackup: (destinationId?: string) => command<BackupRun[]>("run_backup", { destinationId }),
+  backupRuns: (limit = 20) => command<BackupRun[]>("list_backup_runs", { limit }),
+  backupArchives: (destinationId: string) => command<BackupArchive[]>("list_destination_archives", { destinationId }),
+  prepareRestoreFromPath: (path: string) => command<PreparedRestore>("prepare_restore_from_path", { path }),
+  prepareRestoreFromDestination: (destinationId: string, key: string) => command<PreparedRestore>("prepare_restore_from_destination", { destinationId, key }),
+  commitPreparedRestore: (token: string) => command<void>("commit_prepared_restore", { token }),
+  cancelPreparedRestore: (token: string) => command<void>("cancel_prepared_restore", { token })
 };
 
 export async function onBackendEvent<T = unknown>(event: string, handler: (payload: T) => void): Promise<UnlistenFn> {

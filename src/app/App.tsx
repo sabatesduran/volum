@@ -18,11 +18,32 @@ const ModelDetailView = lazy(() => import("../features/model-detail/ModelDetailV
 
 export default function App() {
   const queryClient = useQueryClient();
-  const { view, selectedModelId, theme, language, setSearch } = useAppStore();
+  const { view, selectedModelId, theme, language, density, modelSort, setTheme, setLanguage, setDensity, setModelSort } = useAppStore();
   const [newCollection, setNewCollection] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [webImportOpen, setWebImportOpen] = useState(false);
   const { data: roots, isLoading } = useQuery({ queryKey: ["roots"], queryFn: api.roots });
+  const { data: preferences } = useQuery({ queryKey: ["preferences"], queryFn: api.preferences });
+  const [preferencesHydrated, setPreferencesHydrated] = useState(false);
+
+  useEffect(() => {
+    if (!preferences || preferencesHydrated) return;
+    if (["system", "light", "dark"].includes(preferences.ui_theme)) setTheme(preferences.ui_theme as typeof theme);
+    if (["system", "en", "ca", "es"].includes(preferences.ui_language)) setLanguage(preferences.ui_language as typeof language);
+    if (["compact", "comfortable", "large"].includes(preferences.ui_density)) setDensity(preferences.ui_density as typeof density);
+    if (["name", "added", "modified", "opened"].includes(preferences.ui_model_sort)) setModelSort(preferences.ui_model_sort as typeof modelSort);
+    setPreferencesHydrated(true);
+  }, [density, language, modelSort, preferences, preferencesHydrated, setDensity, setLanguage, setModelSort, setTheme, theme]);
+
+  useEffect(() => {
+    if (!preferencesHydrated) return;
+    void Promise.all([
+      api.savePreference("ui_theme", theme),
+      api.savePreference("ui_language", language),
+      api.savePreference("ui_density", density),
+      api.savePreference("ui_model_sort", modelSort)
+    ]).then(() => queryClient.invalidateQueries({ queryKey: ["preferences"] }));
+  }, [density, language, modelSort, preferencesHydrated, queryClient, theme]);
 
   useEffect(() => {
     const apply = () => {
@@ -52,7 +73,8 @@ export default function App() {
     Promise.all([
       onBackendEvent("models-changed", () => { queryClient.invalidateQueries({ queryKey: ["models"] }); queryClient.invalidateQueries({ queryKey: ["folders"] }); queryClient.invalidateQueries({ queryKey: ["collections"] }); queryClient.invalidateQueries({ queryKey: ["related-models"] }); queryClient.invalidateQueries({ queryKey: ["duplicate-groups"] }); queryClient.invalidateQueries({ queryKey: ["duplicate-stats"] }); queryClient.invalidateQueries({ queryKey: ["web-sources"] }); }),
       onBackendEvent("root-status-changed", () => queryClient.invalidateQueries({ queryKey: ["roots"] })),
-      onBackendEvent("web-sources-changed", () => queryClient.invalidateQueries({ queryKey: ["web-sources"] }))
+      onBackendEvent("web-sources-changed", () => queryClient.invalidateQueries({ queryKey: ["web-sources"] })),
+      onBackendEvent("backups-changed", () => { queryClient.invalidateQueries({ queryKey: ["backup-destinations"] }); queryClient.invalidateQueries({ queryKey: ["backup-runs"] }); queryClient.invalidateQueries({ queryKey: ["backup-archives"] }); })
     ]).then((values) => unlisteners.push(...values));
     return () => unlisteners.forEach((unlisten) => unlisten());
   }, [queryClient]);

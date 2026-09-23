@@ -1,4 +1,6 @@
 import type {
+  BackupDestination,
+  BackupRun,
   Collection,
   DuplicateGroup,
   Folder,
@@ -71,6 +73,8 @@ let materials: Material[] = [
 
 let webSources: WebSource[] = [];
 let preferences: Record<string, string> = {};
+let backupDestinations: BackupDestination[] = [];
+let backupRuns: BackupRun[] = [];
 
 const memberships: Record<string, string[]> = {
   "demo-1": ["c-print", "c-gifts"], "demo-2": ["c-garage"], "demo-4": ["c-print", "c-garage"],
@@ -88,6 +92,7 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
     case "list_roots": return [demoRoot] as T;
     case "add_library_root": return demoRoot as T;
     case "remove_library_root": return undefined as T;
+    case "reconnect_library_root": return { ...demoRoot, path: String(args.path), status: "online" } as T;
     case "start_scan": return undefined as T;
     case "pause_scan": return undefined as T;
     case "list_folders": return folders as T;
@@ -208,6 +213,36 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
     case "request_thumbnail": return false as T;
     case "get_viewer_mesh": return new ArrayBuffer(0) as T;
     case "save_preference": preferences = { ...preferences, [String(args.key)]: String(args.value) }; return undefined as T;
+    case "list_backup_destinations": return backupDestinations as T;
+    case "save_backup_destination": {
+      const input = args.input as Omit<BackupDestination, "id" | "credentialSaved" | "createdAt" | "updatedAt"> & { id?: string; password?: string };
+      const existing = backupDestinations.find((destination) => destination.id === input.id);
+      const timestamp = new Date().toISOString();
+      const destination: BackupDestination = {
+        id: input.id ?? crypto.randomUUID(), name: input.name, kind: input.kind, location: input.location,
+        username: input.username, credentialSaved: Boolean(input.password) || existing?.credentialSaved || false,
+        schedule: input.schedule, retentionCount: input.retentionCount, enabled: input.enabled,
+        createdAt: existing?.createdAt ?? timestamp, updatedAt: timestamp
+      };
+      backupDestinations = [...backupDestinations.filter((item) => item.id !== destination.id), destination];
+      return destination as T;
+    }
+    case "delete_backup_destination": backupDestinations = backupDestinations.filter((destination) => destination.id !== args.destinationId); return undefined as T;
+    case "test_backup_destination": return undefined as T;
+    case "run_backup": {
+      const selected = args.destinationId ? backupDestinations.filter((destination) => destination.id === args.destinationId) : backupDestinations;
+      const timestamp = new Date().toISOString();
+      const runs = selected.map((destination) => ({ id: crypto.randomUUID(), destinationId: destination.id, destinationName: destination.name, reason: "manual", status: "complete", filename: `volum-backup-${timestamp.slice(0, 10).replaceAll("-", "")}.zip`, byteSize: 2_400_000, startedAt: timestamp, completedAt: timestamp } as BackupRun));
+      backupRuns = [...runs, ...backupRuns];
+      backupDestinations = backupDestinations.map((destination) => selected.some((item) => item.id === destination.id) ? { ...destination, lastAttemptAt: timestamp, lastSuccessAt: timestamp, lastError: undefined } : destination);
+      return runs as T;
+    }
+    case "list_backup_runs": return backupRuns as T;
+    case "list_destination_archives": return backupRuns.filter((run) => run.destinationId === args.destinationId && run.status === "complete").map((run) => ({ key: run.filename, filename: run.filename, byteSize: run.byteSize, modifiedAt: run.completedAt })) as T;
+    case "prepare_restore_from_path":
+    case "prepare_restore_from_destination": return { token: crypto.randomUUID(), appVersion: "0.1.10", createdAt: new Date().toISOString(), byteSize: 2_400_000, counts: { libraries: 1, models: models.length, collections: collections.length, tags: tags.length, webSources: webSources.length } } as T;
+    case "commit_prepared_restore": return undefined as T;
+    case "cancel_prepared_restore": return undefined as T;
     case "open_external_url": window.open(String(args.url), "_blank", "noopener,noreferrer"); return undefined as T;
     case "calculate_cost": {
       const { plasticG, quantity, spoolPriceMinor, spoolWeightG } = args.input as Record<string, number>;

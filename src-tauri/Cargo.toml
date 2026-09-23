@@ -1,6 +1,6 @@
 [package]
 name = "volum"
-version = "0.1.9"
+version = "0.1.10"
 description = "A beautiful home for your 3D models"
 authors = ["Volum contributors"]
 edition = "2021"
@@ -37,7 +37,10 @@ open = "5"
 log = "0.4"
 thiserror = "2"
 regex = "1"
-reqwest = { version = "0.13", features = ["brotli", "deflate", "gzip", "query"] }
+reqwest = { version = "0.13", features = ["brotli", "deflate", "gzip", "query", "stream"] }
+tokio-util = { version = "0.7", features = ["io"] }
+keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native-sync-persistent", "crypto-rust", "vendored"] }
+percent-encoding = "2"
 
 [dev-dependencies]
 tempfile = "3"

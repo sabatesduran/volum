@@ -20,7 +20,8 @@ The master icon artwork is [`volum-appicon.png`](volum-appicon.png); platform as
 - Material presets and plastic/batch cost estimates
 - Configurable slicer, OS-default open, and Finder/Explorer/file-manager reveal
 - English, Catalan, and European Spanish interfaces with system-language detection
-- Light/dark/system themes, keyboard navigation, metadata export, and approval-based signed updates
+- Light/dark/system themes, keyboard navigation, portable ZIP backup/restore, and approval-based signed updates
+- Scheduled backups to local folders, mounted NAS shares, or direct WebDAV destinations with retention controls
 - No account, analytics, model uploads, or required network connection
 
 The original product specification is in [`Volum-product-engineering-plan.md`](Volum-product-engineering-plan.md).

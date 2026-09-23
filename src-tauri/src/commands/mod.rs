@@ -99,6 +99,59 @@ pub async fn remove_library_root(
 }
 
 #[tauri::command]
+pub async fn reconnect_library_root(
+    root_id: String,
+    path: String,
+    state: State<'_, AppState>,
+) -> CommandResult<LibraryRoot> {
+    let canonical = std::fs::canonicalize(&path)
+        .map_err(|_| "Choose a folder that is currently available".to_string())?;
+    if !canonical.is_dir() {
+        return Err("The selected path is not a folder".into());
+    }
+    let normalized = canonical.to_string_lossy().to_string();
+    let conflict: Option<String> =
+        sqlx::query_scalar("SELECT id FROM library_roots WHERE path = ? AND id != ?")
+            .bind(&normalized)
+            .bind(&root_id)
+            .fetch_optional(&state.pool)
+            .await
+            .map_err(db_error)?;
+    if conflict.is_some() {
+        return Err("That folder is already a Volum library".into());
+    }
+    let timestamp = now();
+    let updated = sqlx::query(
+        "UPDATE library_roots SET path = ?, status = 'online', updated_at = ? WHERE id = ?",
+    )
+    .bind(&normalized)
+    .bind(&timestamp)
+    .bind(&root_id)
+    .execute(&state.pool)
+    .await
+    .map_err(db_error)?;
+    if updated.rows_affected() == 0 {
+        return Err("Library not found".into());
+    }
+    if let Ok(mut watchers) = state.watchers.lock() {
+        watchers.remove(&root_id);
+    }
+    let row = sqlx::query("SELECT id, path, display_name, status, last_scan_at, (SELECT COUNT(*) FROM models m JOIN folders f ON f.id = m.folder_id WHERE f.root_id = library_roots.id AND m.missing_since IS NULL) model_count FROM library_roots WHERE id = ?")
+        .bind(&root_id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(db_error)?;
+    Ok(LibraryRoot {
+        id: row.get("id"),
+        path: row.get("path"),
+        display_name: row.get("display_name"),
+        status: row.get("status"),
+        last_scan_at: row.get("last_scan_at"),
+        model_count: row.get("model_count"),
+    })
+}
+
+#[tauri::command]
 pub async fn start_scan(
     root_id: String,
     state: State<'_, AppState>,
@@ -1023,6 +1076,10 @@ pub async fn save_preference(
         "slicer_name",
         "slicer_config",
         "web_import_folder",
+        "ui_theme",
+        "ui_language",
+        "ui_density",
+        "ui_model_sort",
     ];
     if !ALLOWED.contains(&key.as_str()) {
         return Err("Unknown preference".into());

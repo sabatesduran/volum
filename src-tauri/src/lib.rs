@@ -1,3 +1,4 @@
+mod backups;
 mod commands;
 mod domain;
 mod indexing;
@@ -33,7 +34,10 @@ pub fn run() {
                 .path()
                 .app_data_dir()
                 .map_err(|error| error.to_string())?;
+            backups::apply_pending_restore(&data_dir)?;
+            backups::cleanup_stale_work(&data_dir);
             let state = tauri::async_runtime::block_on(AppState::initialize(&data_dir))?;
+            tauri::async_runtime::block_on(backups::reconcile_backup_credentials(&state))?;
             tauri::async_runtime::block_on(seed_defaults(&state))?;
             app.manage(state);
             let handle = app.handle().clone();
@@ -50,12 +54,14 @@ pub fn run() {
                     }
                 }
             });
+            backups::start_scheduler(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::list_roots,
             commands::add_library_root,
             commands::remove_library_root,
+            commands::reconnect_library_root,
             commands::start_scan,
             commands::pause_scan,
             commands::get_scan_status,
@@ -96,6 +102,17 @@ pub fn run() {
             commands::reveal_asset,
             commands::export_metadata,
             commands::export_diagnostics,
+            backups::list_backup_destinations,
+            backups::save_backup_destination,
+            backups::delete_backup_destination,
+            backups::test_backup_destination,
+            backups::run_backup,
+            backups::list_backup_runs,
+            backups::list_destination_archives,
+            backups::prepare_restore_from_path,
+            backups::prepare_restore_from_destination,
+            backups::commit_prepared_restore,
+            backups::cancel_prepared_restore,
             web_sources::preview_web_source,
             web_sources::list_web_sources,
             web_sources::save_web_source,

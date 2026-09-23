@@ -12,6 +12,7 @@ import type {
   Page,
   PreviewPayload,
   ScanStatus,
+  SavedSearch,
   SlicerApplication,
   Tag,
   WebSource,
@@ -52,6 +53,7 @@ let models: ModelSummary[] = names.map(([displayName, primaryExtension, folderNa
   lastOpenedAt: index < 5 ? new Date(now - index * 3_600_000).toISOString() : undefined,
   missing: false,
   assetCount: index % 3 === 0 ? 2 : 1,
+  bundleMode: "automatic",
   dimensionsMm: dimensionsMm as [number, number, number]
 }));
 
@@ -75,6 +77,7 @@ let webSources: WebSource[] = [];
 let preferences: Record<string, string> = {};
 let backupDestinations: BackupDestination[] = [];
 let backupRuns: BackupRun[] = [];
+let savedSearches: SavedSearch[] = [];
 
 const memberships: Record<string, string[]> = {
   "demo-1": ["c-print", "c-gifts"], "demo-2": ["c-garage"], "demo-4": ["c-print", "c-garage"],
@@ -130,7 +133,7 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
         collectionIds: memberships[model.id] ?? [],
         tags: tags.filter((tag) => tagMemberships[model.id]?.includes(tag.id)),
         webSource: webSources.find((source) => source.modelId === model.id),
-        assets: [{ id: model.primaryAssetId!, filename: `${model.displayName.toLocaleLowerCase().replaceAll(" ", "-")}.${model.primaryExtension}`, extension: model.primaryExtension, relativePath: `${model.relativeFolder}/${model.displayName}.${model.primaryExtension}`, byteSize: 1_842_650 + Number(model.id.split("-")[1]) * 124_000, modifiedAt: model.modifiedAt, parseStatus: "ready", metadata: { dimensionsMm: model.dimensionsMm, triangleCount: 48240, ...(model.primaryExtension === "3mf" ? { threeMf: { slicer: "Bambu Studio", printer: "Bambu Lab A1", printProfile: "0.20mm Standard", nozzleDiameterMm: .4, layerHeightMm: .2, plates: [{ index: 1, objectCount: 2, objectNames: [model.displayName, "Support"], filamentGrams: 42.3, printTimeSeconds: 7320, materialNames: ["PLA"], bedType: "Textured Plate", thumbnail: false }] } } : {}) }, missing: false }]
+         assets: [{ id: model.primaryAssetId!, filename: `${model.displayName.toLocaleLowerCase().replaceAll(" ", "-")}.${model.primaryExtension}`, extension: model.primaryExtension, relativePath: `${model.relativeFolder}/${model.displayName}.${model.primaryExtension}`, byteSize: 1_842_650 + Number(model.id.split("-")[1]) * 124_000, modifiedAt: model.modifiedAt, parseStatus: "ready", metadata: { dimensionsMm: model.dimensionsMm, triangleCount: 48240, ...(model.primaryExtension === "3mf" ? { threeMf: { slicer: "Bambu Studio", printer: "Bambu Lab A1", printProfile: "0.20mm Standard", nozzleDiameterMm: .4, layerHeightMm: .2, plates: [{ index: 1, objectCount: 2, objectNames: [model.displayName, "Support"], filamentGrams: 42.3, printTimeSeconds: 7320, materialNames: ["PLA"], bedType: "Textured Plate", thumbnail: false }] } } : {}) }, missing: false, role: "printable" }]
       } as T;
     }
     case "list_collections": return collections as T;
@@ -162,6 +165,15 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
       return undefined as T;
     }
     case "save_notes": return undefined as T;
+    case "list_saved_searches": return savedSearches as T;
+    case "save_saved_search": {
+      const input = args.input as { id?: string; name: string; query: ModelQuery };
+      const timestamp = new Date().toISOString();
+      const search: SavedSearch = { id: input.id ?? crypto.randomUUID(), name: input.name, query: input.query, createdAt: timestamp, updatedAt: timestamp };
+      savedSearches = [...savedSearches.filter((item) => item.id !== search.id), search];
+      return search as T;
+    }
+    case "delete_saved_search": savedSearches = savedSearches.filter((item) => item.id !== args.searchId); return undefined as T;
     case "list_tags": return tags as T;
     case "save_tag": {
       const input = args.input as { id?: string; name: string; color: string };
@@ -173,7 +185,12 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
     case "add_models_to_tag": (args.modelIds as string[]).forEach((id) => tagMemberships[id] = [...new Set([...(tagMemberships[id] ?? []), String(args.tagId)])]); return undefined as T;
     case "list_related_models": return args.modelId === "demo-2" ? [{ id: "demo-7", displayName: "Camera Mount", relativeFolder: "Workshop", primaryExtension: "stl", modifiedAt: models[6].modifiedAt, relationship: "duplicate" }] as T : [] as T;
     case "get_duplicate_stats": return { groups: 1, models: 2, redundantCopies: 1 } as T;
-    case "list_duplicate_groups": return { items: [{ id: "demo-duplicate", modelCount: 2, byteSize: 2_100_000, models: [models[1], models[6]] }], total: 1 } as Page<DuplicateGroup> as T;
+    case "list_duplicate_groups": return { items: [{ id: "exact:demo-duplicate", matchKey: "exact:demo-duplicate", matchKind: "exact", confidence: 1, modelCount: 2, byteSize: 2_100_000, models: [models[1], models[6]] }], total: 1 } as Page<DuplicateGroup> as T;
+    case "split_project": return "demo-split" as T;
+    case "merge_projects":
+    case "set_project_primary_asset":
+    case "dismiss_duplicate_match":
+    case "cleanup_duplicate_group": return undefined as T;
     case "list_materials": return materials as T;
     case "preview_web_source": {
       const url = String(args.url);
@@ -240,7 +257,7 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
     case "list_backup_runs": return backupRuns as T;
     case "list_destination_archives": return backupRuns.filter((run) => run.destinationId === args.destinationId && run.status === "complete").map((run) => ({ key: run.filename, filename: run.filename, byteSize: run.byteSize, modifiedAt: run.completedAt })) as T;
     case "prepare_restore_from_path":
-    case "prepare_restore_from_destination": return { token: crypto.randomUUID(), appVersion: "0.1.10", createdAt: new Date().toISOString(), byteSize: 2_400_000, counts: { libraries: 1, models: models.length, collections: collections.length, tags: tags.length, webSources: webSources.length } } as T;
+    case "prepare_restore_from_destination": return { token: crypto.randomUUID(), appVersion: "0.2.0", createdAt: new Date().toISOString(), byteSize: 2_400_000, counts: { libraries: 1, models: models.length, collections: collections.length, tags: tags.length, webSources: webSources.length } } as T;
     case "commit_prepared_restore": return undefined as T;
     case "cancel_prepared_restore": return undefined as T;
     case "open_external_url": window.open(String(args.url), "_blank", "noopener,noreferrer"); return undefined as T;

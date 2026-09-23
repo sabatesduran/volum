@@ -23,14 +23,20 @@ pub fn parse_metadata(path: &Path, extension: &str) -> AssetMetadata {
         "obj" => parse_obj(path).unwrap_or_else(error_metadata),
         "3mf" => parse_3mf(path).unwrap_or_else(error_metadata),
         "zip" => inspect_zip(path).unwrap_or_else(error_metadata),
-        "step" | "stp" => AssetMetadata {
-            warning: Some(
-                "STEP preview is indexed; tessellation support is not bundled yet.".into(),
-            ),
-            ..Default::default()
-        },
+        "step" | "stp" => parse_step(path).unwrap_or_else(error_metadata),
         _ => AssetMetadata::default(),
     }
+}
+
+fn parse_step(path: &Path) -> Result<AssetMetadata, String> {
+    let analysis = crate::geometry::analyze_file(path, "step")?;
+    Ok(AssetMetadata {
+        dimensions_mm: Some(analysis.dimensions_mm),
+        triangle_count: Some(analysis.triangle_count),
+        surface_area_mm2: Some(analysis.surface_area),
+        volume_mm3: analysis.volume,
+        ..Default::default()
+    })
 }
 
 fn error_metadata(error: String) -> AssetMetadata {

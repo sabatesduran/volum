@@ -30,7 +30,8 @@ const models: ModelSummary[] = Array.from({ length: 4 }, (_, index) => ({
   addedAt: "2026-01-01T00:00:00Z",
   modifiedAt: "2026-01-01T00:00:00Z",
   missing: false,
-  assetCount: 1
+  assetCount: 1,
+  bundleMode: "automatic"
 }));
 
 describe("model grid layout", () => {

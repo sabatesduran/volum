@@ -36,6 +36,10 @@ pub struct AssetMetadata {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub filament_grams: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub surface_area_mm2: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub volume_mm3: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub warning: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub three_mf: Option<ThreeMfMetadata>,
@@ -92,6 +96,7 @@ pub struct Asset {
     pub parse_status: String,
     pub metadata: AssetMetadata,
     pub missing: bool,
+    pub role: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -110,6 +115,7 @@ pub struct ModelSummary {
     pub last_opened_at: Option<String>,
     pub missing: bool,
     pub asset_count: i64,
+    pub bundle_mode: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dimensions_mm: Option<[f64; 3]>,
 }
@@ -166,7 +172,7 @@ pub struct WebSource {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelQuery {
     pub search: Option<String>,
@@ -181,6 +187,12 @@ pub struct ModelQuery {
     pub date_from: Option<String>,
     pub date_to: Option<String>,
     pub duplicates: Option<bool>,
+    pub duplicate_kind: Option<String>,
+    pub library_id: Option<String>,
+    pub parse_status: Option<String>,
+    pub has_web_source: Option<bool>,
+    pub min_asset_count: Option<i64>,
+    pub max_asset_count: Option<i64>,
     pub sort: Option<String>,
     pub offset: Option<i64>,
     pub limit: Option<i64>,
@@ -222,15 +234,60 @@ pub struct CollectionInput {
     pub rule: Option<SmartCollectionRule>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SmartCollectionRule {
+    #[serde(default = "default_rule_version")]
+    pub version: u32,
+    #[serde(default = "default_match_mode")]
+    pub match_mode: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rules: Vec<QueryRule>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tag_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub availability: Option<String>,
+}
+
+impl Default for SmartCollectionRule {
+    fn default() -> Self {
+        Self {
+            version: default_rule_version(),
+            match_mode: default_match_mode(),
+            rules: Vec::new(),
+            tag_id: None,
+            format: None,
+            availability: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryRule {
+    pub field: String,
+    pub operator: String,
+    pub value: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedSearch {
+    pub id: String,
+    pub name: String,
+    pub query: ModelQuery,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedSearchInput {
+    pub id: Option<String>,
+    pub name: String,
+    pub query: ModelQuery,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -265,9 +322,37 @@ pub struct RelatedModel {
 #[serde(rename_all = "camelCase")]
 pub struct DuplicateGroup {
     pub id: String,
+    pub match_key: String,
+    pub match_kind: String,
+    pub confidence: f64,
     pub model_count: i64,
     pub byte_size: i64,
     pub models: Vec<ModelSummary>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeProjectsInput {
+    pub keeper_id: String,
+    pub project_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SplitProjectInput {
+    pub project_id: String,
+    pub asset_ids: Vec<String>,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateCleanupInput {
+    pub match_key: String,
+    pub keeper_id: String,
+    pub duplicate_ids: Vec<String>,
+    #[serde(default)]
+    pub move_to_trash: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -283,6 +368,12 @@ fn default_symbol() -> String {
 }
 fn default_color() -> String {
     "#ff5a36".to_string()
+}
+fn default_rule_version() -> u32 {
+    1
+}
+fn default_match_mode() -> String {
+    "all".to_string()
 }
 
 #[derive(Debug, Clone, Serialize)]

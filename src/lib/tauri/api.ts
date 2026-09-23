@@ -2,7 +2,7 @@ import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   BackupArchive, BackupDestination, BackupDestinationInput, BackupRun, Collection, DuplicateGroup, DuplicateStats, Folder, LibraryRoot, Material, ModelDetail, ModelQuery, ModelSummary,
-  ConfiguredSlicer, Page, PreparedRestore, PreviewPayload, RelatedModel, ScanStatus, SlicerApplication, SmartCollectionRule, Tag, WebSource, WebSourcePreview
+  ConfiguredSlicer, Page, PreparedRestore, PreviewPayload, RelatedModel, SavedSearch, ScanStatus, SlicerApplication, SmartCollectionRule, Tag, WebSource, WebSourcePreview
 } from "../../types";
 import { mockInvoke } from "./mock";
 
@@ -26,6 +26,9 @@ export const api = {
   toggleFavorite: (modelId: string) => command<boolean>("toggle_favorite", { modelId }),
   setFavorite: (modelIds: string[], favorite: boolean) => command<void>("set_favorite", { modelIds, favorite }),
   saveNotes: (modelId: string, notes: string) => command<void>("save_notes", { modelId, notes }),
+  savedSearches: () => command<SavedSearch[]>("list_saved_searches"),
+  saveSavedSearch: (input: { id?: string; name: string; query: ModelQuery }) => command<SavedSearch>("save_saved_search", { input }),
+  deleteSavedSearch: (searchId: string) => command<void>("delete_saved_search", { searchId }),
   collections: () => command<Collection[]>("list_collections"),
   createCollection: (input: { name: string; symbol: string; color: string; smart?: boolean; rule?: SmartCollectionRule }) => command<Collection>("create_collection", { input }),
   updateCollection: (collectionId: string, input: { name: string; symbol: string; color: string; smart?: boolean; rule?: SmartCollectionRule }) => command<Collection>("update_collection", { collectionId, input }),
@@ -40,6 +43,11 @@ export const api = {
   relatedModels: (modelId: string) => command<RelatedModel[]>("list_related_models", { modelId }),
   duplicateStats: () => command<DuplicateStats>("get_duplicate_stats"),
   duplicateGroups: (offset = 0, limit = 48) => command<Page<DuplicateGroup>>("list_duplicate_groups", { offset, limit }),
+  mergeProjects: (keeperId: string, projectIds: string[]) => command<void>("merge_projects", { input: { keeperId, projectIds } }),
+  splitProject: (projectId: string, assetIds: string[], name: string) => command<string>("split_project", { input: { projectId, assetIds, name } }),
+  setProjectPrimary: (projectId: string, assetId: string) => command<void>("set_project_primary_asset", { projectId, assetId }),
+  dismissDuplicate: (matchKey: string) => command<void>("dismiss_duplicate_match", { matchKey }),
+  cleanupDuplicate: (input: { matchKey: string; keeperId: string; duplicateIds: string[]; moveToTrash: boolean }) => command<void>("cleanup_duplicate_group", { input }),
   materials: () => command<Material[]>("list_materials"),
   saveMaterial: (input: Partial<Material> & Pick<Material, "name" | "materialType" | "spoolPriceMinor" | "currency" | "spoolWeightG">) => command<Material>("save_material", { input }),
   saveEstimate: (input: Record<string, unknown>) => command<void>("save_cost_estimate", { input }),

@@ -1,8 +1,8 @@
 # Volum
 
-**A beautiful home for your 3D models.**
+**A beautiful home for your 3D-printing projects.**
 
-Volum is a private, local-first desktop library for STL, 3MF, OBJ, and STEP/STP files. It mirrors the folders you already have, adds visual previews and searchable metadata, and lets you create collections without moving source files.
+Volum is a private, local-first desktop library for STL, 3MF, OBJ, and STEP/STP projects. It mirrors the folders you already have, bundles related source and printable files, adds visual previews and searchable metadata, and lets you organize everything without moving source files.
 
 ![Volum icon](src-tauri/icons/128x128.png)
 
@@ -13,10 +13,12 @@ The master icon artwork is [`volum-appicon.png`](volum-appicon.png); platform as
 - Multiple local, removable, or mounted library roots
 - Progressive recursive indexing with pause/resume, recovery, and filesystem watching
 - Stable move detection with fingerprints and a metadata grace period for unavailable files
-- STL, OBJ, and 3MF dimensions/triangle metadata; ignored ZIP archives; honest STEP placeholders
+- Project bundles with persistent manual merge/split decisions, file roles, and a selectable primary preview
+- Native STL, OBJ, 3MF, and OpenCascade-backed STEP/STP metadata, tessellation, previews, and thumbnails
 - Interactive 3D detail view and persistent background-rendered thumbnails
-- FTS5 search, folders, recents, favorites, quick filters, and virtualized grids
-- Collections via menus, multi-select, and drag-and-drop
+- FTS5 search, saved searches, folders, recents, favorites, quick filters, and virtualized grids
+- Manual collections plus all/any smart rules for text, location, tags, formats, dates, geometry, dimensions, and project state
+- Exact-file and geometry-aware duplicate detection with metadata-preserving, Trash-safe guided cleanup
 - Material presets and plastic/batch cost estimates
 - Configurable slicer, OS-default open, and Finder/Explorer/file-manager reveal
 - English, Catalan, and European Spanish interfaces with system-language detection

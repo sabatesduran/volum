@@ -209,19 +209,19 @@ jobs:
           tagName: v__VERSION__
           releaseName: Volum v__VERSION__
           releaseBody: |
-            Volum for macOS, Linux, and Windows, with a visual, local-first home for your 3D-printing library.
+            Volum for macOS, Linux, and Windows, with a visual, local-first home for your 3D-printing projects.
 
-            What's new in 0.1.10:
+            What's new in 0.2.0:
 
-            - Back up Volum automatically to local folders, external drives, mounted NAS shares, or direct WebDAV destinations
-            - Restore portable, checksummed ZIP backups safely, including from the first-run screen
-            - Choose manual, daily, weekly, or monthly schedules with per-destination retention and automatic retry
-            - Keep WebDAV passwords in the operating system credential manager, outside Volum's database and backups
-            - Reconnect restored libraries when their folders have moved without losing organization or metadata
+            - Bundle printable files, source geometry, plates, and versions into persistent projects
+            - Merge and split projects explicitly, and choose the file used for the primary preview
+            - Find exact-file and same-geometry duplicates, then consolidate metadata and optionally move redundant files to Trash
+            - Build reusable saved searches and all/any smart collections with richer project rules
+            - Preview, measure, thumbnail, and compare STEP/STP files with native OpenCascade geometry support
 
-            - Visual, local-first model library
-            - STL, OBJ, and rich multi-plate 3MF previews
-            - Search, collections, tags, duplicates, materials, and cost estimates
+            - Visual, local-first project library
+            - STL, OBJ, STEP/STP, and rich multi-plate 3MF previews
+            - Search, collections, tags, saved searches, duplicates, materials, and cost estimates
             - MakerWorld and Printables attribution imports
             - ZIP archives are ignored instead of appearing as models
             - English, Catalan, and European Spanish interfaces

@@ -1,6 +1,6 @@
 import {
   Clock3, Copy, FolderTree, Globe2, Heart, LayoutGrid, LibraryBig, Plus, Settings2,
-  Wrench, Gift, Sparkles, Box, type LucideIcon
+  Wrench, Gift, Sparkles, Box, Search, type LucideIcon
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/tauri/api";
@@ -20,11 +20,12 @@ const mainItems: Array<[ViewId, string, LucideIcon]> = [
 const symbols: Record<string, LucideIcon> = { wrench: Wrench, gift: Gift, sparkles: Sparkles, box: Box };
 
 export function Sidebar({ onNewCollection }: { onNewCollection: () => void }) {
-  const { view, selectView, selectCollection, selectedCollectionId, sidebarCollapsed } = useAppStore();
+  const { view, selectView, selectCollection, selectSavedSearch, selectedCollectionId, selectedSavedSearchId, sidebarCollapsed } = useAppStore();
   const queryClient = useQueryClient();
   const { data: collections = [] } = useQuery({ queryKey: ["collections"], queryFn: api.collections });
   const { data: duplicateStats } = useQuery({ queryKey: ["duplicate-stats"], queryFn: api.duplicateStats });
   const { data: webSources = [] } = useQuery({ queryKey: ["web-sources"], queryFn: api.webSources });
+  const { data: savedSearches = [] } = useQuery({ queryKey: ["saved-searches"], queryFn: api.savedSearches });
   const item = (id: ViewId, label: string, Icon: LucideIcon, count?: number) => (
     <button
       className={`sidebar__item ${view === id && !selectedCollectionId ? "is-active" : ""}`}
@@ -68,6 +69,16 @@ export function Sidebar({ onNewCollection }: { onNewCollection: () => void }) {
                 </button>
               );
             })}
+          </div>
+        )}
+        {!sidebarCollapsed && savedSearches.length > 0 && (
+          <div className="sidebar__collections">
+            <div className="sidebar__section-label"><span>{t("Saved searches")}</span></div>
+            {savedSearches.slice(0, 5).map((search) => (
+              <button key={search.id} className={`sidebar__item sidebar__item--collection ${selectedSavedSearchId === search.id ? "is-active" : ""}`} onClick={() => selectSavedSearch(search.id, search.query)}>
+                <span className="collection-dot"><Search size={15} /></span><span>{search.name}</span>
+              </button>
+            ))}
           </div>
         )}
       </nav>

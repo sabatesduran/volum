@@ -1,11 +1,12 @@
 import { create } from "zustand";
-import type { Density, LanguagePreference, ModelSort, Theme, ViewId } from "../types";
+import type { Density, LanguagePreference, ModelQuery, ModelSort, Theme, ViewId } from "../types";
 import { resolveLanguagePreference, setAppLanguage } from "../lib/i18n";
 
 interface AppStore {
   view: ViewId;
   selectedFolderId?: string;
   selectedCollectionId?: string;
+  selectedSavedSearchId?: string;
   selectedModelId?: string;
   selectedModelIds: string[];
   search: string;
@@ -23,6 +24,7 @@ interface AppStore {
   selectView: (view: ViewId) => void;
   selectFolder: (id?: string) => void;
   selectCollection: (id?: string) => void;
+  selectSavedSearch: (id: string, query: ModelQuery) => void;
   selectModel: (id?: string) => void;
   toggleModelSelection: (id: string) => void;
   clearModelSelection: () => void;
@@ -68,10 +70,26 @@ export const useAppStore = create<AppStore>((set) => ({
   theme: persisted<Theme>("volum:theme", "system"),
   language: initialLanguage,
   sidebarCollapsed: false,
-  selectView: (view) => set({ view, selectedFolderId: undefined, selectedCollectionId: undefined, selectedModelId: undefined, selectedModelIds: [] }),
-  selectFolder: (selectedFolderId) => set({ view: "folders", selectedFolderId, selectedCollectionId: undefined, selectedModelId: undefined, selectedModelIds: [] }),
+  selectView: (view) => set({ view, selectedFolderId: undefined, selectedCollectionId: undefined, selectedSavedSearchId: undefined, selectedModelId: undefined, selectedModelIds: [] }),
+  selectFolder: (selectedFolderId) => set({ view: "folders", selectedFolderId, selectedCollectionId: undefined, selectedSavedSearchId: undefined, selectedModelId: undefined, selectedModelIds: [] }),
   selectCollection: (selectedCollectionId) =>
-    set({ view: "collections", selectedCollectionId, selectedFolderId: undefined, selectedModelId: undefined, selectedModelIds: [] }),
+    set({ view: "collections", selectedCollectionId, selectedFolderId: undefined, selectedSavedSearchId: undefined, selectedModelId: undefined, selectedModelIds: [] }),
+  selectSavedSearch: (selectedSavedSearchId, query) => set({
+    view: "saved",
+    selectedSavedSearchId,
+    selectedFolderId: undefined,
+    selectedCollectionId: undefined,
+    selectedModelId: undefined,
+    selectedModelIds: [],
+    search: query.search ?? "",
+    formatFilter: query.format ?? "",
+    availabilityFilter: query.availability ?? "",
+    tagFilter: query.tagId ?? "",
+    dateField: query.dateField ?? "modified",
+    dateFrom: query.dateFrom ?? "",
+    dateTo: query.dateTo ?? "",
+    modelSort: query.sort ?? "modified"
+  }),
   selectModel: (selectedModelId) => set({ selectedModelId, selectedModelIds: [] }),
   toggleModelSelection: (id) => set((state) => ({ selectedModelIds: state.selectedModelIds.includes(id) ? state.selectedModelIds.filter((value) => value !== id) : [...state.selectedModelIds, id] })),
   clearModelSelection: () => set({ selectedModelIds: [] }),

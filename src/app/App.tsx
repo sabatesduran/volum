@@ -87,7 +87,7 @@ export default function App() {
       {!selectedModelId && <Sidebar onNewCollection={() => setNewCollection(true)} />}
       <main className={`app-main ${selectedModelId ? "app-main--detail" : ""}`}>
         {!selectedModelId && view !== "settings" && view !== "web" && <Topbar onImport={() => setWebImportOpen(true)} onFilters={() => setFiltersOpen((value) => !value)} />}
-        {selectedModelId ? <Suspense fallback={<div className="detail-loading"><span>{t("Preparing model…")}</span></div>}><ModelDetailView modelId={selectedModelId} /></Suspense> : view === "settings" ? <SettingsView /> : view === "web" ? <WebImportsView onImport={() => setWebImportOpen(true)} /> : <LibraryView onNewCollection={() => setNewCollection(true)} />}
+        {selectedModelId ? <Suspense fallback={<div className="detail-loading"><span>{t("Preparing project…")}</span></div>}><ModelDetailView modelId={selectedModelId} /></Suspense> : view === "settings" ? <SettingsView /> : view === "web" ? <WebImportsView onImport={() => setWebImportOpen(true)} /> : <LibraryView onNewCollection={() => setNewCollection(true)} />}
       </main>
       {!selectedModelId && <IndexStatus roots={roots} />}
       {filtersOpen && !selectedModelId && <FilterPanel onClose={() => setFiltersOpen(false)} />}

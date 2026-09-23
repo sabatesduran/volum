@@ -63,13 +63,13 @@ export function ModelGrid({ models, loading = false, loadingMore = false, hasMor
     <div className={`model-grid-static density-${density}`}>{skeletons.map((_, index) => <div className="model-card skeleton-card" key={index}><div className="model-card__preview skeleton" /><div className="skeleton skeleton--text" /><div className="skeleton skeleton--text-short" /></div>)}</div>
   );
   if (!loading && models.length === 0) return (
-    <div className="empty-state"><span className="empty-state__icon"><Box size={24} /></span><h2>{t("No models here")}</h2><p>{t("Try another folder or clear your search filters.")}</p></div>
+    <div className="empty-state"><span className="empty-state__icon"><Box size={24} /></span><h2>{t("No projects here")}</h2><p>{t("Try another folder or clear your search filters.")}</p></div>
   );
   return (
     <div className="virtual-grid" ref={parentRef}>
       <div className="virtual-grid__sizer" style={{ height: width > 0 ? virtualizer.getTotalSize() : 0 }}>
         {width > 0 && virtualRows.map((row) => row.index >= modelRows ? (
-          <div className="virtual-grid__loader" key={row.key} style={{ transform: `translateY(${row.start}px)`, height: rowHeight }}><span className="spin-dot" />{t(loadingMore ? "Loading more models…" : "Scroll to load more")}</div>
+          <div className="virtual-grid__loader" key={row.key} style={{ transform: `translateY(${row.start}px)`, height: rowHeight }}><span className="spin-dot" />{t(loadingMore ? "Loading more projects…" : "Scroll to load more")}</div>
         ) : (
           <div className="virtual-grid__row" key={row.key} style={{ transform: `translateY(${row.start}px)`, gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, gap }}>
             {models.slice(row.index * columns, row.index * columns + columns).map((model) => <ModelCard key={model.id} model={model} context={context} onChanged={onChanged} />)}

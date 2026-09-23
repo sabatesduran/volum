@@ -1,4 +1,4 @@
-use crate::{domain::ScanStatus, parsers, state::AppState};
+use crate::{domain::ScanStatus, geometry, parsers, state::AppState};
 use chrono::{DateTime, Utc};
 use notify::{
     event::{AccessKind, AccessMode},
@@ -287,6 +287,7 @@ async fn scan_root(
     }
     reconcile_missing(root_id, &seen, &context.pool).await?;
     refresh_duplicate_hashes(&context.pool).await?;
+    refresh_geometry_fingerprints(root_id, root_path, &context.pool).await?;
     let timestamp = now();
     sqlx::query(
         "UPDATE library_roots SET status = 'online', last_scan_at = ?, updated_at = ? WHERE id = ?",
@@ -462,6 +463,19 @@ async fn index_file(
     let asset_id = asset_id.unwrap_or_else(|| Uuid::new_v4().to_string());
     sqlx::query("INSERT INTO assets (id, root_id, folder_id, relative_path, filename, extension, byte_size, modified_at, partial_fingerprint, content_hash, parse_status, metadata_json, missing_since) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL) ON CONFLICT(id) DO UPDATE SET folder_id = excluded.folder_id, relative_path = excluded.relative_path, filename = excluded.filename, extension = excluded.extension, byte_size = excluded.byte_size, content_hash = CASE WHEN excluded.partial_fingerprint = assets.partial_fingerprint AND excluded.byte_size = assets.byte_size AND excluded.modified_at = assets.modified_at THEN COALESCE(excluded.content_hash, assets.content_hash) ELSE excluded.content_hash END, modified_at = excluded.modified_at, partial_fingerprint = excluded.partial_fingerprint, parse_status = excluded.parse_status, metadata_json = excluded.metadata_json, missing_since = NULL")
         .bind(&asset_id).bind(root_id).bind(&folder_id).bind(&file.relative).bind(&filename).bind(&file.extension).bind(file.size as i64).bind(&file.modified).bind(&fingerprint).bind(&content_hash).bind(parse_status).bind(&metadata_json).execute(pool).await.map_err(db_error)?;
+    let assigned = sqlx::query("SELECT ma.model_id, m.bundle_mode FROM model_assets ma JOIN models m ON m.id = ma.model_id WHERE ma.asset_id = ?")
+        .bind(&asset_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(db_error)?;
+    let assigned_mode = assigned
+        .as_ref()
+        .map(|row| row.get::<String, _>("bundle_mode"));
+    if preserved_model_id.is_none() {
+        preserved_model_id = assigned
+            .as_ref()
+            .map(|row| row.get::<String, _>("model_id"));
+    }
     let model_id = if let Some(id) = preserved_model_id {
         let conflict = sqlx::query(
             "SELECT id FROM models WHERE folder_id = ? AND grouping_key = ? AND id != ?",
@@ -472,38 +486,155 @@ async fn index_file(
         .fetch_optional(pool)
         .await
         .map_err(db_error)?;
-        if conflict.is_none() {
+        if assigned_mode.as_deref() == Some("manual") {
+            sqlx::query("UPDATE models SET grouping_key = ? WHERE id = ?")
+                .bind(format!("manual:{id}"))
+                .bind(&id)
+                .execute(pool)
+                .await
+                .map_err(db_error)?;
+        } else if conflict.is_none() {
             sqlx::query("UPDATE models SET folder_id = ?, grouping_key = ?, version_key = ?, display_name = ?, missing_since = NULL, updated_at = ? WHERE id = ?").bind(&folder_id).bind(&grouping_key).bind(&version_key).bind(&display_name).bind(now()).bind(&id).execute(pool).await.map_err(db_error)?;
         }
         id
-    } else if let Some(row) =
-        sqlx::query("SELECT id FROM models WHERE folder_id = ? AND grouping_key = ?")
+    } else {
+        sqlx::query("UPDATE models SET grouping_key = 'manual:' || id WHERE folder_id = ? AND grouping_key = ? AND bundle_mode = 'manual'")
+            .bind(&folder_id)
+            .bind(&grouping_key)
+            .execute(pool)
+            .await
+            .map_err(db_error)?;
+        if let Some(row) =
+        sqlx::query("SELECT id FROM models WHERE folder_id = ? AND grouping_key = ? AND bundle_mode = 'automatic'")
             .bind(&folder_id)
             .bind(&grouping_key)
             .fetch_optional(pool)
             .await
             .map_err(db_error)?
-    {
-        let id: String = row.get("id");
-        sqlx::query("UPDATE models SET version_key = ? WHERE id = ?")
-            .bind(&version_key)
-            .bind(&id)
-            .execute(pool)
+        {
+            let id: String = row.get("id");
+            sqlx::query("UPDATE models SET version_key = ? WHERE id = ?")
+                .bind(&version_key)
+                .bind(&id)
+                .execute(pool)
+                .await
+                .map_err(db_error)?;
+            id
+        } else {
+            let id = Uuid::new_v4().to_string();
+            let timestamp = now();
+            sqlx::query("INSERT INTO models (id, folder_id, display_name, grouping_key, version_key, added_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(&id).bind(&folder_id).bind(&display_name).bind(&grouping_key).bind(&version_key).bind(&timestamp).bind(&timestamp).execute(pool).await.map_err(db_error)?;
+            id
+        }
+    };
+    let asset_role = match file.extension.as_str() {
+        "step" | "stp" => "source",
+        "3mf" => "plate",
+        _ => "printable",
+    };
+    sqlx::query("INSERT OR IGNORE INTO model_assets (model_id, asset_id, role, sort_order) VALUES (?, ?, ?, 0)").bind(&model_id).bind(&asset_id).bind(asset_role).execute(pool).await.map_err(db_error)?;
+    sqlx::query("UPDATE model_assets SET role = ? WHERE asset_id = ?")
+        .bind(asset_role)
+        .bind(&asset_id)
+        .execute(pool)
+        .await
+        .map_err(db_error)?;
+    let project = sqlx::query("SELECT m.bundle_mode, EXISTS (SELECT 1 FROM assets current WHERE current.id = m.primary_asset_id AND current.missing_since IS NULL) primary_available FROM models m WHERE m.id = ?")
+        .bind(&model_id)
+        .fetch_one(pool)
+        .await
+        .map_err(db_error)?;
+    let preserve_primary = project.get::<String, _>("bundle_mode") == "manual"
+        && project.get::<i64, _>("primary_available") != 0;
+    if !preserve_primary {
+        let primary = sqlx::query("SELECT a.id FROM assets a JOIN model_assets ma ON ma.asset_id = a.id WHERE ma.model_id = ? AND a.missing_since IS NULL ORDER BY CASE a.extension WHEN '3mf' THEN 0 WHEN 'stl' THEN 1 WHEN 'obj' THEN 2 WHEN 'step' THEN 3 WHEN 'stp' THEN 3 ELSE 4 END, a.filename LIMIT 1")
+            .bind(&model_id)
+            .fetch_optional(pool)
             .await
             .map_err(db_error)?;
-        id
-    } else {
-        let id = Uuid::new_v4().to_string();
-        let timestamp = now();
-        sqlx::query("INSERT INTO models (id, folder_id, display_name, grouping_key, version_key, added_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(&id).bind(&folder_id).bind(&display_name).bind(&grouping_key).bind(&version_key).bind(&timestamp).bind(&timestamp).execute(pool).await.map_err(db_error)?;
-        id
-    };
-    sqlx::query("INSERT OR IGNORE INTO model_assets (model_id, asset_id, role, sort_order) VALUES (?, ?, 'variant', 0)").bind(&model_id).bind(&asset_id).execute(pool).await.map_err(db_error)?;
-    let primary = sqlx::query("SELECT a.id, a.extension FROM assets a JOIN model_assets ma ON ma.asset_id = a.id WHERE ma.model_id = ? AND a.missing_since IS NULL ORDER BY CASE a.extension WHEN '3mf' THEN 0 WHEN 'stl' THEN 1 WHEN 'obj' THEN 2 WHEN 'step' THEN 3 WHEN 'stp' THEN 3 ELSE 4 END, a.filename LIMIT 1").bind(&model_id).fetch_optional(pool).await.map_err(db_error)?;
-    if let Some(primary) = primary {
-        sqlx::query("UPDATE models SET primary_asset_id = ?, missing_since = NULL, updated_at = ? WHERE id = ?").bind(primary.get::<String, _>("id")).bind(now()).bind(&model_id).execute(pool).await.map_err(db_error)?;
+        if let Some(primary) = primary {
+            sqlx::query("UPDATE models SET primary_asset_id = ? WHERE id = ?")
+                .bind(primary.get::<String, _>("id"))
+                .bind(&model_id)
+                .execute(pool)
+                .await
+                .map_err(db_error)?;
+        }
     }
+    sqlx::query("UPDATE models SET missing_since = NULL, updated_at = ? WHERE id = ?")
+        .bind(now())
+        .bind(&model_id)
+        .execute(pool)
+        .await
+        .map_err(db_error)?;
     refresh_search(&model_id, pool).await?;
+    Ok(())
+}
+
+async fn refresh_geometry_fingerprints(
+    root_id: &str,
+    root_path: &Path,
+    pool: &SqlitePool,
+) -> Result<(), String> {
+    let rows = sqlx::query("SELECT a.id, a.relative_path, a.extension, a.partial_fingerprint, a.byte_size, a.modified_at, g.source_fingerprint FROM assets a LEFT JOIN asset_geometry g ON g.asset_id = a.id WHERE a.root_id = ? AND a.missing_since IS NULL")
+        .bind(root_id)
+        .fetch_all(pool)
+        .await
+        .map_err(db_error)?;
+    for row in rows {
+        let asset_id: String = row.get("id");
+        let revision = format!(
+            "{}:{}:{}",
+            row.get::<Option<String>, _>("partial_fingerprint")
+                .unwrap_or_default(),
+            row.get::<i64, _>("byte_size"),
+            row.get::<String, _>("modified_at")
+        );
+        if row
+            .get::<Option<String>, _>("source_fingerprint")
+            .as_deref()
+            == Some(revision.as_str())
+        {
+            continue;
+        }
+        let path = root_path.join(row.get::<String, _>("relative_path"));
+        let extension: String = row.get("extension");
+        let analysis =
+            tokio::task::spawn_blocking(move || geometry::analyze_file(&path, &extension))
+                .await
+                .map_err(|error| error.to_string())?;
+        match analysis {
+            Ok(analysis) => {
+                let dimensions = serde_json::to_string(&analysis.dimensions_mm)
+                    .map_err(|error| error.to_string())?;
+                let descriptor =
+                    serde_json::to_string(&analysis).map_err(|error| error.to_string())?;
+                sqlx::query("INSERT INTO asset_geometry (asset_id, source_fingerprint, algorithm_version, geometry_hash, similarity_key, dimensions_json, surface_area, volume, triangle_count, descriptor_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(asset_id) DO UPDATE SET source_fingerprint = excluded.source_fingerprint, algorithm_version = excluded.algorithm_version, geometry_hash = excluded.geometry_hash, similarity_key = excluded.similarity_key, dimensions_json = excluded.dimensions_json, surface_area = excluded.surface_area, volume = excluded.volume, triangle_count = excluded.triangle_count, descriptor_json = excluded.descriptor_json, updated_at = excluded.updated_at")
+                    .bind(&asset_id)
+                    .bind(&revision)
+                    .bind(geometry::ALGORITHM_VERSION)
+                    .bind(&analysis.geometry_hash)
+                    .bind(&analysis.similarity_key)
+                    .bind(dimensions)
+                    .bind(analysis.surface_area)
+                    .bind(analysis.volume)
+                    .bind(analysis.triangle_count as i64)
+                    .bind(descriptor)
+                    .bind(now())
+                    .execute(pool)
+                    .await
+                    .map_err(db_error)?;
+            }
+            Err(error) => {
+                sqlx::query("DELETE FROM asset_geometry WHERE asset_id = ?")
+                    .bind(&asset_id)
+                    .execute(pool)
+                    .await
+                    .map_err(db_error)?;
+                log::warn!("Geometry analysis failed for {asset_id}: {error}");
+            }
+        }
+    }
     Ok(())
 }
 
@@ -821,5 +952,95 @@ mod tests {
         assert_eq!(model_count, 1);
         assert_eq!(asset_count, 2);
         assert_eq!(search_count, 1);
+
+        let obj_asset: String = sqlx::query_scalar("SELECT id FROM assets WHERE extension = 'obj'")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+        let folder_id: String = sqlx::query_scalar("SELECT folder_id FROM assets WHERE id = ?")
+            .bind(&obj_asset)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+        let manual_id = Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO models (id, folder_id, display_name, grouping_key, version_key, bundle_mode, added_at, updated_at) VALUES (?, ?, 'Hook source', ?, 'hook', 'manual', ?, ?)")
+            .bind(&manual_id).bind(&folder_id).bind(format!("manual:{manual_id}")).bind(&timestamp).bind(&timestamp).execute(&state.pool).await.unwrap();
+        sqlx::query("UPDATE model_assets SET model_id = ? WHERE asset_id = ?")
+            .bind(&manual_id)
+            .bind(&obj_asset)
+            .execute(&state.pool)
+            .await
+            .unwrap();
+        let stl_asset: String = sqlx::query_scalar("SELECT id FROM assets WHERE extension = 'stl'")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+        let automatic_id: String =
+            sqlx::query_scalar("SELECT model_id FROM model_assets WHERE asset_id = ?")
+                .bind(&stl_asset)
+                .fetch_one(&state.pool)
+                .await
+                .unwrap();
+        sqlx::query("UPDATE model_assets SET model_id = ? WHERE asset_id = ?")
+            .bind(&manual_id)
+            .bind(&stl_asset)
+            .execute(&state.pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE models SET primary_asset_id = ? WHERE id = ?")
+            .bind(&obj_asset)
+            .bind(&manual_id)
+            .execute(&state.pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM models WHERE id = ?")
+            .bind(automatic_id)
+            .execute(&state.pool)
+            .await
+            .unwrap();
+        let obj_file = discover(library.path())
+            .unwrap()
+            .into_iter()
+            .find(|file| file.extension == "obj")
+            .unwrap();
+        index_file(
+            &root_id,
+            library.path(),
+            "Models",
+            obj_file,
+            &state.pool,
+            &mut cache,
+        )
+        .await
+        .unwrap();
+        let owner: String =
+            sqlx::query_scalar("SELECT model_id FROM model_assets WHERE asset_id = ?")
+                .bind(&obj_asset)
+                .fetch_one(&state.pool)
+                .await
+                .unwrap();
+        assert_eq!(owner, manual_id);
+        let stl_file = discover(library.path())
+            .unwrap()
+            .into_iter()
+            .find(|file| file.extension == "stl")
+            .unwrap();
+        index_file(
+            &root_id,
+            library.path(),
+            "Models",
+            stl_file,
+            &state.pool,
+            &mut cache,
+        )
+        .await
+        .unwrap();
+        let primary: String =
+            sqlx::query_scalar("SELECT primary_asset_id FROM models WHERE id = ?")
+                .bind(&manual_id)
+                .fetch_one(&state.pool)
+                .await
+                .unwrap();
+        assert_eq!(primary, obj_asset);
     }
 }

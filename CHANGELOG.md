@@ -2,6 +2,20 @@
 
 All notable changes to Volum are documented here.
 
+## [0.2.0] - 2026-09-23
+
+### Added
+
+- Project bundles that keep printable files, source geometry, plates, and versions together, with manual merge, split, and primary-preview controls that persist across rescans.
+- Geometry-aware duplicate detection across formats and orientations, with keeper recommendations, metadata transfer, false-match dismissal, and optional OS Trash cleanup.
+- Versioned all/any smart-collection rules and reusable saved searches.
+- OpenCascade-backed STEP/STP metadata, interactive tessellation, thumbnails, and geometry analysis on every supported desktop platform.
+
+### Improved
+
+- Library and detail interfaces now present projects rather than treating every file as an isolated model.
+- Duplicate cleanup preserves companion files and organization metadata, and never permanently deletes source files.
+
 ## [0.1.10] - 2026-09-23
 
 ### Added
@@ -38,6 +52,7 @@ All notable changes to Volum are documented here.
 - Model cards no longer overlap after a library finishes loading or the grid is resized.
 - Linux filesystem reads no longer trigger continuous rescans or leave the library stuck on “Building previews.”
 
+[0.2.0]: https://github.com/sabatesduran/volum/compare/v0.1.10...v0.2.0
 [0.1.10]: https://github.com/sabatesduran/volum/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/sabatesduran/volum/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/sabatesduran/volum/compare/v0.1.7...v0.1.8

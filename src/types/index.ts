@@ -1,4 +1,4 @@
-export type ViewId = "library" | "recent" | "favorites" | "duplicates" | "web" | "folders" | "collections" | "settings";
+export type ViewId = "library" | "recent" | "favorites" | "duplicates" | "web" | "folders" | "collections" | "saved" | "settings";
 export type Density = "comfortable" | "compact" | "large";
 export type Theme = "system" | "light" | "dark";
 export type LanguagePreference = "system" | "en" | "ca" | "es";
@@ -31,6 +31,7 @@ export interface Asset {
   parseStatus: string;
   metadata: AssetMetadata;
   missing: boolean;
+  role: "source" | "printable" | "plate" | "reference" | "version" | "variant";
 }
 
 export interface AssetMetadata {
@@ -39,6 +40,8 @@ export interface AssetMetadata {
   objectCount?: number;
   materialNames?: string[];
   filamentGrams?: number;
+  surfaceAreaMm2?: number;
+  volumeMm3?: number;
   warning?: string;
   threeMf?: ThreeMfMetadata;
 }
@@ -79,6 +82,7 @@ export interface ModelSummary {
   lastOpenedAt?: string;
   missing: boolean;
   assetCount: number;
+  bundleMode: "automatic" | "manual";
   dimensionsMm?: [number, number, number];
 }
 
@@ -118,9 +122,29 @@ export interface WebSource extends WebSourcePreview {
 }
 
 export interface SmartCollectionRule {
+  version?: number;
+  matchMode?: "all" | "any";
+  rules?: QueryRule[];
   tagId?: string;
   format?: string;
   availability?: "available" | "offline";
+}
+
+export type QueryRuleField = "text" | "folder" | "library" | "tag" | "format" | "availability" | "favorite" | "webSource" | "parseStatus" | "duplicate" | "added" | "modified" | "opened" | "fileCount" | "width" | "depth" | "height";
+export type QueryRuleOperator = "is" | "isNot" | "before" | "after" | "on" | "greaterThan" | "lessThan" | "atLeast" | "atMost";
+
+export interface QueryRule {
+  field: QueryRuleField;
+  operator: QueryRuleOperator;
+  value: string | number | boolean;
+}
+
+export interface SavedSearch {
+  id: string;
+  name: string;
+  query: ModelQuery;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Collection {
@@ -147,11 +171,14 @@ export interface RelatedModel {
   relativeFolder: string;
   primaryExtension: string;
   modifiedAt: string;
-  relationship: "duplicate" | "version";
+  relationship: "duplicate" | "geometry" | "version";
 }
 
 export interface DuplicateGroup {
   id: string;
+  matchKey: string;
+  matchKind: "exact" | "geometry";
+  confidence: number;
   modelCount: number;
   byteSize: number;
   models: ModelSummary[];
@@ -298,6 +325,12 @@ export interface ModelQuery {
   dateFrom?: string;
   dateTo?: string;
   duplicates?: boolean;
+  duplicateKind?: "exact" | "geometry" | "any";
+  libraryId?: string;
+  parseStatus?: string;
+  hasWebSource?: boolean;
+  minAssetCount?: number;
+  maxAssetCount?: number;
   sort?: ModelSort;
   offset?: number;
   limit?: number;

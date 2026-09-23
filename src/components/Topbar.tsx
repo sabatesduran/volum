@@ -13,7 +13,7 @@ export function Topbar({ onFilters, onImport }: { onFilters?: () => void; onImpo
         <input
           value={search}
           onChange={(event) => setSearch(event.target.value)}
-          placeholder={t("Search models, folders, collections…")}
+          placeholder={t("Search projects, folders, collections…")}
           aria-label={t("Search library")}
         />
         {search && <button onClick={() => setSearch("")} aria-label={t("Clear search")}><X size={15} /></button>}

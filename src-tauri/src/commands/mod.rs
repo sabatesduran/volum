@@ -1,13 +1,24 @@
 use crate::{domain::*, indexing, parsers, previews, state::AppState, web_sources};
-use chrono::Utc;
+use chrono::{NaiveDate, Utc};
 use serde_json::json;
 use sqlx::Row;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
 type CommandResult<T> = Result<T, String>;
+
+#[derive(Debug)]
+struct DuplicateMatchRow {
+    match_key: String,
+    value: String,
+    match_kind: String,
+    confidence: f64,
+    byte_size: i64,
+    model_count: i64,
+    latest_modified: String,
+}
 
 #[tauri::command]
 pub async fn list_roots(state: State<'_, AppState>) -> CommandResult<Vec<LibraryRoot>> {
@@ -225,25 +236,32 @@ pub async fn list_models(
         .format
         .clone()
         .unwrap_or_default()
-        .to_ascii_lowercase();
+        .to_ascii_lowercase()
+        .replace("stp", "step");
     let availability = query.availability.clone().unwrap_or_default();
     let tag = query.tag_id.clone().unwrap_or_default();
+    let rich_smart_sql = smart_rule_sql(&smart_rule)?;
     let smart_tag = smart_rule.tag_id.unwrap_or_default();
-    let smart_format = smart_rule.format.unwrap_or_default().to_ascii_lowercase();
+    let smart_format = smart_rule
+        .format
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .replace("stp", "step");
     let smart_availability = smart_rule.availability.unwrap_or_default();
     let date_from = query.date_from.clone().unwrap_or_default();
     let date_to = query.date_to.clone().unwrap_or_default();
     let date_column = if query.date_field.as_deref() == Some("added") {
         "m.added_at"
     } else {
-        "COALESCE(pa.modified_at, m.updated_at)"
+        "COALESCE((SELECT MAX(project_asset.modified_at) FROM model_assets project_membership JOIN assets project_asset ON project_asset.id = project_membership.asset_id WHERE project_membership.model_id = m.id), m.updated_at)"
     };
     let favorite = i64::from(query.favorite.unwrap_or(false));
     let recent = i64::from(query.recent.unwrap_or(false));
-    let duplicates = i64::from(query.duplicates.unwrap_or(false));
+    let project_filter_sql = model_query_sql(&query)?;
+    let duplicates = 0_i64;
     let limit = query.limit.unwrap_or(100).clamp(1, 500);
     let offset = query.offset.unwrap_or(0).max(0);
-    let where_sql = format!(" WHERE (? = '' OR m.id IN (SELECT model_id FROM model_search WHERE model_search MATCH ?)) AND (? = '' OR m.folder_id IN (SELECT descendant.id FROM folders descendant JOIN folders selected ON selected.id = ? WHERE descendant.root_id = selected.root_id AND (descendant.relative_path = selected.relative_path OR substr(descendant.relative_path, 1, length(selected.relative_path) + 1) = selected.relative_path || '/'))) AND (? = '' OR EXISTS (SELECT 1 FROM collection_items ci WHERE ci.model_id = m.id AND ci.collection_id = ?)) AND (? = 0 OR m.favorite = 1) AND (? = 0 OR m.last_opened_at IS NOT NULL) AND (? = '' OR pa.extension = ?) AND (? = '' OR (? = 'available' AND m.missing_since IS NULL) OR (? = 'offline' AND m.missing_since IS NOT NULL)) AND (? = '' OR EXISTS (SELECT 1 FROM model_tags mt WHERE mt.model_id = m.id AND mt.tag_id = ?)) AND (? = '' OR pa.extension = ?) AND (? = '' OR (? = 'available' AND m.missing_since IS NULL) OR (? = 'offline' AND m.missing_since IS NOT NULL)) AND (? = '' OR EXISTS (SELECT 1 FROM model_tags smt WHERE smt.model_id = m.id AND smt.tag_id = ?)) AND (? = '' OR date({date_column}) >= date(?)) AND (? = '' OR date({date_column}) <= date(?)) AND (? = 0 OR EXISTS (SELECT 1 FROM model_assets dma JOIN assets da ON da.id = dma.asset_id WHERE dma.model_id = m.id AND da.content_hash IS NOT NULL AND EXISTS (SELECT 1 FROM model_assets oma JOIN assets oa ON oa.id = oma.asset_id WHERE oma.model_id != m.id AND oa.content_hash = da.content_hash))) ");
+    let where_sql = format!(" WHERE (? = '' OR m.id IN (SELECT model_id FROM model_search WHERE model_search MATCH ?)) AND (? = '' OR m.folder_id IN (SELECT descendant.id FROM folders descendant JOIN folders selected ON selected.id = ? WHERE descendant.root_id = selected.root_id AND (descendant.relative_path = selected.relative_path OR substr(descendant.relative_path, 1, length(selected.relative_path) + 1) = selected.relative_path || '/'))) AND (? = '' OR EXISTS (SELECT 1 FROM collection_items ci WHERE ci.model_id = m.id AND ci.collection_id = ?)) AND (? = 0 OR m.favorite = 1) AND (? = 0 OR m.last_opened_at IS NOT NULL) AND (? = '' OR EXISTS (SELECT 1 FROM model_assets fma JOIN assets fa ON fa.id = fma.asset_id WHERE fma.model_id = m.id AND CASE fa.extension WHEN 'stp' THEN 'step' ELSE fa.extension END = ?)) AND (? = '' OR (? = 'available' AND m.missing_since IS NULL) OR (? = 'offline' AND m.missing_since IS NOT NULL)) AND (? = '' OR EXISTS (SELECT 1 FROM model_tags mt WHERE mt.model_id = m.id AND mt.tag_id = ?)) AND (? = '' OR EXISTS (SELECT 1 FROM model_assets sfma JOIN assets sfa ON sfa.id = sfma.asset_id WHERE sfma.model_id = m.id AND CASE sfa.extension WHEN 'stp' THEN 'step' ELSE sfa.extension END = ?)) AND (? = '' OR (? = 'available' AND m.missing_since IS NULL) OR (? = 'offline' AND m.missing_since IS NOT NULL)) AND (? = '' OR EXISTS (SELECT 1 FROM model_tags smt WHERE smt.model_id = m.id AND smt.tag_id = ?)) AND (? = '' OR date({date_column}) >= date(?)) AND (? = '' OR date({date_column}) <= date(?)) AND (? = 0 OR EXISTS (SELECT 1 FROM model_assets dma JOIN assets da ON da.id = dma.asset_id LEFT JOIN asset_geometry dg ON dg.asset_id = da.id WHERE dma.model_id = m.id AND ((da.content_hash IS NOT NULL AND EXISTS (SELECT 1 FROM model_assets oma JOIN assets oa ON oa.id = oma.asset_id WHERE oma.model_id != m.id AND oa.content_hash = da.content_hash)) OR (dg.geometry_hash IS NOT NULL AND EXISTS (SELECT 1 FROM model_assets oma JOIN asset_geometry og ON og.asset_id = oma.asset_id WHERE oma.model_id != m.id AND og.geometry_hash = dg.geometry_hash))))) AND ({rich_smart_sql}) AND ({project_filter_sql}) ");
     let count_sql = format!("SELECT COUNT(*) FROM models m JOIN folders f ON f.id = m.folder_id LEFT JOIN assets pa ON pa.id = m.primary_asset_id{where_sql}");
     let total: i64 = sqlx::query_scalar(&count_sql)
         .bind(&search)
@@ -282,9 +300,9 @@ pub async fn list_models(
         Some("opened") => {
             "m.last_opened_at DESC, m.updated_at DESC, lower(m.display_name) ASC, m.id ASC"
         }
-        _ => "COALESCE(pa.modified_at, m.updated_at) DESC, lower(m.display_name) ASC, m.id ASC",
+        _ => "COALESCE((SELECT MAX(project_asset.modified_at) FROM model_assets project_membership JOIN assets project_asset ON project_asset.id = project_membership.asset_id WHERE project_membership.model_id = m.id), m.updated_at) DESC, lower(m.display_name) ASC, m.id ASC",
     };
-    let data_sql = format!("SELECT m.id, m.display_name, m.folder_id, f.name folder_name, f.relative_path, m.primary_asset_id, COALESCE(pa.extension, '') primary_extension, m.favorite, m.added_at, COALESCE(pa.modified_at, m.updated_at) modified_at, m.last_opened_at, m.missing_since, COUNT(DISTINCT ma.asset_id) asset_count, COALESCE(pa.metadata_json, '{{}}') metadata_json FROM models m JOIN folders f ON f.id = m.folder_id LEFT JOIN assets pa ON pa.id = m.primary_asset_id LEFT JOIN model_assets ma ON ma.model_id = m.id{where_sql}GROUP BY m.id ORDER BY {order} LIMIT ? OFFSET ?");
+    let data_sql = format!("SELECT m.id, m.display_name, m.folder_id, f.name folder_name, f.relative_path, m.primary_asset_id, COALESCE(pa.extension, '') primary_extension, m.favorite, m.added_at, COALESCE((SELECT MAX(project_asset.modified_at) FROM model_assets project_membership JOIN assets project_asset ON project_asset.id = project_membership.asset_id WHERE project_membership.model_id = m.id), m.updated_at) modified_at, m.last_opened_at, m.missing_since, m.bundle_mode, COUNT(DISTINCT ma.asset_id) asset_count, COALESCE(pa.metadata_json, '{{}}') metadata_json FROM models m JOIN folders f ON f.id = m.folder_id LEFT JOIN assets pa ON pa.id = m.primary_asset_id LEFT JOIN model_assets ma ON ma.model_id = m.id{where_sql}GROUP BY m.id ORDER BY {order} LIMIT ? OFFSET ?");
     let rows = sqlx::query(&data_sql)
         .bind(&search)
         .bind(&search_match)
@@ -335,13 +353,13 @@ pub async fn list_models(
 
 #[tauri::command]
 pub async fn get_model(model_id: String, state: State<'_, AppState>) -> CommandResult<ModelDetail> {
-    let row = sqlx::query("SELECT m.id, m.display_name, m.folder_id, f.name folder_name, f.relative_path, m.primary_asset_id, COALESCE(pa.extension, '') primary_extension, m.favorite, m.added_at, COALESCE(pa.modified_at, m.updated_at) modified_at, m.last_opened_at, m.missing_since, COUNT(DISTINCT ma.asset_id) asset_count, COALESCE(pa.metadata_json, '{}') metadata_json, m.notes, r.id root_id, r.display_name root_name, r.path root_path FROM models m JOIN folders f ON f.id = m.folder_id JOIN library_roots r ON r.id = f.root_id LEFT JOIN assets pa ON pa.id = m.primary_asset_id LEFT JOIN model_assets ma ON ma.model_id = m.id WHERE m.id = ? GROUP BY m.id").bind(&model_id).fetch_optional(&state.pool).await.map_err(db_error)?.ok_or_else(|| "Model not found".to_string())?;
+    let row = sqlx::query("SELECT m.id, m.display_name, m.folder_id, f.name folder_name, f.relative_path, m.primary_asset_id, COALESCE(pa.extension, '') primary_extension, m.favorite, m.added_at, COALESCE((SELECT MAX(project_asset.modified_at) FROM model_assets project_membership JOIN assets project_asset ON project_asset.id = project_membership.asset_id WHERE project_membership.model_id = m.id), m.updated_at) modified_at, m.last_opened_at, m.missing_since, m.bundle_mode, COUNT(DISTINCT ma.asset_id) asset_count, COALESCE(pa.metadata_json, '{}') metadata_json, m.notes, r.id root_id, r.display_name root_name, r.path root_path FROM models m JOIN folders f ON f.id = m.folder_id JOIN library_roots r ON r.id = f.root_id LEFT JOIN assets pa ON pa.id = m.primary_asset_id LEFT JOIN model_assets ma ON ma.model_id = m.id WHERE m.id = ? GROUP BY m.id").bind(&model_id).fetch_optional(&state.pool).await.map_err(db_error)?.ok_or_else(|| "Project not found".to_string())?;
     let notes = row.get("notes");
     let root_id = row.get("root_id");
     let root_name = row.get("root_name");
     let root_path = row.get("root_path");
     let summary = summary_from_row(row)?;
-    let rows = sqlx::query("SELECT a.id, a.filename, a.extension, a.relative_path, a.byte_size, a.modified_at, a.parse_status, a.metadata_json, a.missing_since FROM assets a JOIN model_assets ma ON ma.asset_id = a.id WHERE ma.model_id = ? ORDER BY CASE a.extension WHEN '3mf' THEN 0 WHEN 'stl' THEN 1 WHEN 'obj' THEN 2 ELSE 3 END, a.filename").bind(&model_id).fetch_all(&state.pool).await.map_err(db_error)?;
+    let rows = sqlx::query("SELECT a.id, a.filename, a.extension, a.relative_path, a.byte_size, a.modified_at, a.parse_status, a.metadata_json, a.missing_since, ma.role FROM assets a JOIN model_assets ma ON ma.asset_id = a.id WHERE ma.model_id = ? ORDER BY ma.sort_order, CASE a.extension WHEN '3mf' THEN 0 WHEN 'step' THEN 1 WHEN 'stp' THEN 1 WHEN 'stl' THEN 2 WHEN 'obj' THEN 3 ELSE 4 END, a.filename").bind(&model_id).fetch_all(&state.pool).await.map_err(db_error)?;
     let assets = rows
         .into_iter()
         .map(|row| -> Result<Asset, String> {
@@ -356,6 +374,7 @@ pub async fn get_model(model_id: String, state: State<'_, AppState>) -> CommandR
                 metadata: serde_json::from_str(&row.get::<String, _>("metadata_json"))
                     .unwrap_or_default(),
                 missing: row.get::<Option<String>, _>("missing_since").is_some(),
+                role: row.get("role"),
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -440,6 +459,83 @@ pub async fn save_notes(
         .await
         .map_err(db_error)?;
     indexing::refresh_search(&model_id, &state.pool).await
+}
+
+#[tauri::command]
+pub async fn list_saved_searches(state: State<'_, AppState>) -> CommandResult<Vec<SavedSearch>> {
+    let rows = sqlx::query("SELECT id, name, query_json, created_at, updated_at FROM saved_searches ORDER BY sort_order, lower(name)")
+        .fetch_all(&state.pool)
+        .await
+        .map_err(db_error)?;
+    Ok(rows
+        .into_iter()
+        .map(|row| SavedSearch {
+            id: row.get("id"),
+            name: row.get("name"),
+            query: serde_json::from_str(&row.get::<String, _>("query_json")).unwrap_or_default(),
+            created_at: row.get("created_at"),
+            updated_at: row.get("updated_at"),
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn save_saved_search(
+    input: SavedSearchInput,
+    state: State<'_, AppState>,
+) -> CommandResult<SavedSearch> {
+    let name = input.name.trim();
+    if name.is_empty() || name.chars().count() > 80 {
+        return Err("Saved search names must contain 1–80 characters".into());
+    }
+    let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    let mut query = input.query;
+    query.offset = None;
+    query.limit = None;
+    let query_json = serde_json::to_string(&query).map_err(|error| error.to_string())?;
+    let timestamp = now();
+    let created_at: Option<String> =
+        sqlx::query_scalar("SELECT created_at FROM saved_searches WHERE id = ?")
+            .bind(&id)
+            .fetch_optional(&state.pool)
+            .await
+            .map_err(db_error)?;
+    let created_at = created_at.unwrap_or_else(|| timestamp.clone());
+    let order: f64 =
+        sqlx::query_scalar("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM saved_searches")
+            .fetch_one(&state.pool)
+            .await
+            .map_err(db_error)?;
+    sqlx::query("INSERT INTO saved_searches (id, name, query_json, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name, query_json = excluded.query_json, updated_at = excluded.updated_at")
+        .bind(&id)
+        .bind(name)
+        .bind(query_json)
+        .bind(order)
+        .bind(&created_at)
+        .bind(&timestamp)
+        .execute(&state.pool)
+        .await
+        .map_err(db_error)?;
+    Ok(SavedSearch {
+        id,
+        name: name.to_string(),
+        query,
+        created_at,
+        updated_at: timestamp,
+    })
+}
+
+#[tauri::command]
+pub async fn delete_saved_search(
+    search_id: String,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    sqlx::query("DELETE FROM saved_searches WHERE id = ?")
+        .bind(search_id)
+        .execute(&state.pool)
+        .await
+        .map_err(db_error)?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -731,8 +827,8 @@ pub async fn list_related_models(
             .await
             .map_err(db_error)?
             .flatten();
-    let rows = sqlx::query("SELECT DISTINCT other.id, other.display_name, f.relative_path, COALESCE(pa.extension, '') primary_extension, COALESCE(pa.modified_at, other.updated_at) modified_at, CASE WHEN EXISTS (SELECT 1 FROM model_assets mine JOIN assets mine_asset ON mine_asset.id = mine.asset_id JOIN model_assets theirs ON theirs.model_id = other.id JOIN assets their_asset ON their_asset.id = theirs.asset_id AND their_asset.content_hash = mine_asset.content_hash WHERE mine.model_id = ? AND mine_asset.content_hash IS NOT NULL) THEN 'duplicate' ELSE 'version' END relationship FROM models other JOIN folders f ON f.id = other.folder_id LEFT JOIN assets pa ON pa.id = other.primary_asset_id WHERE other.id != ? AND (EXISTS (SELECT 1 FROM model_assets mine JOIN assets mine_asset ON mine_asset.id = mine.asset_id JOIN model_assets theirs ON theirs.model_id = other.id JOIN assets their_asset ON their_asset.id = theirs.asset_id AND their_asset.content_hash = mine_asset.content_hash WHERE mine.model_id = ? AND mine_asset.content_hash IS NOT NULL) OR (? != '' AND other.version_key = ?)) ORDER BY relationship, modified_at DESC LIMIT 50")
-        .bind(&model_id).bind(&model_id).bind(&model_id).bind(version_key.clone().unwrap_or_default()).bind(version_key.unwrap_or_default()).fetch_all(&state.pool).await.map_err(db_error)?;
+    let rows = sqlx::query("SELECT DISTINCT other.id, other.display_name, f.relative_path, COALESCE(pa.extension, '') primary_extension, COALESCE((SELECT MAX(project_asset.modified_at) FROM model_assets project_membership JOIN assets project_asset ON project_asset.id = project_membership.asset_id WHERE project_membership.model_id = other.id), other.updated_at) modified_at, CASE WHEN EXISTS (SELECT 1 FROM model_assets mine JOIN assets mine_asset ON mine_asset.id = mine.asset_id JOIN model_assets theirs ON theirs.model_id = other.id JOIN assets their_asset ON their_asset.id = theirs.asset_id AND their_asset.content_hash = mine_asset.content_hash WHERE mine.model_id = ? AND mine_asset.content_hash IS NOT NULL) THEN 'duplicate' WHEN EXISTS (SELECT 1 FROM model_assets mine JOIN asset_geometry mine_geometry ON mine_geometry.asset_id = mine.asset_id JOIN model_assets theirs ON theirs.model_id = other.id JOIN asset_geometry their_geometry ON their_geometry.asset_id = theirs.asset_id AND their_geometry.geometry_hash = mine_geometry.geometry_hash WHERE mine.model_id = ?) THEN 'geometry' ELSE 'version' END relationship FROM models other JOIN folders f ON f.id = other.folder_id LEFT JOIN assets pa ON pa.id = other.primary_asset_id WHERE other.id != ? AND (EXISTS (SELECT 1 FROM model_assets mine JOIN assets mine_asset ON mine_asset.id = mine.asset_id JOIN model_assets theirs ON theirs.model_id = other.id JOIN assets their_asset ON their_asset.id = theirs.asset_id AND their_asset.content_hash = mine_asset.content_hash WHERE mine.model_id = ? AND mine_asset.content_hash IS NOT NULL) OR EXISTS (SELECT 1 FROM model_assets mine JOIN asset_geometry mine_geometry ON mine_geometry.asset_id = mine.asset_id JOIN model_assets theirs ON theirs.model_id = other.id JOIN asset_geometry their_geometry ON their_geometry.asset_id = theirs.asset_id AND their_geometry.geometry_hash = mine_geometry.geometry_hash WHERE mine.model_id = ?) OR (? != '' AND other.version_key = ?)) ORDER BY relationship, modified_at DESC LIMIT 50")
+        .bind(&model_id).bind(&model_id).bind(&model_id).bind(&model_id).bind(&model_id).bind(version_key.clone().unwrap_or_default()).bind(version_key.unwrap_or_default()).fetch_all(&state.pool).await.map_err(db_error)?;
     Ok(rows
         .into_iter()
         .map(|row| RelatedModel {
@@ -748,12 +844,14 @@ pub async fn list_related_models(
 
 #[tauri::command]
 pub async fn get_duplicate_stats(state: State<'_, AppState>) -> CommandResult<DuplicateStats> {
-    let row = sqlx::query("SELECT COUNT(*) groups_count, COALESCE(SUM(model_count), 0) models_count, COALESCE(SUM(model_count - 1), 0) redundant_count FROM (SELECT a.content_hash, COUNT(DISTINCT ma.model_id) model_count FROM assets a JOIN model_assets ma ON ma.asset_id = a.id WHERE a.missing_since IS NULL AND a.content_hash IS NOT NULL GROUP BY a.content_hash HAVING COUNT(DISTINCT ma.model_id) > 1)")
-        .fetch_one(&state.pool).await.map_err(db_error)?;
+    let matches = duplicate_match_rows(&state.pool).await?;
     Ok(DuplicateStats {
-        groups: row.get("groups_count"),
-        models: row.get("models_count"),
-        redundant_copies: row.get("redundant_count"),
+        groups: matches.len() as i64,
+        models: matches.iter().map(|group| group.model_count).sum(),
+        redundant_copies: matches
+            .iter()
+            .map(|group| group.model_count.saturating_sub(1))
+            .sum(),
     })
 }
 
@@ -765,23 +863,41 @@ pub async fn list_duplicate_groups(
 ) -> CommandResult<Page<DuplicateGroup>> {
     let offset = offset.max(0);
     let limit = limit.clamp(1, 100);
-    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM (SELECT a.content_hash FROM assets a JOIN model_assets ma ON ma.asset_id = a.id WHERE a.missing_since IS NULL AND a.content_hash IS NOT NULL GROUP BY a.content_hash HAVING COUNT(DISTINCT ma.model_id) > 1)")
-        .fetch_one(&state.pool).await.map_err(db_error)?;
-    let hashes = sqlx::query("SELECT a.content_hash, MAX(a.byte_size) byte_size, COUNT(DISTINCT ma.model_id) model_count, MAX(a.modified_at) latest_modified FROM assets a JOIN model_assets ma ON ma.asset_id = a.id WHERE a.missing_since IS NULL AND a.content_hash IS NOT NULL GROUP BY a.content_hash HAVING COUNT(DISTINCT ma.model_id) > 1 ORDER BY latest_modified DESC LIMIT ? OFFSET ?")
-        .bind(limit).bind(offset).fetch_all(&state.pool).await.map_err(db_error)?;
-    let mut groups = Vec::with_capacity(hashes.len());
-    for hash_row in hashes {
-        let hash: String = hash_row.get("content_hash");
-        let rows = sqlx::query("SELECT m.id, m.display_name, m.folder_id, f.name folder_name, f.relative_path, m.primary_asset_id, COALESCE(pa.extension, '') primary_extension, m.favorite, m.added_at, COALESCE(pa.modified_at, m.updated_at) modified_at, m.last_opened_at, m.missing_since, COUNT(DISTINCT all_ma.asset_id) asset_count, COALESCE(pa.metadata_json, '{}') metadata_json FROM models m JOIN folders f ON f.id = m.folder_id LEFT JOIN assets pa ON pa.id = m.primary_asset_id JOIN model_assets matching_ma ON matching_ma.model_id = m.id JOIN assets matching_asset ON matching_asset.id = matching_ma.asset_id LEFT JOIN model_assets all_ma ON all_ma.model_id = m.id WHERE matching_asset.content_hash = ? AND matching_asset.missing_since IS NULL GROUP BY m.id ORDER BY lower(m.display_name), f.relative_path")
-            .bind(&hash).fetch_all(&state.pool).await.map_err(db_error)?;
+    let matches = duplicate_match_rows(&state.pool).await?;
+    let total = matches.len() as i64;
+    let mut groups = Vec::with_capacity(limit as usize);
+    for match_row in matches
+        .into_iter()
+        .skip(offset as usize)
+        .take(limit as usize)
+    {
+        let condition = if match_row.match_kind == "exact" {
+            "matching_asset.content_hash = ?"
+        } else {
+            "matching_geometry.geometry_hash = ?"
+        };
+        let geometry_join = if match_row.match_kind == "geometry" {
+            " JOIN asset_geometry matching_geometry ON matching_geometry.asset_id = matching_asset.id"
+        } else {
+            " LEFT JOIN asset_geometry matching_geometry ON matching_geometry.asset_id = matching_asset.id"
+        };
+        let sql = format!("SELECT m.id, m.display_name, m.folder_id, f.name folder_name, f.relative_path, m.primary_asset_id, COALESCE(pa.extension, '') primary_extension, m.favorite, m.added_at, COALESCE((SELECT MAX(project_asset.modified_at) FROM model_assets project_membership JOIN assets project_asset ON project_asset.id = project_membership.asset_id WHERE project_membership.model_id = m.id), m.updated_at) modified_at, m.last_opened_at, m.missing_since, m.bundle_mode, COUNT(DISTINCT all_ma.asset_id) asset_count, COALESCE(pa.metadata_json, '{{}}') metadata_json FROM models m JOIN folders f ON f.id = m.folder_id LEFT JOIN assets pa ON pa.id = m.primary_asset_id JOIN model_assets matching_ma ON matching_ma.model_id = m.id JOIN assets matching_asset ON matching_asset.id = matching_ma.asset_id{geometry_join} LEFT JOIN model_assets all_ma ON all_ma.model_id = m.id WHERE {condition} AND matching_asset.missing_since IS NULL GROUP BY m.id ORDER BY lower(m.display_name), f.relative_path");
+        let rows = sqlx::query(&sql)
+            .bind(&match_row.value)
+            .fetch_all(&state.pool)
+            .await
+            .map_err(db_error)?;
         let models = rows
             .into_iter()
             .map(summary_from_row)
             .collect::<Result<Vec<_>, _>>()?;
         groups.push(DuplicateGroup {
-            id: hash,
-            model_count: hash_row.get("model_count"),
-            byte_size: hash_row.get("byte_size"),
+            id: match_row.match_key.clone(),
+            match_key: match_row.match_key,
+            match_kind: match_row.match_kind,
+            confidence: match_row.confidence,
+            model_count: match_row.model_count,
+            byte_size: match_row.byte_size,
             models,
         });
     }
@@ -790,6 +906,381 @@ pub async fn list_duplicate_groups(
         total,
         next_offset: (offset + limit < total).then_some(offset + limit),
     })
+}
+
+#[tauri::command]
+pub async fn merge_projects(
+    input: MergeProjectsInput,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    merge_projects_impl(&input.keeper_id, &input.project_ids, &state.pool).await
+}
+
+#[tauri::command]
+pub async fn split_project(
+    input: SplitProjectInput,
+    state: State<'_, AppState>,
+) -> CommandResult<String> {
+    let name = input.name.trim();
+    if name.is_empty() || name.chars().count() > 160 {
+        return Err("Project names must contain 1–160 characters".into());
+    }
+    if input.asset_ids.is_empty() {
+        return Err("Choose at least one file to split into a project".into());
+    }
+    if input.asset_ids.len() > 1_000 {
+        return Err("A project split cannot include more than 1,000 files".into());
+    }
+    if input.asset_ids.iter().collect::<HashSet<_>>().len() != input.asset_ids.len() {
+        return Err("A project split cannot contain the same file more than once".into());
+    }
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM model_assets WHERE model_id = ?")
+        .bind(&input.project_id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(db_error)?;
+    let selected: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM model_assets WHERE model_id = ? AND asset_id IN (SELECT value FROM json_each(?))")
+        .bind(&input.project_id)
+        .bind(serde_json::to_string(&input.asset_ids).map_err(|error| error.to_string())?)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(db_error)?;
+    if selected != input.asset_ids.len() as i64 || selected >= total {
+        return Err("A split must leave at least one file in the original project".into());
+    }
+    let folder_id: String = sqlx::query_scalar("SELECT a.folder_id FROM assets a JOIN model_assets ma ON ma.asset_id = a.id WHERE ma.model_id = ? AND a.id = ?")
+        .bind(&input.project_id)
+        .bind(&input.asset_ids[0])
+        .fetch_one(&state.pool)
+        .await
+        .map_err(db_error)?;
+    let project_id = Uuid::new_v4().to_string();
+    let timestamp = now();
+    let mut transaction = state.pool.begin().await.map_err(db_error)?;
+    sqlx::query("INSERT INTO models (id, folder_id, display_name, grouping_key, version_key, bundle_mode, added_at, updated_at) VALUES (?, ?, ?, ?, '', 'manual', ?, ?)")
+        .bind(&project_id)
+        .bind(&folder_id)
+        .bind(name)
+        .bind(format!("manual:{project_id}"))
+        .bind(&timestamp)
+        .bind(&timestamp)
+        .execute(&mut *transaction)
+        .await
+        .map_err(db_error)?;
+    for asset_id in &input.asset_ids {
+        sqlx::query("UPDATE model_assets SET model_id = ? WHERE model_id = ? AND asset_id = ?")
+            .bind(&project_id)
+            .bind(&input.project_id)
+            .bind(asset_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(db_error)?;
+    }
+    set_best_primary(&project_id, &mut transaction).await?;
+    set_best_primary(&input.project_id, &mut transaction).await?;
+    sqlx::query("UPDATE models SET grouping_key = 'manual:' || id, bundle_mode = 'manual', updated_at = ? WHERE id = ?")
+        .bind(&timestamp)
+        .bind(&input.project_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(db_error)?;
+    transaction.commit().await.map_err(db_error)?;
+    indexing::refresh_search(&project_id, &state.pool).await?;
+    indexing::refresh_search(&input.project_id, &state.pool).await?;
+    Ok(project_id)
+}
+
+#[tauri::command]
+pub async fn set_project_primary_asset(
+    project_id: String,
+    asset_id: String,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let belongs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM model_assets ma JOIN assets a ON a.id = ma.asset_id WHERE ma.model_id = ? AND ma.asset_id = ? AND a.missing_since IS NULL")
+            .bind(&project_id)
+            .bind(&asset_id)
+            .fetch_one(&state.pool)
+            .await
+            .map_err(db_error)?;
+    if belongs == 0 {
+        return Err("The selected file is unavailable or is not part of this project".into());
+    }
+    sqlx::query("UPDATE models SET primary_asset_id = ?, grouping_key = 'manual:' || id, bundle_mode = 'manual', updated_at = ? WHERE id = ?")
+        .bind(asset_id)
+        .bind(now())
+        .bind(project_id)
+        .execute(&state.pool)
+        .await
+        .map_err(db_error)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn dismiss_duplicate_match(
+    match_key: String,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    if !(match_key.starts_with("exact:") || match_key.starts_with("geometry:")) {
+        return Err("Unknown duplicate match".into());
+    }
+    sqlx::query("INSERT OR IGNORE INTO duplicate_dismissals (match_key, created_at) VALUES (?, ?)")
+        .bind(match_key)
+        .bind(now())
+        .execute(&state.pool)
+        .await
+        .map_err(db_error)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn cleanup_duplicate_group(
+    input: DuplicateCleanupInput,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    if input.duplicate_ids.is_empty() || input.duplicate_ids.iter().any(|id| id == &input.keeper_id)
+    {
+        return Err("Choose one keeper and at least one other project".into());
+    }
+    if input.duplicate_ids.len() > 100
+        || input.duplicate_ids.iter().collect::<HashSet<_>>().len() != input.duplicate_ids.len()
+    {
+        return Err("Duplicate cleanup contains too many or repeated projects".into());
+    }
+    let (match_kind, match_value) = input
+        .match_key
+        .split_once(':')
+        .ok_or_else(|| "Unknown duplicate match".to_string())?;
+    let asset_sql = match match_kind {
+        "exact" => "SELECT ma.asset_id FROM model_assets ma JOIN assets a ON a.id = ma.asset_id WHERE ma.model_id IN (SELECT value FROM json_each(?)) AND a.content_hash = ?",
+        "geometry" => "SELECT ma.asset_id FROM model_assets ma JOIN asset_geometry g ON g.asset_id = ma.asset_id WHERE ma.model_id IN (SELECT value FROM json_each(?)) AND g.geometry_hash = ?",
+        _ => return Err("Unknown duplicate match".into()),
+    };
+    let asset_ids: Vec<String> = sqlx::query_scalar(asset_sql)
+        .bind(serde_json::to_string(&input.duplicate_ids).map_err(|error| error.to_string())?)
+        .bind(match_value)
+        .fetch_all(&state.pool)
+        .await
+        .map_err(db_error)?;
+    if asset_ids.is_empty() {
+        return Err("The selected projects no longer contain this duplicate".into());
+    }
+    let matched_projects: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT model_id) FROM model_assets WHERE model_id IN (SELECT value FROM json_each(?)) AND asset_id IN (SELECT value FROM json_each(?))")
+        .bind(serde_json::to_string(&input.duplicate_ids).map_err(|error| error.to_string())?)
+        .bind(serde_json::to_string(&asset_ids).map_err(|error| error.to_string())?)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(db_error)?;
+    if matched_projects != input.duplicate_ids.len() as i64 {
+        return Err(
+            "Every project selected for cleanup must belong to this duplicate group".into(),
+        );
+    }
+    let keeper_matches: i64 = match match_kind {
+        "exact" => sqlx::query_scalar("SELECT COUNT(*) FROM model_assets ma JOIN assets a ON a.id = ma.asset_id WHERE ma.model_id = ? AND a.content_hash = ?")
+            .bind(&input.keeper_id).bind(match_value).fetch_one(&state.pool).await.map_err(db_error)?,
+        "geometry" => sqlx::query_scalar("SELECT COUNT(*) FROM model_assets ma JOIN asset_geometry g ON g.asset_id = ma.asset_id WHERE ma.model_id = ? AND g.geometry_hash = ?")
+            .bind(&input.keeper_id).bind(match_value).fetch_one(&state.pool).await.map_err(db_error)?,
+        _ => 0,
+    };
+    if keeper_matches == 0 {
+        return Err("The keeper project does not belong to this duplicate group".into());
+    }
+    if input.move_to_trash {
+        let mut paths = Vec::with_capacity(asset_ids.len());
+        for asset_id in &asset_ids {
+            paths.push(asset_path(asset_id, &state).await?.0);
+        }
+        tokio::task::spawn_blocking(move || {
+            for path in paths {
+                trash::delete(&path).map_err(|error| {
+                    format!("Unable to move {} to Trash: {error}", path.display())
+                })?;
+            }
+            Ok::<_, String>(())
+        })
+        .await
+        .map_err(|error| error.to_string())??;
+    }
+    merge_projects_impl(&input.keeper_id, &input.duplicate_ids, &state.pool).await?;
+    if input.move_to_trash {
+        let timestamp = now();
+        for asset_id in asset_ids {
+            sqlx::query(
+                "UPDATE assets SET missing_since = COALESCE(missing_since, ?) WHERE id = ?",
+            )
+            .bind(&timestamp)
+            .bind(asset_id)
+            .execute(&state.pool)
+            .await
+            .map_err(db_error)?;
+        }
+        let primary: Option<String> = sqlx::query_scalar("SELECT a.id FROM assets a JOIN model_assets ma ON ma.asset_id = a.id WHERE ma.model_id = ? AND a.missing_since IS NULL ORDER BY CASE a.extension WHEN '3mf' THEN 0 WHEN 'stl' THEN 1 WHEN 'obj' THEN 2 WHEN 'step' THEN 3 WHEN 'stp' THEN 3 ELSE 4 END, a.filename LIMIT 1")
+            .bind(&input.keeper_id)
+            .fetch_optional(&state.pool)
+            .await
+            .map_err(db_error)?;
+        sqlx::query("UPDATE models SET primary_asset_id = ? WHERE id = ?")
+            .bind(primary)
+            .bind(&input.keeper_id)
+            .execute(&state.pool)
+            .await
+            .map_err(db_error)?;
+    }
+    sqlx::query("INSERT OR IGNORE INTO duplicate_dismissals (match_key, created_at) VALUES (?, ?)")
+        .bind(input.match_key)
+        .bind(now())
+        .execute(&state.pool)
+        .await
+        .map_err(db_error)?;
+    Ok(())
+}
+
+async fn merge_projects_impl(
+    keeper_id: &str,
+    project_ids: &[String],
+    pool: &sqlx::SqlitePool,
+) -> CommandResult<()> {
+    if project_ids.len() > 500 {
+        return Err("A project bundle cannot include more than 500 projects".into());
+    }
+    let mut sources = project_ids
+        .iter()
+        .filter(|id| id.as_str() != keeper_id)
+        .cloned()
+        .collect::<Vec<_>>();
+    sources.sort_unstable();
+    sources.dedup();
+    if sources.is_empty() {
+        return Err("Choose at least one project to bundle".into());
+    }
+    let keeper_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM models WHERE id = ?")
+        .bind(keeper_id)
+        .fetch_one(pool)
+        .await
+        .map_err(db_error)?;
+    if keeper_exists == 0 {
+        return Err("Keeper project not found".into());
+    }
+    let timestamp = now();
+    let mut transaction = pool.begin().await.map_err(db_error)?;
+    for source_id in &sources {
+        let row = sqlx::query("SELECT notes, favorite FROM models WHERE id = ?")
+            .bind(source_id)
+            .fetch_optional(&mut *transaction)
+            .await
+            .map_err(db_error)?
+            .ok_or_else(|| "Project to bundle was not found".to_string())?;
+        let notes: String = row.get("notes");
+        if !notes.trim().is_empty() {
+            sqlx::query("UPDATE models SET notes = CASE WHEN trim(notes) = '' THEN ? ELSE notes || '\n\n' || ? END WHERE id = ?")
+                .bind(&notes)
+                .bind(&notes)
+                .bind(keeper_id)
+                .execute(&mut *transaction)
+                .await
+                .map_err(db_error)?;
+        }
+        if row.get::<i64, _>("favorite") != 0 {
+            sqlx::query("UPDATE models SET favorite = 1 WHERE id = ?")
+                .bind(keeper_id)
+                .execute(&mut *transaction)
+                .await
+                .map_err(db_error)?;
+        }
+        sqlx::query("INSERT OR IGNORE INTO model_tags (model_id, tag_id, added_at) SELECT ?, tag_id, added_at FROM model_tags WHERE model_id = ?")
+            .bind(keeper_id).bind(source_id).execute(&mut *transaction).await.map_err(db_error)?;
+        sqlx::query("INSERT OR IGNORE INTO collection_items (collection_id, model_id, position, added_at) SELECT collection_id, ?, position, added_at FROM collection_items WHERE model_id = ?")
+            .bind(keeper_id).bind(source_id).execute(&mut *transaction).await.map_err(db_error)?;
+        sqlx::query("UPDATE web_sources SET model_id = ?, updated_at = ? WHERE model_id = ?")
+            .bind(keeper_id)
+            .bind(&timestamp)
+            .bind(source_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(db_error)?;
+        sqlx::query("UPDATE cost_estimates SET model_id = ?, updated_at = ? WHERE model_id = ?")
+            .bind(keeper_id)
+            .bind(&timestamp)
+            .bind(source_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(db_error)?;
+        sqlx::query("UPDATE model_assets SET model_id = ? WHERE model_id = ?")
+            .bind(keeper_id)
+            .bind(source_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(db_error)?;
+        sqlx::query("DELETE FROM models WHERE id = ?")
+            .bind(source_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(db_error)?;
+    }
+    sqlx::query("UPDATE models SET grouping_key = 'manual:' || id, bundle_mode = 'manual', missing_since = NULL, updated_at = ? WHERE id = ?")
+        .bind(&timestamp).bind(keeper_id).execute(&mut *transaction).await.map_err(db_error)?;
+    set_best_primary(keeper_id, &mut transaction).await?;
+    transaction.commit().await.map_err(db_error)?;
+    indexing::refresh_search(keeper_id, pool).await?;
+    Ok(())
+}
+
+async fn set_best_primary(
+    project_id: &str,
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+) -> CommandResult<()> {
+    let primary: Option<String> = sqlx::query_scalar("SELECT a.id FROM assets a JOIN model_assets ma ON ma.asset_id = a.id WHERE ma.model_id = ? AND a.missing_since IS NULL ORDER BY CASE a.extension WHEN '3mf' THEN 0 WHEN 'stl' THEN 1 WHEN 'obj' THEN 2 WHEN 'step' THEN 3 WHEN 'stp' THEN 3 ELSE 4 END, ma.sort_order, a.filename LIMIT 1")
+        .bind(project_id)
+        .fetch_optional(&mut **transaction)
+        .await
+        .map_err(db_error)?;
+    sqlx::query("UPDATE models SET primary_asset_id = ? WHERE id = ?")
+        .bind(primary)
+        .bind(project_id)
+        .execute(&mut **transaction)
+        .await
+        .map_err(db_error)?;
+    Ok(())
+}
+
+async fn duplicate_match_rows(pool: &sqlx::SqlitePool) -> CommandResult<Vec<DuplicateMatchRow>> {
+    let exact = sqlx::query("SELECT a.content_hash match_value, MAX(a.byte_size) byte_size, COUNT(DISTINCT ma.model_id) model_count, MAX(a.modified_at) latest_modified FROM assets a JOIN model_assets ma ON ma.asset_id = a.id WHERE a.missing_since IS NULL AND a.content_hash IS NOT NULL AND NOT EXISTS (SELECT 1 FROM duplicate_dismissals d WHERE d.match_key = 'exact:' || a.content_hash) GROUP BY a.content_hash HAVING COUNT(DISTINCT ma.model_id) > 1")
+        .fetch_all(pool)
+        .await
+        .map_err(db_error)?;
+    let geometry = sqlx::query("SELECT g.geometry_hash match_value, MAX(a.byte_size) byte_size, COUNT(DISTINCT ma.model_id) model_count, MAX(a.modified_at) latest_modified FROM asset_geometry g JOIN assets a ON a.id = g.asset_id JOIN model_assets ma ON ma.asset_id = a.id WHERE a.missing_since IS NULL AND NOT EXISTS (SELECT 1 FROM duplicate_dismissals d WHERE d.match_key = 'geometry:' || g.geometry_hash) GROUP BY g.geometry_hash HAVING COUNT(DISTINCT ma.model_id) > 1 AND COUNT(DISTINCT COALESCE(a.content_hash, a.id)) > 1")
+        .fetch_all(pool)
+        .await
+        .map_err(db_error)?;
+    let mut matches = exact
+        .into_iter()
+        .map(|row| {
+            let value: String = row.get("match_value");
+            DuplicateMatchRow {
+                match_key: format!("exact:{value}"),
+                value,
+                match_kind: "exact".into(),
+                confidence: 1.0,
+                byte_size: row.get("byte_size"),
+                model_count: row.get("model_count"),
+                latest_modified: row.get("latest_modified"),
+            }
+        })
+        .chain(geometry.into_iter().map(|row| {
+            let value: String = row.get("match_value");
+            DuplicateMatchRow {
+                match_key: format!("geometry:{value}"),
+                value,
+                match_kind: "geometry".into(),
+                confidence: 0.96,
+                byte_size: row.get("byte_size"),
+                model_count: row.get("model_count"),
+                latest_modified: row.get("latest_modified"),
+            }
+        }))
+        .collect::<Vec<_>>();
+    matches.sort_by(|left, right| right.latest_modified.cmp(&left.latest_modified));
+    Ok(matches)
 }
 
 #[tauri::command]
@@ -940,7 +1431,7 @@ pub async fn request_thumbnail(
         return Ok(false);
     }
     let (path, extension) = asset_path(&asset_id, &state).await?;
-    if !matches!(extension.as_str(), "stl" | "obj" | "3mf") {
+    if !matches!(extension.as_str(), "stl" | "obj" | "3mf" | "step" | "stp") {
         return Ok(false);
     }
     {
@@ -1370,6 +1861,9 @@ fn summary_from_row(row: sqlx::sqlite::SqliteRow) -> Result<ModelSummary, String
         last_opened_at: row.get("last_opened_at"),
         missing: row.get::<Option<String>, _>("missing_since").is_some(),
         asset_count: row.get("asset_count"),
+        bundle_mode: row
+            .try_get("bundle_mode")
+            .unwrap_or_else(|_| "automatic".to_string()),
         dimensions_mm: metadata.dimensions_mm,
     })
 }
@@ -1396,6 +1890,61 @@ fn fts_query(input: &str) -> String {
         .collect::<Vec<_>>()
         .join(" AND ")
 }
+
+fn model_query_sql(query: &ModelQuery) -> CommandResult<String> {
+    let mut conditions = Vec::new();
+    if let Some(library_id) = query
+        .library_id
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        conditions.push(format!("f.root_id = {}", sql_string(library_id)));
+    }
+    if let Some(status) = query
+        .parse_status
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        if !["pending", "ready", "warning", "error"].contains(&status) {
+            return Err("Unknown parsing status".into());
+        }
+        conditions.push(format!("EXISTS (SELECT 1 FROM model_assets qma JOIN assets qa ON qa.id = qma.asset_id WHERE qma.model_id = m.id AND qa.parse_status = {})", sql_string(status)));
+    }
+    if let Some(expected) = query.has_web_source {
+        let exists = "EXISTS (SELECT 1 FROM web_sources qw WHERE qw.model_id = m.id)";
+        conditions.push(if expected {
+            exists.into()
+        } else {
+            format!("NOT ({exists})")
+        });
+    }
+    if let Some(minimum) = query.min_asset_count {
+        if minimum < 0 {
+            return Err("Minimum file count cannot be negative".into());
+        }
+        conditions.push(format!(
+            "(SELECT COUNT(*) FROM model_assets qma WHERE qma.model_id = m.id) >= {minimum}"
+        ));
+    }
+    if let Some(maximum) = query.max_asset_count {
+        if maximum < 0 {
+            return Err("Maximum file count cannot be negative".into());
+        }
+        conditions.push(format!(
+            "(SELECT COUNT(*) FROM model_assets qma WHERE qma.model_id = m.id) <= {maximum}"
+        ));
+    }
+    if query.duplicates.unwrap_or(false) || query.duplicate_kind.is_some() {
+        let kind = query.duplicate_kind.as_deref().unwrap_or("any");
+        conditions.push(duplicate_rule_sql(kind)?);
+    }
+    Ok(if conditions.is_empty() {
+        "1 = 1".into()
+    } else {
+        conditions.join(" AND ")
+    })
+}
+
 fn validate_collection(input: &CollectionInput) -> CommandResult<()> {
     if input.name.trim().is_empty() || input.name.chars().count() > 80 {
         Err("Collection names must contain 1–80 characters".into())
@@ -1408,6 +1957,7 @@ fn validate_collection(input: &CollectionInput) -> CommandResult<()> {
         if rule.tag_id.as_deref().unwrap_or("").is_empty()
             && rule.format.as_deref().unwrap_or("").is_empty()
             && rule.availability.as_deref().unwrap_or("").is_empty()
+            && rule.rules.is_empty()
         {
             return Err("Smart collections need at least one rule".into());
         }
@@ -1425,7 +1975,7 @@ fn validate_collection(input: &CollectionInput) -> CommandResult<()> {
         {
             return Err("Unknown smart collection availability".into());
         }
-        Ok(())
+        smart_rule_sql(rule).map(|_| ())
     } else {
         Ok(())
     }
@@ -1470,11 +2020,201 @@ async fn count_smart_collection(
     rule: &SmartCollectionRule,
     pool: &sqlx::SqlitePool,
 ) -> CommandResult<i64> {
-    let format = rule.format.clone().unwrap_or_default().to_ascii_lowercase();
+    let format = rule
+        .format
+        .clone()
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .replace("stp", "step");
     let availability = rule.availability.clone().unwrap_or_default();
     let tag = rule.tag_id.clone().unwrap_or_default();
-    sqlx::query_scalar("SELECT COUNT(*) FROM models m LEFT JOIN assets pa ON pa.id = m.primary_asset_id WHERE (? = '' OR pa.extension = ?) AND (? = '' OR (? = 'available' AND m.missing_since IS NULL) OR (? = 'offline' AND m.missing_since IS NOT NULL)) AND (? = '' OR EXISTS (SELECT 1 FROM model_tags mt WHERE mt.model_id = m.id AND mt.tag_id = ?))")
-        .bind(&format).bind(&format).bind(&availability).bind(&availability).bind(&availability).bind(&tag).bind(&tag).fetch_one(pool).await.map_err(db_error)
+    let rich = smart_rule_sql(rule)?;
+    let sql = format!("SELECT COUNT(*) FROM models m LEFT JOIN assets pa ON pa.id = m.primary_asset_id WHERE (? = '' OR EXISTS (SELECT 1 FROM model_assets fma JOIN assets fa ON fa.id = fma.asset_id WHERE fma.model_id = m.id AND CASE fa.extension WHEN 'stp' THEN 'step' ELSE fa.extension END = ?)) AND (? = '' OR (? = 'available' AND m.missing_since IS NULL) OR (? = 'offline' AND m.missing_since IS NOT NULL)) AND (? = '' OR EXISTS (SELECT 1 FROM model_tags mt WHERE mt.model_id = m.id AND mt.tag_id = ?)) AND ({rich})");
+    sqlx::query_scalar(&sql)
+        .bind(&format)
+        .bind(&format)
+        .bind(&availability)
+        .bind(&availability)
+        .bind(&availability)
+        .bind(&tag)
+        .bind(&tag)
+        .fetch_one(pool)
+        .await
+        .map_err(db_error)
+}
+
+fn smart_rule_sql(rule: &SmartCollectionRule) -> CommandResult<String> {
+    if rule.version != 1 {
+        return Err("Unsupported smart collection rule version".into());
+    }
+    if rule.rules.is_empty() {
+        return Ok("1 = 1".into());
+    }
+    let mut conditions = Vec::with_capacity(rule.rules.len());
+    for item in &rule.rules {
+        let string_value = item.value.as_str().unwrap_or_default();
+        let quoted = sql_string(string_value);
+        let condition = match item.field.as_str() {
+            "text" => {
+                let query = fts_query(string_value);
+                if query.is_empty() {
+                    return Err("Text rules need a searchable value".into());
+                }
+                let condition = format!("m.id IN (SELECT model_id FROM model_search WHERE model_search MATCH {})", sql_string(&query));
+                match item.operator.as_str() {
+                    "is" => condition,
+                    "isNot" => format!("NOT ({condition})"),
+                    _ => return Err("Unknown text rule operator".into()),
+                }
+            }
+            "folder" => match item.operator.as_str() {
+                "is" => format!("m.folder_id = {quoted}"),
+                "isNot" => format!("m.folder_id != {quoted}"),
+                _ => return Err("Unknown folder rule operator".into()),
+            },
+            "library" => match item.operator.as_str() {
+                "is" => format!("EXISTS (SELECT 1 FROM folders rf WHERE rf.id = m.folder_id AND rf.root_id = {quoted})"),
+                "isNot" => format!("NOT EXISTS (SELECT 1 FROM folders rf WHERE rf.id = m.folder_id AND rf.root_id = {quoted})"),
+                _ => return Err("Unknown library rule operator".into()),
+            },
+            "tag" => match item.operator.as_str() {
+                "is" => format!("EXISTS (SELECT 1 FROM model_tags rt WHERE rt.model_id = m.id AND rt.tag_id = {quoted})"),
+                "isNot" => format!("NOT EXISTS (SELECT 1 FROM model_tags rt WHERE rt.model_id = m.id AND rt.tag_id = {quoted})"),
+                _ => return Err("Unknown tag rule operator".into()),
+            },
+            "format" => {
+                if !["stl", "3mf", "obj", "step", "stp"].contains(&string_value) {
+                    return Err("Unknown smart collection format".into());
+                }
+                let quoted = sql_string(if string_value == "stp" { "step" } else { string_value });
+                match item.operator.as_str() {
+                    "is" => format!("EXISTS (SELECT 1 FROM model_assets rma JOIN assets ra ON ra.id = rma.asset_id WHERE rma.model_id = m.id AND CASE ra.extension WHEN 'stp' THEN 'step' ELSE ra.extension END = {quoted})"),
+                    "isNot" => format!("NOT EXISTS (SELECT 1 FROM model_assets rma JOIN assets ra ON ra.id = rma.asset_id WHERE rma.model_id = m.id AND CASE ra.extension WHEN 'stp' THEN 'step' ELSE ra.extension END = {quoted})"),
+                    _ => return Err("Unknown format rule operator".into()),
+                }
+            }
+            "availability" => {
+                let condition = match string_value {
+                    "available" => "m.missing_since IS NULL",
+                    "offline" => "m.missing_since IS NOT NULL",
+                    _ => return Err("Unknown availability rule".into()),
+                };
+                match item.operator.as_str() {
+                    "is" => condition.into(),
+                    "isNot" => format!("NOT ({condition})"),
+                    _ => return Err("Unknown availability rule operator".into()),
+                }
+            }
+            "favorite" => boolean_condition("m.favorite = 1", &item.value, &item.operator)?,
+            "webSource" => boolean_condition("EXISTS (SELECT 1 FROM web_sources rw WHERE rw.model_id = m.id)", &item.value, &item.operator)?,
+            "parseStatus" => match item.operator.as_str() {
+                "is" => format!("EXISTS (SELECT 1 FROM model_assets rma JOIN assets ra ON ra.id = rma.asset_id WHERE rma.model_id = m.id AND ra.parse_status = {quoted})"),
+                "isNot" => format!("NOT EXISTS (SELECT 1 FROM model_assets rma JOIN assets ra ON ra.id = rma.asset_id WHERE rma.model_id = m.id AND ra.parse_status = {quoted})"),
+                _ => return Err("Unknown parsing-status rule operator".into()),
+            },
+            "duplicate" => {
+                let condition = duplicate_rule_sql(string_value)?;
+                match item.operator.as_str() {
+                    "is" => condition,
+                    "isNot" => format!("NOT ({condition})"),
+                    _ => return Err("Unknown duplicate rule operator".into()),
+                }
+            }
+            "added" => date_rule_sql("m.added_at", &item.operator, string_value)?,
+            "modified" => date_rule_sql("COALESCE((SELECT MAX(project_asset.modified_at) FROM model_assets project_membership JOIN assets project_asset ON project_asset.id = project_membership.asset_id WHERE project_membership.model_id = m.id), m.updated_at)", &item.operator, string_value)?,
+            "opened" => date_rule_sql("m.last_opened_at", &item.operator, string_value)?,
+            "fileCount" => numeric_rule_sql("(SELECT COUNT(*) FROM model_assets rma WHERE rma.model_id = m.id)", &item.operator, &item.value)?,
+            "width" => numeric_rule_sql("CAST(json_extract(pa.metadata_json, '$.dimensionsMm[0]') AS REAL)", &item.operator, &item.value)?,
+            "depth" => numeric_rule_sql("CAST(json_extract(pa.metadata_json, '$.dimensionsMm[1]') AS REAL)", &item.operator, &item.value)?,
+            "height" => numeric_rule_sql("CAST(json_extract(pa.metadata_json, '$.dimensionsMm[2]') AS REAL)", &item.operator, &item.value)?,
+            _ => return Err(format!("Unknown smart collection field: {}", item.field)),
+        };
+        conditions.push(format!("({condition})"));
+    }
+    let joiner = if rule.match_mode == "any" {
+        " OR "
+    } else if rule.match_mode == "all" {
+        " AND "
+    } else {
+        return Err("Smart collection match mode must be all or any".into());
+    };
+    Ok(conditions.join(joiner))
+}
+
+fn sql_string(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+fn boolean_condition(
+    sql: &str,
+    value: &serde_json::Value,
+    operator: &str,
+) -> CommandResult<String> {
+    let expected = value
+        .as_bool()
+        .ok_or_else(|| "Boolean rules need true or false".to_string())?;
+    match operator {
+        "is" => Ok(if expected {
+            sql.into()
+        } else {
+            format!("NOT ({sql})")
+        }),
+        "isNot" => Ok(if expected {
+            format!("NOT ({sql})")
+        } else {
+            sql.into()
+        }),
+        _ => Err("Unknown boolean rule operator".into()),
+    }
+}
+
+fn date_rule_sql(column: &str, operator: &str, value: &str) -> CommandResult<String> {
+    NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .map_err(|_| "Date rules need a valid calendar date".to_string())?;
+    let comparison = match operator {
+        "before" => "<",
+        "after" => ">",
+        "on" | "is" => "=",
+        _ => return Err("Unknown date rule operator".into()),
+    };
+    Ok(format!(
+        "date({column}) {comparison} date({})",
+        sql_string(value)
+    ))
+}
+
+fn numeric_rule_sql(
+    column: &str,
+    operator: &str,
+    value: &serde_json::Value,
+) -> CommandResult<String> {
+    let number = value
+        .as_f64()
+        .ok_or_else(|| "Numeric rules need a number".to_string())?;
+    if !number.is_finite() {
+        return Err("Numeric rule values must be finite".into());
+    }
+    let comparison = match operator {
+        "is" => "=",
+        "greaterThan" => ">",
+        "lessThan" => "<",
+        "atLeast" => ">=",
+        "atMost" => "<=",
+        _ => return Err("Unknown numeric rule operator".into()),
+    };
+    Ok(format!("{column} {comparison} {number}"))
+}
+
+fn duplicate_rule_sql(value: &str) -> CommandResult<String> {
+    let exact = "EXISTS (SELECT 1 FROM model_assets rma JOIN assets ra ON ra.id = rma.asset_id WHERE rma.model_id = m.id AND ra.content_hash IS NOT NULL AND NOT EXISTS (SELECT 1 FROM duplicate_dismissals rd WHERE rd.match_key = 'exact:' || ra.content_hash) AND EXISTS (SELECT 1 FROM model_assets oma JOIN assets oa ON oa.id = oma.asset_id WHERE oma.model_id != m.id AND oa.content_hash = ra.content_hash))";
+    let geometry = "EXISTS (SELECT 1 FROM model_assets rma JOIN asset_geometry rg ON rg.asset_id = rma.asset_id WHERE rma.model_id = m.id AND NOT EXISTS (SELECT 1 FROM duplicate_dismissals rd WHERE rd.match_key = 'geometry:' || rg.geometry_hash) AND EXISTS (SELECT 1 FROM model_assets oma JOIN asset_geometry og ON og.asset_id = oma.asset_id WHERE oma.model_id != m.id AND og.geometry_hash = rg.geometry_hash))";
+    match value {
+        "exact" => Ok(exact.into()),
+        "geometry" => Ok(geometry.into()),
+        "any" => Ok(format!("({exact} OR {geometry})")),
+        "none" => Ok(format!("NOT ({exact} OR {geometry})")),
+        _ => Err("Unknown duplicate rule".into()),
+    }
 }
 
 fn discover_slicer_apps(
@@ -1847,5 +2587,137 @@ mod tests {
             ..empty
         };
         assert!(validate_collection(&tagged).is_ok());
+    }
+
+    #[test]
+    fn rich_smart_rules_compile_only_known_fields() {
+        let rule = SmartCollectionRule {
+            version: 1,
+            match_mode: "any".into(),
+            rules: vec![
+                QueryRule {
+                    field: "format".into(),
+                    operator: "is".into(),
+                    value: serde_json::json!("step"),
+                },
+                QueryRule {
+                    field: "fileCount".into(),
+                    operator: "atLeast".into(),
+                    value: serde_json::json!(3),
+                },
+            ],
+            ..Default::default()
+        };
+        let sql = smart_rule_sql(&rule).unwrap();
+        assert!(sql.contains(" OR "));
+        assert!(sql.contains("ELSE ra.extension END = 'step'"));
+        assert!(sql.contains("COUNT(*)"));
+
+        let unknown = SmartCollectionRule {
+            rules: vec![QueryRule {
+                field: "rawSql".into(),
+                operator: "is".into(),
+                value: serde_json::json!("1 = 1"),
+            }],
+            ..Default::default()
+        };
+        assert!(smart_rule_sql(&unknown).is_err());
+
+        let unsupported = SmartCollectionRule {
+            version: 2,
+            rules: vec![QueryRule {
+                field: "favorite".into(),
+                operator: "is".into(),
+                value: serde_json::json!(true),
+            }],
+            ..Default::default()
+        };
+        assert!(smart_rule_sql(&unsupported).is_err());
+    }
+
+    #[test]
+    fn saved_search_project_filters_are_validated() {
+        let sql = model_query_sql(&ModelQuery {
+            library_id: Some("library-id".into()),
+            parse_status: Some("ready".into()),
+            has_web_source: Some(true),
+            min_asset_count: Some(2),
+            duplicate_kind: Some("geometry".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(sql.contains("f.root_id"));
+        assert!(sql.contains("qa.parse_status"));
+        assert!(sql.contains("geometry_hash"));
+        assert!(model_query_sql(&ModelQuery {
+            parse_status: Some("raw-sql".into()),
+            ..Default::default()
+        })
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn merging_projects_preserves_files_and_organization() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = AppState::initialize(directory.path()).await.unwrap();
+        let timestamp = now();
+        sqlx::query("INSERT INTO library_roots (id, path, display_name, status, created_at, updated_at) VALUES ('root', ?, 'Root', 'online', ?, ?)")
+            .bind(directory.path().to_string_lossy().to_string()).bind(&timestamp).bind(&timestamp).execute(&state.pool).await.unwrap();
+        sqlx::query("INSERT INTO folders (id, root_id, relative_path, name) VALUES ('folder', 'root', '', 'Root')")
+            .execute(&state.pool).await.unwrap();
+        for (id, name, favorite) in [("keeper", "Project", 0), ("source", "Project v2", 1)] {
+            sqlx::query("INSERT INTO models (id, folder_id, display_name, grouping_key, version_key, favorite, added_at, updated_at) VALUES (?, 'folder', ?, ?, 'project', ?, ?, ?)")
+                .bind(id).bind(name).bind(id).bind(favorite).bind(&timestamp).bind(&timestamp).execute(&state.pool).await.unwrap();
+            let asset_id = format!("asset-{id}");
+            sqlx::query("INSERT INTO assets (id, root_id, folder_id, relative_path, filename, extension, byte_size, modified_at) VALUES (?, 'root', 'folder', ?, ?, 'stl', 1, ?)")
+                .bind(&asset_id).bind(format!("{id}.stl")).bind(format!("{id}.stl")).bind(&timestamp).execute(&state.pool).await.unwrap();
+            sqlx::query(
+                "INSERT INTO model_assets (model_id, asset_id, role) VALUES (?, ?, 'printable')",
+            )
+            .bind(id)
+            .bind(&asset_id)
+            .execute(&state.pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query("INSERT INTO tags (id, name, color, created_at, updated_at) VALUES ('tag', 'Useful', '#ff5a36', ?, ?)")
+            .bind(&timestamp).bind(&timestamp).execute(&state.pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO model_tags (model_id, tag_id, added_at) VALUES ('source', 'tag', ?)",
+        )
+        .bind(&timestamp)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+
+        merge_projects_impl("keeper", &["source".into()], &state.pool)
+            .await
+            .unwrap();
+
+        let asset_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM model_assets WHERE model_id = 'keeper'")
+                .fetch_one(&state.pool)
+                .await
+                .unwrap();
+        let source_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM models WHERE id = 'source'")
+                .fetch_one(&state.pool)
+                .await
+                .unwrap();
+        let row = sqlx::query("SELECT favorite, bundle_mode FROM models WHERE id = 'keeper'")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+        let tag_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM model_tags WHERE model_id = 'keeper' AND tag_id = 'tag'",
+        )
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+        assert_eq!(asset_count, 2);
+        assert_eq!(source_count, 0);
+        assert_eq!(row.get::<i64, _>("favorite"), 1);
+        assert_eq!(row.get::<String, _>("bundle_mode"), "manual");
+        assert_eq!(tag_count, 1);
     }
 }

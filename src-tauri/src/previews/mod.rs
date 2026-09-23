@@ -5,6 +5,7 @@ use std::{
     fs::File,
     io::{BufReader, Cursor, Read, Seek},
     path::Path,
+    sync::Mutex,
 };
 use zip::ZipArchive;
 
@@ -16,16 +17,17 @@ const BUILD_PLATE_SURFACE: [u8; 3] = [54, 55, 64];
 const BUILD_PLATE_GRID: [u8; 3] = [83, 85, 96];
 const BUILD_PLATE_GRID_MAJOR: [u8; 3] = [108, 111, 123];
 const BUILD_PLATE_BORDER: [u8; 3] = [137, 140, 151];
+static STEP_TESSELLATION_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Copy, Debug, Default)]
-struct Vec3 {
-    x: f32,
-    y: f32,
-    z: f32,
+pub(crate) struct Vec3 {
+    pub(crate) x: f32,
+    pub(crate) y: f32,
+    pub(crate) z: f32,
 }
 
 impl Vec3 {
-    fn new(x: f32, y: f32, z: f32) -> Self {
+    pub(crate) fn new(x: f32, y: f32, z: f32) -> Self {
         Self { x, y, z }
     }
 
@@ -60,10 +62,10 @@ impl Vec3 {
 }
 
 #[derive(Default)]
-struct Mesh {
-    vertices: Vec<Vec3>,
-    triangles: Vec<[usize; 3]>,
-    vertex_colors: Vec<[u8; 3]>,
+pub(crate) struct Mesh {
+    pub(crate) vertices: Vec<Vec3>,
+    pub(crate) triangles: Vec<[usize; 3]>,
+    pub(crate) vertex_colors: Vec<[u8; 3]>,
 }
 
 #[derive(Clone, Copy)]
@@ -74,14 +76,65 @@ struct Projected {
 }
 
 pub fn render_thumbnail(path: &Path, extension: &str) -> Result<Vec<u8>, String> {
-    let mesh = match extension {
-        "stl" => parse_stl(&std::fs::read(path).map_err(|error| error.to_string())?)?,
-        "obj" => parse_obj(&std::fs::read(path).map_err(|error| error.to_string())?)?,
-        "3mf" => parse_3mf(&std::fs::read(path).map_err(|error| error.to_string())?)?,
-        "zip" => parse_archive(path)?,
-        _ => return Err(format!("No thumbnail renderer for {extension}")),
-    };
+    let mesh = load_mesh(path, extension)?;
     rasterize(&mesh)
+}
+
+pub(crate) fn load_mesh(path: &Path, extension: &str) -> Result<Mesh, String> {
+    match extension {
+        "stl" => parse_stl(&std::fs::read(path).map_err(|error| error.to_string())?),
+        "obj" => parse_obj(&std::fs::read(path).map_err(|error| error.to_string())?),
+        "3mf" => parse_3mf(&std::fs::read(path).map_err(|error| error.to_string())?),
+        "step" | "stp" => parse_step(path),
+        "zip" => parse_archive(path),
+        _ => Err(format!("No geometry loader for {extension}")),
+    }
+}
+
+fn parse_step(path: &Path) -> Result<Mesh, String> {
+    const MAX_STEP_BYTES: u64 = 512 * 1024 * 1024;
+    let metadata = std::fs::metadata(path).map_err(|error| error.to_string())?;
+    if metadata.len() > MAX_STEP_BYTES {
+        return Err("STEP file exceeds the 512 MB safety limit".into());
+    }
+    let _guard = STEP_TESSELLATION_LOCK
+        .lock()
+        .map_err(|_| "STEP tessellator lock is unavailable".to_string())?;
+    let mut file = File::open(path).map_err(|error| error.to_string())?;
+    let solids = cadrum::Solid::read_step(&mut file)
+        .map_err(|error| format!("Unable to read STEP geometry: {error}"))?;
+    if solids.is_empty() {
+        return Err("STEP file contains no solid geometry".into());
+    }
+    let source = cadrum::Solid::mesh(
+        &solids,
+        cadrum::Tessellation {
+            deflection_linear: 0.0025,
+            deflection_angular: 0.35,
+            relative_linear: true,
+        },
+    )
+    .map_err(|error| format!("Unable to tessellate STEP geometry: {error}"))?;
+    if source.indices.len() > 30_000_000 || source.vertices.len() > 10_000_000 {
+        return Err("STEP tessellation exceeds the geometry safety limit".into());
+    }
+    let vertices = source
+        .vertices
+        .iter()
+        .map(|point| Vec3::new(point.x as f32, point.y as f32, point.z as f32))
+        .collect::<Vec<_>>();
+    let triangles = source
+        .indices
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|triangle| [triangle[0], triangle[1], triangle[2]])
+        .collect::<Vec<_>>();
+    ensure_mesh(Mesh {
+        vertices,
+        triangles,
+        vertex_colors: Vec::new(),
+    })
 }
 
 pub fn viewer_mesh(
@@ -101,6 +154,7 @@ pub fn viewer_mesh(
                     .unwrap_or(PlateSelection::All),
             )?
         }
+        "step" | "stp" => parse_step(path)?,
         "zip" => parse_archive(path)?,
         _ => return Err(format!("No interactive renderer for {extension}")),
     };
@@ -1251,6 +1305,19 @@ mod tests {
         let png = rasterize(&mesh).unwrap();
         assert!(png.starts_with(&[137, 80, 78, 71, 13, 10, 26, 10]));
         assert!(png.len() > 1_000);
+    }
+
+    #[test]
+    fn reads_and_tessellates_step_geometry() {
+        let solid = cadrum::Solid::cube(cadrum::DVec3::ZERO, cadrum::DVec3::new(10.0, 20.0, 30.0));
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        cadrum::Solid::write_step([&solid], &mut file).unwrap();
+        let mesh = parse_step(file.path()).unwrap();
+        assert!(!mesh.vertices.is_empty());
+        assert!(!mesh.triangles.is_empty());
+        let analysis = crate::geometry::analyze_file(file.path(), "step").unwrap();
+        assert_eq!(analysis.dimensions_mm, [10.0, 20.0, 30.0]);
+        assert!((analysis.volume.unwrap() - 6000.0).abs() < 0.1);
     }
 
     #[test]

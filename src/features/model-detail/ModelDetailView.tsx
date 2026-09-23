@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft, Box, Check, ChevronDown, Clock3, Copy, ExternalLink, FileBox, FolderOpen, Globe2,
-  GitBranch, Heart, LoaderCircle, Plus, Printer, RotateCcw, Save, Scale, Tags, TriangleAlert, X
+  GitBranch, Heart, Layers3, LoaderCircle, Plus, Printer, RotateCcw, Save, Scale, ScanSearch, Scissors, Star, Tags, TriangleAlert, X
 } from "lucide-react";
 import { useAppStore } from "../../app/store";
 import { ModelViewer, type ModelView, type ViewerGeometry } from "../../components/ModelViewer";
@@ -105,7 +105,7 @@ function CollectionPicker({ modelId, selected }: { modelId: string; selected: st
     ]);
   };
   const manual = collections.filter((collection) => !collection.smart);
-  if (!manual.length) return <p className="quiet-copy">{t("Create a manual collection to organize this model without moving its files.")}</p>;
+  if (!manual.length) return <p className="quiet-copy">{t("Create a manual collection to organize this project without moving its files.")}</p>;
   return <div className="collection-checklist">{manual.map((collection) => <button key={collection.id} onClick={() => toggle(collection.id)}><span className="collection-color" style={{ background: collection.color }} />{collection.name}<span className={`check-box ${selected.includes(collection.id) ? "is-checked" : ""}`}>{selected.includes(collection.id) && <Check size={12} />}</span></button>)}</div>;
 }
 
@@ -171,10 +171,12 @@ export function ModelDetailView({ modelId }: { modelId: string }) {
   const [viewerGeometry, setViewerGeometry] = useState<ViewerGeometry>();
   const [previewError, setPreviewError] = useState("");
   const [notes, setNotes] = useState("");
+  const [splitAssetIds, setSplitAssetIds] = useState<string[]>([]);
   useEffect(() => {
     if (model) {
       setActiveAssetId(model.primaryAssetId ?? model.assets[0]?.id);
       setNotes(model.notes);
+      setSplitAssetIds([]);
     }
   }, [model]);
   const activeAsset = model?.assets.find((asset) => asset.id === activeAssetId) ?? model?.assets[0];
@@ -187,9 +189,19 @@ export function ModelDetailView({ modelId }: { modelId: string }) {
   const suggestedFilamentGrams = fileFilamentGrams ?? model?.webSource?.filamentGrams;
   const suggestedFilamentSource = fileFilamentGrams != null ? "file" : "web";
   const favorite = useMutation({ mutationFn: () => api.toggleFavorite(modelId), onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["model", modelId] }); queryClient.invalidateQueries({ queryKey: ["models"] }); } });
+  const refreshProject = async () => {
+    await Promise.all([queryClient.invalidateQueries({ queryKey: ["model"] }), queryClient.invalidateQueries({ queryKey: ["models"] }), queryClient.invalidateQueries({ queryKey: ["related-models"] }), queryClient.invalidateQueries({ queryKey: ["duplicate-groups"] })]);
+  };
+  const splitFiles = async () => {
+    const name = window.prompt(t("Name the new project"));
+    if (!name?.trim()) return;
+    const newId = await api.splitProject(modelId, splitAssetIds, name.trim());
+    await refreshProject();
+    selectModel(newId);
+  };
 
-  if (isLoading) return <div className="detail-loading"><LoaderCircle className="spin" /><span>{t("Preparing model…")}</span></div>;
-  if (error || !model) return <div className="empty-state"><TriangleAlert /><h2>{t("Couldn’t open this model")}</h2><p>{error instanceof Error ? error.message : t("The model may have moved.")}</p><button className="button" onClick={() => selectModel()}>{t("Back to library")}</button></div>;
+  if (isLoading) return <div className="detail-loading"><LoaderCircle className="spin" /><span>{t("Preparing project…")}</span></div>;
+  if (error || !model) return <div className="empty-state"><TriangleAlert /><h2>{t("Couldn’t open this project")}</h2><p>{error instanceof Error ? error.message : t("The project may have moved.")}</p><button className="button" onClick={() => selectModel()}>{t("Back to library")}</button></div>;
 
   return (
     <div className="model-detail">
@@ -212,7 +224,7 @@ export function ModelDetailView({ modelId }: { modelId: string }) {
       </section>
       <aside className="model-detail__inspector">
         <header className="inspector-header">
-          <div className="eyebrow">{t("{format} model", { format: model.primaryExtension.toUpperCase() })}</div>
+          <div className="eyebrow">{t("{format} project · {count} files", { format: model.primaryExtension.toUpperCase(), count: model.assetCount })}</div>
           <h1>{model.displayName}</h1>
           <button className="breadcrumb-button" onClick={() => { useAppStore.getState().selectFolder(model.folderId); }}><FolderOpen size={14} />{model.rootName} / {model.relativeFolder}</button>
         </header>
@@ -222,16 +234,18 @@ export function ModelDetailView({ modelId }: { modelId: string }) {
         </div>
         <div className="inspector-scroll">
           <DetailSection title={t("Details")} icon={<Scale size={16} />}>
-            <dl className="metadata-list"><div><dt>{t("Dimensions")}</dt><dd>{formatDimensions(activeAsset?.metadata.dimensionsMm ?? viewerGeometry?.dimensionsMm ?? model.dimensionsMm)}</dd></div><div><dt>{t("File size")}</dt><dd>{activeAsset ? formatBytes(activeAsset.byteSize) : "—"}</dd></div><div><dt>{t("Modified")}</dt><dd>{formatDate(activeAsset?.modifiedAt)}</dd></div><div><dt>{t("Format")}</dt><dd>{activeAsset?.extension.toUpperCase()}</dd></div>{(activeAsset?.metadata.triangleCount ?? viewerGeometry?.triangleCount ?? 0) > 0 && <div><dt>{t("Triangles")}</dt><dd>{(activeAsset?.metadata.triangleCount || viewerGeometry?.triangleCount || 0).toLocaleString(intlLocale)}</dd></div>}</dl>
+            <dl className="metadata-list"><div><dt>{t("Dimensions")}</dt><dd>{formatDimensions(activeAsset?.metadata.dimensionsMm ?? viewerGeometry?.dimensionsMm ?? model.dimensionsMm)}</dd></div><div><dt>{t("File size")}</dt><dd>{activeAsset ? formatBytes(activeAsset.byteSize) : "—"}</dd></div><div><dt>{t("Modified")}</dt><dd>{formatDate(activeAsset?.modifiedAt)}</dd></div><div><dt>{t("Format")}</dt><dd>{activeAsset?.extension.toUpperCase()}</dd></div>{activeAsset?.metadata.surfaceAreaMm2 != null && <div><dt>{t("Surface area")}</dt><dd>{formatNumber(activeAsset.metadata.surfaceAreaMm2, { maximumFractionDigits: 1 })} mm²</dd></div>}{activeAsset?.metadata.volumeMm3 != null && <div><dt>{t("Volume")}</dt><dd>{formatNumber(activeAsset.metadata.volumeMm3, { maximumFractionDigits: 1 })} mm³</dd></div>}{(activeAsset?.metadata.triangleCount ?? viewerGeometry?.triangleCount ?? 0) > 0 && <div><dt>{t("Triangles")}</dt><dd>{(activeAsset?.metadata.triangleCount || viewerGeometry?.triangleCount || 0).toLocaleString(intlLocale)}</dd></div>}</dl>
           </DetailSection>
           {model.webSource && <DetailSection title={t("Source · {provider}", { provider: model.webSource.provider === "makerworld" ? "MakerWorld" : "Printables" })} icon={<Globe2 size={16} />}><div className="model-web-source">{model.webSource.imageUrl && <img src={model.webSource.imageUrl} alt="" referrerPolicy="no-referrer" />}<div><strong>{model.webSource.title}</strong>{model.webSource.creator && <small>{t("by {name}", { name: model.webSource.creator })}</small>}{model.webSource.license && <span>{model.webSource.license}</span>}{model.webSource.filamentGrams != null && <span>{formatNumber(model.webSource.filamentGrams, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} g · {t("default print profile")}</span>}</div><button className="button button--quiet" onClick={() => api.openExternal(model.webSource!.canonicalUrl)}><ExternalLink size={14} /> {t("Open source")}</button></div></DetailSection>}
           {activeAsset?.metadata.threeMf && <DetailSection title={t("3MF plates & profile · {count}", { count: activeAsset.metadata.threeMf.plates?.length ?? 0 })} icon={<Printer size={16} />}><ThreeMfInspector assetId={activeAsset.id} metadata={activeAsset.metadata.threeMf} selectedPlateIndex={activePlateIndex} onSelectPlate={setActivePlateIndex} onShowAll={() => setActivePlateIndex(undefined)} /></DetailSection>}
-          <DetailSection title={t("Files & variants · {count}", { count: model.assets.length })} icon={<FileBox size={16} />}>
-            <div className="asset-list">{model.assets.map((asset) => <button key={asset.id} onClick={() => setActiveAssetId(asset.id)} className={asset.id === activeAsset?.id ? "is-active" : ""}><span className="file-icon">{asset.extension.toUpperCase()}</span><span><strong>{asset.filename}</strong><small>{formatBytes(asset.byteSize)} · {t(titleCase(asset.parseStatus))}</small></span>{asset.id === activeAsset?.id && <Check size={15} />}</button>)}</div>
+          <DetailSection title={t("Project files · {count}", { count: model.assets.length })} icon={<Layers3 size={16} />}>
+            <p className="quiet-copy">{t("Keep printable files, source geometry, plates, and versions together in one project.")}</p>
+            <div className="asset-list asset-list--project">{model.assets.map((asset) => <div key={asset.id} className={asset.id === activeAsset?.id ? "is-active" : ""}><label className="asset-select"><input type="checkbox" checked={splitAssetIds.includes(asset.id)} onChange={(event) => setSplitAssetIds((current) => event.target.checked ? [...current, asset.id] : current.filter((id) => id !== asset.id))} aria-label={t("Select {filename}", { filename: asset.filename })} /></label><button className="asset-list__main" onClick={() => setActiveAssetId(asset.id)}><span className="file-icon">{asset.extension.toUpperCase()}</span><span><strong>{asset.filename}</strong><small>{formatBytes(asset.byteSize)} · {t(titleCase(asset.role))} · {t(titleCase(asset.parseStatus))}</small></span></button><button className={`icon-button icon-button--tiny ${asset.id === model.primaryAssetId ? "is-favorite" : ""}`} disabled={asset.id === model.primaryAssetId || asset.missing} title={t(asset.id === model.primaryAssetId ? "Primary preview" : asset.missing ? "File unavailable" : "Use as primary preview")} onClick={async () => { await api.setProjectPrimary(model.id, asset.id); await refreshProject(); }}><Star size={13} fill={asset.id === model.primaryAssetId ? "currentColor" : "none"} /></button></div>)}</div>
+            {splitAssetIds.length > 0 && splitAssetIds.length < model.assets.length && <button className="button button--quiet button--full" onClick={() => void splitFiles()}><Scissors size={14} /> {t("Split selected files into a new project")}</button>}
           </DetailSection>
           <DetailSection title={`${t("Tags")}${model.tags.length ? ` · ${model.tags.length}` : ""}`} icon={<Tags size={16} />}><TagEditor modelId={model.id} selected={model.tags} /></DetailSection>
           <DetailSection title={t("Collections")} icon={<Box size={16} />}><CollectionPicker modelId={model.id} selected={model.collectionIds} /></DetailSection>
-          {related.length > 0 && <DetailSection title={t("Copies & versions · {count}", { count: related.length })} icon={<GitBranch size={16} />}><div className="related-models">{related.map((item) => <button key={item.id} onClick={() => selectModel(item.id)}><span className={`related-models__icon is-${item.relationship}`}>{item.relationship === "duplicate" ? <Copy size={14} /> : <GitBranch size={14} />}</span><span><strong>{item.displayName}</strong><small>{t(item.relationship === "duplicate" ? "Exact duplicate" : "Possible version")} · {item.relativeFolder || t("Library root")}</small></span><span className="file-pill">{item.primaryExtension.toUpperCase()}</span></button>)}</div></DetailSection>}
+          {related.length > 0 && <DetailSection title={t("Copies & versions · {count}", { count: related.length })} icon={<GitBranch size={16} />}><div className="related-models">{related.map((item) => <div className="related-models__row" key={item.id}><button onClick={() => selectModel(item.id)}><span className={`related-models__icon is-${item.relationship}`}>{item.relationship === "duplicate" ? <Copy size={14} /> : item.relationship === "geometry" ? <ScanSearch size={14} /> : <GitBranch size={14} />}</span><span><strong>{item.displayName}</strong><small>{t(item.relationship === "duplicate" ? "Exact duplicate" : item.relationship === "geometry" ? "Same geometry" : "Possible version")} · {item.relativeFolder || t("Library root")}</small></span><span className="file-pill">{item.primaryExtension.toUpperCase()}</span></button><button className="icon-button icon-button--tiny" title={t("Add to this project")} aria-label={t("Add {name} to this project", { name: item.displayName })} onClick={async () => { if (!window.confirm(t("Bundle this project and transfer its organization metadata?"))) return; await api.mergeProjects(model.id, [item.id]); await refreshProject(); }}><Layers3 size={14} /></button></div>)}</div></DetailSection>}
           <DetailSection title={t("Material cost")} icon={<Scale size={16} />}><CostCalculator modelId={model.id} assetId={activeAsset?.id} suggestedGrams={suggestedFilamentGrams} suggestedSource={suggestedFilamentSource} estimate={model.estimate} /></DetailSection>
           <DetailSection title={t("Notes")} icon={<FileBox size={16} />} open={Boolean(model.notes)}>
             <textarea className="notes-field" value={notes} onChange={(event) => setNotes(event.target.value)} placeholder={t("Add print settings, assembly notes, or anything useful…")} />

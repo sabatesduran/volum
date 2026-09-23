@@ -1,6 +1,7 @@
 mod backups;
 mod commands;
 mod domain;
+mod geometry;
 mod indexing;
 mod parsers;
 mod previews;
@@ -71,6 +72,9 @@ pub fn run() {
             commands::toggle_favorite,
             commands::set_favorite,
             commands::save_notes,
+            commands::list_saved_searches,
+            commands::save_saved_search,
+            commands::delete_saved_search,
             commands::list_tags,
             commands::save_tag,
             commands::delete_tag,
@@ -79,6 +83,11 @@ pub fn run() {
             commands::list_related_models,
             commands::get_duplicate_stats,
             commands::list_duplicate_groups,
+            commands::merge_projects,
+            commands::split_project,
+            commands::set_project_primary_asset,
+            commands::dismiss_duplicate_match,
+            commands::cleanup_duplicate_group,
             commands::list_collections,
             commands::create_collection,
             commands::update_collection,

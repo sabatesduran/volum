@@ -1,6 +1,103 @@
+import {
+  ArchiveRestore,
+  ArrowUpRight,
+  BadgeEuro,
+  Box,
+  Check,
+  ChevronDown,
+  createIcons,
+  Download,
+  FolderSync,
+  Heart,
+  ListFilter,
+  Menu,
+  Plus,
+  X
+} from "lucide";
 import { capture, initAnalytics } from "./analytics.js";
 
+createIcons({
+  icons: {
+    ArchiveRestore,
+    ArrowUpRight,
+    BadgeEuro,
+    Box,
+    Check,
+    ChevronDown,
+    Download,
+    FolderSync,
+    Heart,
+    ListFilter,
+    Menu,
+    Plus,
+    X
+  }
+});
+
 void initAnalytics();
+
+const version = document.body.dataset.version || "unknown";
+let detectedPlatform = "unknown";
+
+const platformDownloads = {
+  macos: {
+    architecture: "universal",
+    href: `https://github.com/sabatesduran/volum/releases/latest/download/Volum_${version}_universal.dmg`,
+    label: "Download for macOS"
+  },
+  linux: {
+    architecture: "x86_64",
+    href: "https://github.com/sabatesduran/volum/releases/latest/download/Volum_linux_x86_64.AppImage",
+    label: "Download AppImage"
+  },
+  windows: {
+    architecture: "x86_64",
+    href: "https://github.com/sabatesduran/volum/releases/latest/download/Volum_windows_x86_64_setup.exe",
+    label: "Download for Windows"
+  },
+  windowsArm: {
+    architecture: "arm64",
+    href: "https://github.com/sabatesduran/volum/releases/latest/download/Volum_windows_arm64_setup.exe",
+    label: "Download for Windows ARM64",
+    platform: "windows"
+  }
+};
+
+const detectPlatform = async () => {
+  const ua = navigator.userAgent || "";
+  const platform = navigator.userAgentData?.platform || navigator.platform || "";
+  if (/iphone|ipad|android/i.test(ua) || (/mac/i.test(platform) && navigator.maxTouchPoints > 1)) return "unknown";
+  if (/mac/i.test(platform) || /macintosh/i.test(ua)) return "macos";
+  if (/win/i.test(platform) || /windows/i.test(ua)) {
+    try {
+      const values = await navigator.userAgentData?.getHighEntropyValues?.(["architecture"]);
+      if (values?.architecture === "arm") return "windowsArm";
+    } catch {
+      // A direct x64 download remains the safest fallback when architecture hints are unavailable.
+    }
+    return "windows";
+  }
+  if (/linux/i.test(platform) || /linux/i.test(ua)) return "linux";
+  return "unknown";
+};
+
+const applyPlatformDownload = async () => {
+  detectedPlatform = await detectPlatform();
+  const download = platformDownloads[detectedPlatform];
+  if (!download) return;
+
+  const platform = download.platform || detectedPlatform;
+  document.querySelector(`[data-platform-card="${platform}"]`)?.classList.add("is-detected");
+  document.querySelectorAll("[data-platform-download]").forEach((link) => {
+    link.href = download.href;
+    link.dataset.downloadPlatform = platform;
+    link.dataset.downloadArchitecture = download.architecture;
+    const label = link.querySelector("[data-platform-download-label]");
+    if (label) label.textContent = link.classList.contains("nav-download") ? download.label : `${download.label} — free`;
+  });
+};
+
+void applyPlatformDownload();
 
 const header = document.querySelector("[data-header]");
 const nav = document.querySelector("[data-nav]");
@@ -44,7 +141,7 @@ const sectionTargets = sectionLinks.map((link) => ({
   link,
   section: document.querySelector(link.getAttribute("href"))
 })).filter(({ section }) => section);
-const navigationEnd = document.querySelector("#download");
+const navigationEnd = document.querySelector("#support");
 let navigationFrame;
 
 const updateCurrentSection = () => {
@@ -76,14 +173,19 @@ window.addEventListener("resize", scheduleCurrentSectionUpdate);
 document.querySelectorAll("[data-download]").forEach((link) => link.addEventListener("click", () => {
   capture("volum_download_clicked", {
     architecture: link.dataset.downloadArchitecture || "unknown",
+    detected_platform: detectedPlatform,
     location: link.dataset.downloadLocation || "unknown",
     platform: link.dataset.downloadPlatform || "unknown",
-    version: document.body.dataset.version || "unknown"
+    version
   });
 }));
 
 document.querySelectorAll("[data-github-location]").forEach((link) => link.addEventListener("click", () => {
   capture("volum_github_opened", { location: link.dataset.githubLocation || "unknown" });
+}));
+
+document.querySelectorAll("[data-support-location]").forEach((link) => link.addEventListener("click", () => {
+  capture("volum_support_clicked", { location: link.dataset.supportLocation || "unknown" });
 }));
 
 const observer = "IntersectionObserver" in window

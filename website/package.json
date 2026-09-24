@@ -8,6 +8,7 @@
     "build": "vite build"
   },
   "dependencies": {
+    "lucide": "^0.544.0",
     "posthog-js": "^1.434.7"
   },
   "devDependencies": {

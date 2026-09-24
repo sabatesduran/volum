@@ -1,7 +1,7 @@
 {
   "name": "Volum",
   "short_name": "Volum",
-  "description": "A beautiful home for your 3D models.",
+  "description": "A free, local-first desktop organizer for 3D printing projects.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0d0e0c",

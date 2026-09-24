@@ -3,46 +3,112 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#10110f" />
+    <meta name="theme-color" content="#0d0e0c" />
     <meta name="color-scheme" content="dark" />
-    <meta name="description" content="Volum is a private, local-first desktop library for browsing, organizing, and previewing your 3D-printing files." />
+    <meta name="robots" content="index,follow,max-image-preview:large" />
+    <meta name="description" content="Volum is a free, open-source desktop organizer for STL, 3MF, OBJ, and STEP files. Browse complete 3D-printing projects without moving or uploading them." />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Volum" />
     <meta property="og:locale" content="en_US" />
     <meta property="og:url" content="https://volum.didac.dev/" />
-    <meta property="og:title" content="Volum — A beautiful home for your 3D models" />
-    <meta property="og:description" content="Search every model, inspect real 3D geometry, preserve multi-plate 3MF projects, and open files in your slicer—without uploading your library." />
+    <meta property="og:title" content="Volum — Free, local 3D print file organizer" />
+    <meta property="og:description" content="Turn folders full of STL, 3MF, OBJ, and STEP files into a private visual library. Free, open source, and available for macOS, Windows, and Linux." />
     <meta property="og:image" content="https://volum.didac.dev/og-image.jpg" />
     <meta property="og:image:secure_url" content="https://volum.didac.dev/og-image.jpg" />
     <meta property="og:image:type" content="image/jpeg" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="Volum, a private local-first library that makes 3D models visual and searchable" />
+    <meta property="og:image:alt" content="Volum, a free local-first library that makes 3D printing projects visual and searchable" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Volum — Your 3D model library, finally visible" />
-    <meta name="twitter:description" content="A private, local-first desktop library built for makers." />
+    <meta name="twitter:title" content="Volum — Free, local 3D print file organizer" />
+    <meta name="twitter:description" content="A private, open-source desktop library for STL, 3MF, OBJ, and STEP projects." />
     <meta name="twitter:image" content="https://volum.didac.dev/og-image.jpg" />
-    <meta name="twitter:image:alt" content="Volum, a private local-first library that makes 3D models visual and searchable" />
+    <meta name="twitter:image:alt" content="Volum, a free local-first library that makes 3D printing projects visual and searchable" />
     <script>document.documentElement.classList.add("js");</script>
     <link rel="canonical" href="https://volum.didac.dev/" />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="stylesheet" href="./styles.css" />
-    <title>Volum — A beautiful home for your 3D models</title>
+    <title>Volum — Free STL &amp; 3MF Organizer for Desktop</title>
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
-        "@type": "SoftwareApplication",
-        "name": "Volum",
-        "applicationCategory": "DesignApplication",
-        "operatingSystem": "macOS, Linux, Windows 10, Windows 11",
-        "description": "A private, local-first desktop library for browsing and organizing 3D-printing files.",
-        "softwareVersion": "__VOLUM_VERSION__",
-        "license": "https://www.gnu.org/licenses/gpl-3.0.html",
-        "url": "https://volum.didac.dev/",
-        "downloadUrl": "https://github.com/sabatesduran/volum/releases/latest",
-        "codeRepository": "https://github.com/sabatesduran/volum"
+        "@graph": [
+          {
+            "@type": "SoftwareApplication",
+            "@id": "https://volum.didac.dev/#software",
+            "name": "Volum",
+            "applicationCategory": "DesignApplication",
+            "applicationSubCategory": "3D printing file organizer",
+            "operatingSystem": "macOS 13+, Linux, Windows 10, Windows 11",
+            "description": "A free, open-source, local-first desktop organizer for STL, 3MF, OBJ, and STEP/STP projects.",
+            "softwareVersion": "__VOLUM_VERSION__",
+            "isAccessibleForFree": true,
+            "license": "https://www.gnu.org/licenses/gpl-3.0.html",
+            "url": "https://volum.didac.dev/",
+            "downloadUrl": "https://github.com/sabatesduran/volum/releases/latest",
+            "codeRepository": "https://github.com/sabatesduran/volum",
+            "screenshot": "https://volum.didac.dev/og-image.jpg",
+            "featureList": [
+              "Visual previews for STL, 3MF, OBJ, and STEP/STP files",
+              "Project bundles for related source and printable files",
+              "Geometry-aware duplicate detection",
+              "Smart collections and saved searches",
+              "Multi-plate 3MF metadata",
+              "Local, NAS, and WebDAV backup and restore",
+              "Live folder watching with move detection",
+              "Favorites, tags, notes, recents, and quick filters",
+              "Batch project organization",
+              "Configurable slicer launching and file reveal",
+              "English, Catalan, and Spanish interfaces",
+              "Signed, approval-based updates",
+              "MakerWorld and Printables attribution"
+            ],
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "EUR",
+              "availability": "https://schema.org/InStock"
+            }
+          },
+          {
+            "@type": "FAQPage",
+            "@id": "https://volum.didac.dev/#faq",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "Is Volum free and open source?",
+                "acceptedAnswer": { "@type": "Answer", "text": "Yes. Volum is free and licensed under GPL-3.0-or-later. Its source code and desktop releases are available on GitHub." }
+              },
+              {
+                "@type": "Question",
+                "name": "Does Volum move or rename my files?",
+                "acceptedAnswer": { "@type": "Answer", "text": "No. Volum indexes files where they already live. Its collections, tags, notes, and estimates do not change the underlying folder structure." }
+              },
+              {
+                "@type": "Question",
+                "name": "Which 3D file formats does Volum support?",
+                "acceptedAnswer": { "@type": "Answer", "text": "Volum indexes and previews STL, OBJ, 3MF, and STEP/STP projects, including OpenCascade-backed STEP/STP tessellation and geometry analysis." }
+              },
+              {
+                "@type": "Question",
+                "name": "Does Volum upload my 3D models?",
+                "acceptedAnswer": { "@type": "Answer", "text": "No. The desktop app has no account, analytics, or model upload pipeline. The library index and generated previews remain on your computer." }
+              },
+              {
+                "@type": "Question",
+                "name": "What happens when files move or a library drive is disconnected?",
+                "acceptedAnswer": { "@type": "Answer", "text": "Volum uses stable file fingerprints to recognize moved files and preserves metadata while removable or mounted libraries are unavailable. Offline libraries can be reconnected at a new path." }
+              },
+              {
+                "@type": "Question",
+                "name": "What do Volum backups include?",
+                "acceptedAnswer": { "@type": "Answer", "text": "Volum creates portable, checksummed ZIP backups of its organization, settings, attribution, and user-owned media. Original STL, 3MF, OBJ, and STEP/STP files are never copied or replaced by a Volum backup." }
+              }
+            ]
+          }
+        ]
       }
     </script>
   </head>
@@ -57,21 +123,22 @@
         </a>
 
         <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" data-nav-toggle>
-          <span></span><span></span><span></span>
+          <i class="nav-toggle__open" data-lucide="menu" aria-hidden="true"></i>
+          <i class="nav-toggle__close" data-lucide="x" aria-hidden="true"></i>
           <span class="sr-only">Open navigation</span>
         </button>
 
         <nav id="site-nav" class="site-nav" aria-label="Primary navigation" data-nav>
-          <a href="#library" data-section-link>Visual library</a>
-          <a href="#three-mf" data-section-link>3MF projects</a>
-          <a href="#imports" data-section-link>Web imports</a>
-          <a href="#workflow" data-section-link>How it works</a>
+          <a href="#library" data-section-link>Library</a>
+          <a href="#projects" data-section-link>Projects</a>
+          <a href="#duplicates" data-section-link>Duplicates</a>
           <a href="#privacy" data-section-link>Privacy</a>
+          <a href="#download" data-section-link>Download</a>
         </nav>
 
-        <a class="button button--small button--light nav-download" href="#download" data-download data-download-platform="all" data-download-architecture="choose" data-download-location="navigation">
-          Download
-          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14" /></svg>
+        <a class="button button--small button--light nav-download" href="#download" data-platform-download data-download data-download-platform="all" data-download-architecture="choose" data-download-location="navigation">
+          <span data-platform-download-label>Download free</span>
+          <i data-lucide="download" aria-hidden="true"></i>
         </a>
       </div>
     </header>
@@ -82,97 +149,106 @@
         <div class="hero-glow" aria-hidden="true"></div>
         <div class="hero-shell">
           <div class="hero-copy reveal">
-            <p class="eyebrow"><span></span> Local-first 3D model library</p>
-            <h1>Your models.<br /><em>Finally visible.</em></h1>
-            <p class="hero-lede">Volum turns folders full of STL, OBJ, and 3MF files into a visual, searchable library—without moving or uploading a thing.</p>
+            <p class="eyebrow"><span></span> Free &amp; open-source desktop app</p>
+            <h1>Your 3D files.<br /><em>Finally organized.</em></h1>
+            <p class="hero-lede">Volum turns folders full of STL, 3MF, OBJ, and STEP files into a visual, searchable project library—without moving or uploading a thing.</p>
             <div class="hero-actions">
-              <a class="button button--accent" href="https://github.com/sabatesduran/volum/releases/latest" data-download data-download-platform="all" data-download-architecture="choose" data-download-location="hero">
-                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14" /></svg>
-                <span>Download Volum __VOLUM_VERSION__</span>
+              <a class="button button--accent" href="#download" data-platform-download data-download data-download-platform="all" data-download-architecture="choose" data-download-location="hero">
+                <i data-lucide="download" aria-hidden="true"></i>
+                <span data-platform-download-label>Download Volum — free</span>
               </a>
-              <a class="button button--ghost" href="https://github.com/sabatesduran/volum" rel="noreferrer" data-github-location="hero">
-                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9L12 3Z" /></svg>
-                Star on GitHub
+              <a class="button button--ghost" href="#library">
+                See how it works
+                <i data-lucide="chevron-down" aria-hidden="true"></i>
               </a>
             </div>
-            <p class="platform-note"><strong>macOS, Linux + Windows available now</strong><span>Local-first on every platform</span></p>
-            <ul class="hero-trust" aria-label="Product benefits">
-              <li>No account</li>
-              <li>No app telemetry</li>
-              <li>Open source</li>
+            <p class="platform-note"><strong>Version __VOLUM_VERSION__</strong><span>macOS, Windows &amp; Linux</span></p>
+            <ul class="hero-trust" aria-label="Product promises">
+              <li><i data-lucide="check" aria-hidden="true"></i>Free forever</li>
+              <li><i data-lucide="check" aria-hidden="true"></i>No account</li>
+              <li><i data-lucide="check" aria-hidden="true"></i>No app telemetry</li>
             </ul>
           </div>
 
           <div class="hero-product reveal reveal--delay">
-            <div class="hero-chip hero-chip--top"><span></span> Real geometry</div>
-            <button class="shot-button" type="button" data-shot data-shot-name="batraci-mini">
-              <img src="./assets/screenshots/batraci-mini.webp" alt="Volum previewing the Batraci Mini 3MF model on a gridded build plate" width="2000" height="1339" fetchpriority="high" />
+            <div class="hero-chip hero-chip--top"><span></span> Indexed locally</div>
+            <button class="shot-button" type="button" data-shot data-shot-name="visual-library">
+              <img src="./assets/screenshots/library.webp" alt="Volum showing a visual, searchable library of 3D printing projects" width="2000" height="1339" fetchpriority="high" />
             </button>
-            <div class="hero-chip hero-chip--bottom">3MF · Original color · Plate 1</div>
+            <div class="hero-chip hero-chip--bottom">Your folders · Your files · Your machine</div>
           </div>
         </div>
       </section>
 
-      <section class="format-rail" aria-label="Supported file formats">
+      <section class="format-rail" aria-label="Supported file formats and platforms">
         <div class="format-rail__inner">
-          <span class="format-rail__label">Made for the files you already have</span>
+          <span class="format-rail__label">Built for the files you already have</span>
           <span>STL</span><i></i><span>3MF</span><i></i><span>OBJ</span><i></i><span>STEP / STP</span>
+          <a href="https://github.com/sabatesduran/volum" rel="noreferrer" data-github-location="format-rail">View source <i class="inline-icon" data-lucide="arrow-up-right" aria-hidden="true"></i></a>
         </div>
       </section>
 
       <section class="intro section section--paper" id="library">
         <div class="section-shell">
           <div class="intro-heading reveal">
-            <p class="eyebrow eyebrow--dark">Your files, without the filing</p>
-            <h2>Stop hunting through anonymous folders.</h2>
+            <p class="eyebrow eyebrow--dark">A library above your folders</p>
+            <h2>See projects, not anonymous filenames.</h2>
           </div>
           <div class="intro-copy reveal reveal--delay">
-            <p>Point Volum at the folders you already use. It indexes them in place, renders persistent previews in the background, and keeps watching as your library changes.</p>
+            <p>Point Volum at the folders you already use. It creates previews in the background, groups related files into projects, and keeps watching as your library changes.</p>
             <div class="stat-row">
               <div><strong>0</strong><span>uploads required</span></div>
-              <div><strong>4</strong><span>model formats</span></div>
-              <div><strong>∞</strong><span>local folders</span></div>
+              <div><strong>4</strong><span>3D format families</span></div>
+              <div><strong>∞</strong><span>local or mounted folders</span></div>
             </div>
           </div>
 
-          <figure class="wide-shot reveal">
-            <button class="shot-button" type="button" data-shot data-shot-name="visual-library">
-              <img src="./assets/screenshots/library.webp" alt="Volum's visual 3D model library in dark mode" width="2000" height="1339" loading="lazy" />
+          <div class="library-proof reveal">
+            <article><span>01</span><h3>Browse visually</h3><p>Persistent thumbnails replace cryptic filenames with models you can recognize.</p></article>
+            <article><span>02</span><h3>Search everything</h3><p>Find projects by name, folder, format, tags, notes, dates, or saved searches.</p></article>
+            <article><span>03</span><h3>Keep files in place</h3><p>Folders stay the source of truth. Volum adds organization without locking anything in.</p></article>
+          </div>
+
+          <figure class="wide-shot wide-shot--detail reveal">
+            <button class="shot-button" type="button" data-shot data-shot-name="project-detail">
+              <img src="./assets/screenshots/batraci-mini.webp" alt="A complete Batraci Mini 3MF project open in Volum with its files, metadata, and 3D preview" width="2000" height="1339" loading="lazy" />
             </button>
             <figcaption>
-              <span>01 / Library</span>
-              <p>Real previews, fast search, folders, collections, favorites, recents, and duplicates—one calm place for the whole archive.</p>
+              <span>Project detail</span>
+              <p>Printable files, source geometry, plates, versions, notes, costs, and attribution stay together as one project.</p>
             </figcaption>
           </figure>
         </div>
       </section>
 
-      <section class="section feature-section" id="three-mf">
+      <section class="section project-section" id="projects">
         <div class="section-shell">
           <div class="section-heading reveal">
-            <p class="eyebrow"><span></span> 3MF, properly understood</p>
-            <h2>Not just a mesh.<br /><em>The whole print project.</em></h2>
-            <p>Volum reads plates, print profiles, printer details, filament colors, embedded thumbnails, and explicit sliced weight—then keeps each part of the project easy to inspect.</p>
+            <p class="eyebrow"><span></span> Complete print projects</p>
+            <h2>More than a thumbnail.<br /><em>The context stays attached.</em></h2>
+            <p>Volum understands the difference between a loose mesh and a print project. Related files can live together while each format keeps the details that make it useful.</p>
           </div>
 
-          <div class="feature-layout">
+          <div class="project-showcase">
             <figure class="feature-shot reveal">
               <button class="shot-button" type="button" data-shot data-shot-name="multi-plate-3mf">
-                <img src="./assets/screenshots/multi-plate.webp" alt="A three-plate 3MF project displayed together in Volum" width="2000" height="1339" loading="lazy" />
+                <img src="./assets/screenshots/multi-plate.webp" alt="A multi-plate 3MF project displayed with its original arrangement and colors in Volum" width="2000" height="1339" loading="lazy" />
               </button>
+              <figcaption>Multi-plate 3MF · original arrangement and colors</figcaption>
             </figure>
-            <div class="feature-list">
-              <article class="feature-item reveal">
+
+            <div class="project-capabilities">
+              <article class="reveal">
                 <span class="feature-number">01</span>
-                <div><h3>See every plate</h3><p>View the full project at once, then focus any plate from the selector or its detail card.</p></div>
+                <div><h3>3MF, properly understood</h3><p>Inspect plates, objects, printer, nozzle, layer height, profile, colors, print time, and explicit sliced grams.</p></div>
               </article>
-              <article class="feature-item reveal">
+              <article class="reveal">
                 <span class="feature-number">02</span>
-                <div><h3>Keep original colors</h3><p>Filament assignments from Bambu Studio and OrcaSlicer remain visible in previews and the interactive viewer.</p></div>
+                <div><h3>Native STEP and STP</h3><p>OpenCascade-backed metadata, interactive tessellation, thumbnails, and geometry analysis work across every supported platform.</p></div>
               </article>
-              <article class="feature-item reveal">
+              <article class="reveal">
                 <span class="feature-number">03</span>
-                <div><h3>Read the real metadata</h3><p>Printer, nozzle, layer height, profile, plate objects, print time, and explicit sliced grams stay attached to the file.</p></div>
+                <div><h3>Files that belong together</h3><p>Bundle source geometry, printable exports, plates, and versions. Choose the primary preview, split a bundle, or merge projects manually.</p></div>
               </article>
             </div>
           </div>
@@ -182,42 +258,44 @@
       <section class="section section--soft" id="features">
         <div class="section-shell">
           <div class="section-heading section-heading--center reveal">
-            <p class="eyebrow eyebrow--dark">One library, end to end</p>
-            <h2>Built around the way makers actually work.</h2>
+            <p class="eyebrow eyebrow--dark">Quietly capable</p>
+            <h2>Useful organization without another system to maintain.</h2>
           </div>
 
           <div class="bento-grid">
             <article class="bento-card bento-card--large reveal">
-              <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m4 7 8-4 8 4-8 4-8-4Zm0 0v10l8 4 8-4V7M12 11v10" /></svg></div>
+              <div class="card-icon" aria-hidden="true"><i data-lucide="box"></i></div>
               <p class="card-kicker">Interactive viewer</p>
-              <h3>Orbit real geometry, not a placeholder.</h3>
-              <p>Zoom, rotate, reset, and jump to front, side, top, or isometric views. Build plates carry a readable grid and disappear underneath so they never hide the model.</p>
+              <h3>Inspect real geometry before opening a slicer.</h3>
+              <p>Orbit, zoom, reset, and jump between standard views. Multi-part projects keep their arrangement and material colors.</p>
               <div class="mini-viewer" aria-hidden="true">
                 <div class="mini-bed"></div>
-                <img src="./assets/volum-icon.png" alt="" />
+                <div class="viewer-model">
+                  <img src="./assets/fox.webp" alt="" width="1254" height="1254" loading="lazy" />
+                </div>
               </div>
             </article>
 
             <article class="bento-card reveal">
-              <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 6h6l2 2h10v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6Z" /></svg></div>
-              <p class="card-kicker">Your folders</p>
-              <h3>In place. Always in sync.</h3>
-              <p>Multiple local, removable, or mounted roots with recursive indexing and move detection.</p>
+              <div class="card-icon" aria-hidden="true"><i data-lucide="list-filter"></i></div>
+              <p class="card-kicker">Smart collections</p>
+              <h3>Views that organize themselves.</h3>
+              <p>Combine all/any rules for text, location, tags, formats, dates, dimensions, geometry, and project state—or keep a collection manual.</p>
             </article>
 
             <article class="bento-card reveal">
-              <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16M7 3v4m10-4v4M6 11h4v4H6v-4Zm8 0h4v4h-4v-4ZM6 18h4m4 0h4" /></svg></div>
-              <p class="card-kicker">Collections</p>
-              <h3>Organize without moving files.</h3>
-              <p>Manual and smart collections, tags, favorites, filters, and batch actions sit above your existing folder structure.</p>
+              <div class="card-icon" aria-hidden="true"><i data-lucide="archive-restore"></i></div>
+              <p class="card-kicker">Backup &amp; restore</p>
+              <h3>Your organization is portable too.</h3>
+              <p>Create validated, checksummed ZIP backups locally, on a mounted NAS, or over WebDAV—with schedules, retention, history, and safe restore.</p>
             </article>
 
             <article class="bento-card bento-card--wide reveal">
               <div>
-                <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2v20M17 5.5c-1-1-2.4-1.5-4-1.5-2.2 0-4 1.3-4 3s1.8 3 4 3 4 1.3 4 3-1.8 3-4 3c-1.6 0-3-.5-4-1.5" /></svg></div>
-                <p class="card-kicker">Materials & cost</p>
+                <div class="card-icon" aria-hidden="true"><i data-lucide="badge-euro"></i></div>
+                <p class="card-kicker">Materials &amp; cost</p>
                 <h3>Know what a print costs before it reaches the bed.</h3>
-                <p>Save spool prices, use explicit sliced 3MF grams, calculate per-piece and batch costs, and keep estimates with the model.</p>
+                <p>Save material prices, use trustworthy 3MF filament data, calculate per-piece and batch costs, and keep estimates with the project.</p>
               </div>
               <div class="cost-card" role="group" aria-label="Example print cost">
                 <span>One piece</span><strong>€1.17</strong><small>73 g · PLA Matte</small>
@@ -225,11 +303,74 @@
             </article>
 
             <article class="bento-card reveal">
-              <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3m13 5h3a2 2 0 0 0 2-2v-3M8 12h8" /></svg></div>
-              <p class="card-kicker">Duplicates</p>
-              <h3>Find copies before they become clutter.</h3>
-              <p>Review likely duplicates using file fingerprints and content hashes, without deleting anything automatically.</p>
+              <div class="card-icon" aria-hidden="true"><i data-lucide="folder-sync"></i></div>
+              <p class="card-kicker">Live indexing</p>
+              <h3>Your folders stay in sync.</h3>
+              <p>Watch changes in the background, pause or resume preview building, recognize moved files, and reconnect unavailable drives without losing metadata.</p>
             </article>
+          </div>
+
+          <div class="feature-ledger reveal">
+            <div class="feature-ledger__heading">
+              <p class="eyebrow eyebrow--dark">Also included</p>
+              <h3>The everyday details are covered.</h3>
+            </div>
+            <div class="feature-ledger__grid">
+              <article>
+                <span>01</span>
+                <h4>Useful geometry facts</h4>
+                <p>Keep dimensions, file size, modification date, surface area, volume, and triangle count beside the interactive preview.</p>
+              </article>
+              <article>
+                <span>02</span>
+                <h4>Fast ways back</h4>
+                <p>Use recents, favorites, folders, quick filters, saved searches, sorting, and three grid densities to return to the right project.</p>
+              </article>
+              <article>
+                <span>03</span>
+                <h4>Batch organization</h4>
+                <p>Select several projects to favorite, tag, add to a manual collection, or bundle together in one action.</p>
+              </article>
+              <article>
+                <span>04</span>
+                <h4>Slicer handoff</h4>
+                <p>Open a file in a configured slicer or its system default, then reveal it in Finder, Explorer, or your Linux file manager.</p>
+              </article>
+              <article>
+                <span>05</span>
+                <h4>Restore with confidence</h4>
+                <p>Validate an archive before restore, make a safety backup first, browse backup history, and retry scheduled destinations when they return.</p>
+              </article>
+              <article>
+                <span>06</span>
+                <h4>Made for your desktop</h4>
+                <p>Use English, Catalan, or Spanish; choose light, dark, or system themes; navigate by keyboard; and approve signed updates yourself.</p>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="duplicate-section" id="duplicates">
+        <div class="duplicate-grid" aria-hidden="true"></div>
+        <div class="section-shell duplicate-shell">
+          <div class="duplicate-copy reveal">
+            <p class="eyebrow"><span></span> Geometry-aware duplicates</p>
+            <h2>Different filename.<br />Different format.<br /><em>Same shape.</em></h2>
+            <p>Volum separates exact copies from matching geometry. It can recognize the same model across formats and orientations, then helps you choose a keeper without silently deleting anything.</p>
+          </div>
+          <div class="duplicate-proof reveal reveal--delay">
+            <div class="duplicate-stack" aria-hidden="true">
+              <span><b>dragon_final.stl</b><small>Exact geometry</small></span>
+              <span><b>dragon-print.3mf</b><small>Rotated 90°</small></span>
+              <span><b>DRAGON_v4.step</b><small>Same shape</small></span>
+            </div>
+            <ul class="check-list">
+              <li><span><i data-lucide="check" aria-hidden="true"></i></span> Exact-file and geometry matches stay distinct</li>
+              <li><span><i data-lucide="check" aria-hidden="true"></i></span> Keeper recommendations preserve useful metadata</li>
+              <li><span><i data-lucide="check" aria-hidden="true"></i></span> Optional cleanup uses the operating system Trash</li>
+              <li><span><i data-lucide="check" aria-hidden="true"></i></span> False matches can be dismissed permanently</li>
+            </ul>
           </div>
         </div>
       </section>
@@ -237,18 +378,18 @@
       <section class="section imports-section" id="imports">
         <div class="section-shell imports-grid">
           <div class="imports-copy reveal">
-            <p class="eyebrow"><span></span> MakerWorld & Printables</p>
-            <h2>Bring the source with the model.</h2>
-            <p>Paste a public model URL to save its title, creator, description, thumbnail, and official source link. Attach downloaded files into your chosen library without sharing credentials or bypassing protected downloads.</p>
+            <p class="eyebrow"><span></span> MakerWorld &amp; Printables</p>
+            <h2>Keep the source with the project.</h2>
+            <p>Paste a public model URL to save its title, creator, description, thumbnail, and official source link. Attach the files you downloaded without sharing credentials or bypassing protected downloads.</p>
             <ul class="check-list">
-              <li><span>✓</span> Attribution stays beside the files</li>
-              <li><span>✓</span> Provider thumbnails are cached locally</li>
-              <li><span>✓</span> Official source pages remain one click away</li>
+              <li><span><i data-lucide="check" aria-hidden="true"></i></span> Attribution remains beside the files</li>
+              <li><span><i data-lucide="check" aria-hidden="true"></i></span> Provider thumbnails are cached locally</li>
+              <li><span><i data-lucide="check" aria-hidden="true"></i></span> Official source pages stay one click away</li>
             </ul>
           </div>
           <figure class="imports-shot reveal reveal--delay">
             <button class="shot-button" type="button" data-shot data-shot-name="web-imports">
-              <img src="./assets/screenshots/web-imports.webp" alt="MakerWorld model attribution and metadata inside Volum" width="2000" height="1339" loading="lazy" />
+              <img src="./assets/screenshots/web-imports.webp" alt="MakerWorld model attribution and metadata saved beside a Volum project" width="2000" height="1339" loading="lazy" />
             </button>
           </figure>
         </div>
@@ -257,14 +398,50 @@
       <section class="section workflow-section" id="workflow">
         <div class="section-shell">
           <div class="section-heading reveal">
-            <p class="eyebrow"><span></span> A shorter path to printing</p>
-            <h2>Folder to slicer.<br /><em>Three quiet steps.</em></h2>
+            <p class="eyebrow"><span></span> Folder to slicer</p>
+            <h2>Three quiet steps.<br /><em>No migration project.</em></h2>
           </div>
           <ol class="workflow-list">
-            <li class="reveal"><span>01</span><div><h3>Choose your folders</h3><p>Volum indexes the library where it already lives and watches it for changes.</p></div></li>
-            <li class="reveal"><span>02</span><div><h3>Find the right model</h3><p>Search names and metadata, browse visual previews, or open a collection.</p></div></li>
-            <li class="reveal"><span>03</span><div><h3>Open in your slicer</h3><p>Launch Bambu Studio, OrcaSlicer, PrusaSlicer, Cura, or your system default.</p></div></li>
+            <li class="reveal"><span>01</span><div><h3>Choose your folders</h3><p>Add local disks, removable drives, or mounted folders. Volum indexes them where they are.</p></div></li>
+            <li class="reveal"><span>02</span><div><h3>Browse real projects</h3><p>Search names and metadata, explore previews, open a smart collection, or review duplicates.</p></div></li>
+            <li class="reveal"><span>03</span><div><h3>Open in your slicer</h3><p>Launch Bambu Studio, OrcaSlicer, PrusaSlicer, Cura, or your system default—and reveal the source file whenever you need it.</p></div></li>
           </ol>
+        </div>
+      </section>
+
+      <section class="section section--paper backup-section" id="backups">
+        <div class="section-shell backup-shell">
+          <div class="backup-copy reveal">
+            <p class="eyebrow eyebrow--dark">Backup &amp; restore</p>
+            <h2>Your organization has a way home.</h2>
+            <p>Volum protects the work around your model library—collections, tags, notes, estimates, settings, attribution, and saved media—without copying or replacing your original 3D files.</p>
+            <ul class="check-list">
+              <li><span><i data-lucide="check" aria-hidden="true"></i></span> Manual, daily, weekly, or monthly schedules per destination</li>
+              <li><span><i data-lucide="check" aria-hidden="true"></i></span> Local folders, mounted NAS shares, and direct WebDAV</li>
+              <li><span><i data-lucide="check" aria-hidden="true"></i></span> Per-destination retention, history, connection testing, and remote archive browsing</li>
+              <li><span><i data-lucide="check" aria-hidden="true"></i></span> WebDAV passwords stay in the operating system credential manager</li>
+            </ul>
+            <div class="backup-scope">
+              <div><span>Included</span><p>Volum data, preferences, attribution, and user-owned media</p></div>
+              <div><span>Never copied</span><p>Original STL, 3MF, OBJ, STEP, or STP model files</p></div>
+            </div>
+          </div>
+
+          <div class="backup-proof reveal reveal--delay">
+            <header>
+              <div><span>Safe restore</span><strong>Nothing is replaced blindly.</strong></div>
+              <em>Portable ZIP</em>
+            </header>
+            <ol>
+              <li><span>01</span><div><strong>Validate the archive</strong><p>Checksums, structure, and bounded contents are verified before restore begins.</p></div></li>
+              <li><span>02</span><div><strong>Protect the current state</strong><p>Volum makes a safety backup of its existing app data before replacing anything.</p></div></li>
+              <li><span>03</span><div><strong>Restore, restart, reconnect</strong><p>The app restarts into the restored library, and folders that moved can be reconnected without losing metadata.</p></div></li>
+            </ol>
+            <footer>
+              <span class="backup-status"><i></i> Destination unavailable</span>
+              <p>Fails safely and retries later—missing mounted folders are never recreated on the local disk.</p>
+            </footer>
+          </div>
         </div>
       </section>
 
@@ -273,7 +450,7 @@
         <div class="section-shell privacy-shell">
           <p class="privacy-mark reveal">0</p>
           <div class="privacy-copy reveal reveal--delay">
-            <p class="eyebrow"><span></span> Uploads required</p>
+            <p class="eyebrow"><span></span> Model uploads required</p>
             <h2>Your library is yours.<br />It stays that way.</h2>
             <p>Volum is local-first by design. The desktop app has no account, analytics, or model upload pipeline, and no network connection is required to browse your files.</p>
             <div class="privacy-points">
@@ -281,8 +458,8 @@
               <span>User-approved folders only</span>
               <span>Open-source GPL-3.0</span>
             </div>
-            <a class="text-link" href="https://github.com/sabatesduran/volum/blob/main/SECURITY.md" rel="noreferrer">Read the security model <span aria-hidden="true">↗</span></a>
-            <p class="website-analytics-note">This website uses PostHog to understand visits and interactions. Website analytics are separate from the Volum app and never receive library, model, or file data. <a href="https://posthog.com/privacy" rel="noreferrer">PostHog privacy <span aria-hidden="true">↗</span></a></p>
+            <a class="text-link" href="https://github.com/sabatesduran/volum/blob/main/SECURITY.md" rel="noreferrer">Read the security model <i class="inline-icon" data-lucide="arrow-up-right" aria-hidden="true"></i></a>
+            <p class="website-analytics-note">This website uses session-scoped PostHog analytics to understand visits and interactions. Website analytics are separate from the Volum app and never receive library, model, or file data. <a href="https://posthog.com/privacy" rel="noreferrer">PostHog privacy <i class="inline-icon" data-lucide="arrow-up-right" aria-hidden="true"></i></a></p>
           </div>
         </div>
       </section>
@@ -291,19 +468,17 @@
         <div class="section-shell">
           <div class="downloads-heading reveal">
             <div>
-              <p class="eyebrow eyebrow--dark">Download Volum</p>
-              <h2>Choose your platform.</h2>
+              <p class="eyebrow eyebrow--dark">Free desktop app</p>
+              <h2>Download Volum.</h2>
             </div>
-            <p>Volum is available for macOS, x86_64 Linux, and Windows on both x64 and ARM64.</p>
+            <p>No account, trial, subscription, or model limit. Choose your platform and point Volum at a folder.</p>
           </div>
 
           <div class="download-grid">
-            <article class="download-card download-card--available reveal">
+            <article class="download-card download-card--available reveal" data-platform-card="macos">
               <div class="download-card__top">
-                <span class="platform-icon" aria-hidden="true">
-                  <img src="./assets/os/apple.svg" alt="" width="28" height="28" />
-                </span>
-                <span class="availability-badge availability-badge--live">Available now</span>
+                <span class="platform-icon" aria-hidden="true"><img src="./assets/os/apple.svg" alt="" width="28" height="28" /></span>
+                <span class="availability-badge availability-badge--live">Signed &amp; notarized</span>
               </div>
               <p class="card-kicker">Desktop application</p>
               <h3>macOS</h3>
@@ -314,38 +489,34 @@
                 <li>Version __VOLUM_VERSION__</li>
               </ul>
               <a class="button button--accent download-card__button" href="https://github.com/sabatesduran/volum/releases/latest/download/Volum___VOLUM_VERSION___universal.dmg" data-download data-download-platform="macos" data-download-architecture="universal" data-download-location="platform-card">
-                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14" /></svg>
+                <i data-lucide="download" aria-hidden="true"></i>
                 Download for macOS
               </a>
             </article>
 
-            <article class="download-card download-card--available reveal">
+            <article class="download-card download-card--available reveal" data-platform-card="linux">
               <div class="download-card__top">
-                <span class="platform-icon" aria-hidden="true">
-                  <img src="./assets/os/linux.svg" alt="" width="28" height="28" />
-                </span>
-                <span class="availability-badge availability-badge--live">Available now</span>
+                <span class="platform-icon" aria-hidden="true"><img src="./assets/os/linux.svg" alt="" width="28" height="28" /></span>
+                <span class="availability-badge availability-badge--live">Portable</span>
               </div>
               <p class="card-kicker">Desktop application</p>
               <h3>Linux</h3>
-              <p>A portable AppImage for x86_64 distributions, plus a verified Arch Linux package.</p>
+              <p>A portable AppImage for x86_64 distributions, plus an Arch Linux package.</p>
               <ul class="platform-details">
                 <li>x86_64 AppImage</li>
                 <li>Ubuntu 22.04 baseline</li>
-                <li>Arch package included</li>
+                <li>SHA-256 checksum included</li>
               </ul>
               <a class="button button--accent download-card__button" href="https://github.com/sabatesduran/volum/releases/latest/download/Volum_linux_x86_64.AppImage" data-download data-download-platform="linux" data-download-architecture="x86_64" data-download-location="platform-card">
-                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14" /></svg>
+                <i data-lucide="download" aria-hidden="true"></i>
                 Download AppImage
               </a>
             </article>
 
-            <article class="download-card download-card--available reveal">
+            <article class="download-card download-card--available reveal" data-platform-card="windows">
               <div class="download-card__top">
-                <span class="platform-icon" aria-hidden="true">
-                  <img src="./assets/os/windows.svg" alt="" width="28" height="28" />
-                </span>
-                <span class="availability-badge availability-badge--live">Available now</span>
+                <span class="platform-icon" aria-hidden="true"><img src="./assets/os/windows.svg" alt="" width="28" height="28" /></span>
+                <span class="availability-badge availability-badge--live">x64 + ARM64</span>
               </div>
               <p class="card-kicker">Desktop application</p>
               <h3>Windows</h3>
@@ -353,11 +524,11 @@
               <ul class="platform-details">
                 <li>Native x64 and ARM64</li>
                 <li>Version __VOLUM_VERSION__</li>
-                <li>Updater-signed packages</li>
+                <li>Updater signatures included</li>
               </ul>
               <div class="download-card__actions">
                 <a class="button button--accent download-card__button" href="https://github.com/sabatesduran/volum/releases/latest/download/Volum_windows_x86_64_setup.exe" data-download data-download-platform="windows" data-download-architecture="x86_64" data-download-location="platform-card">
-                  <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14" /></svg>
+                  <i data-lucide="download" aria-hidden="true"></i>
                   Download x64
                 </a>
                 <a class="button button--ghost download-card__button" href="https://github.com/sabatesduran/volum/releases/latest/download/Volum_windows_arm64_setup.exe" data-download data-download-platform="windows" data-download-architecture="arm64" data-download-location="platform-card">Download ARM64</a>
@@ -365,20 +536,37 @@
               <small class="download-card__note">Not Authenticode-signed yet. SmartScreen may ask for confirmation.</small>
             </article>
           </div>
+          <p class="release-note reveal">All releases, checksums, and updater signatures are published on <a href="https://github.com/sabatesduran/volum/releases" rel="noreferrer">GitHub Releases <i class="inline-icon" data-lucide="arrow-up-right" aria-hidden="true"></i></a></p>
+        </div>
+      </section>
+
+      <section class="support-section" id="support">
+        <div class="section-shell support-card reveal">
+          <div class="support-icon" aria-hidden="true"><i data-lucide="heart"></i></div>
+          <div>
+            <p class="eyebrow eyebrow--dark">Voluntarily supported</p>
+            <h2>Free for everyone.</h2>
+            <p>Volum is open source and will stay free. If it saves you time, you can support continued development with a tip on Ko-fi.</p>
+          </div>
+          <a class="button button--support" href="https://ko-fi.com/didacdev" rel="noreferrer" data-support-location="support-section">Support Volum on Ko-fi <i data-lucide="arrow-up-right" aria-hidden="true"></i></a>
         </div>
       </section>
 
       <section class="section faq-section" id="faq">
         <div class="section-shell faq-shell">
           <div class="faq-heading reveal">
-            <p class="eyebrow eyebrow--dark">A few useful answers</p>
-            <h2>Before you make room for Volum.</h2>
+            <p class="eyebrow eyebrow--dark">Useful answers</p>
+            <h2>Before you point Volum at a folder.</h2>
           </div>
           <div class="faq-list">
-            <details class="reveal" data-faq-id="file-handling"><summary>Does Volum move or rename my files?<span>+</span></summary><p>No. Volum indexes files in place. Collections, tags, favorites, notes, and estimates live in its local database without changing your folder structure.</p></details>
-            <details class="reveal" data-faq-id="supported-formats"><summary>Which formats are supported?<span>+</span></summary><p>STL, OBJ, 3MF, and STEP/STP files are indexed. ZIP archives are ignored. STL, OBJ, and 3MF have interactive geometry previews; STEP/STP tessellation is intentionally marked as pending.</p></details>
-            <details class="reveal" data-faq-id="web-imports"><summary>Does web import download protected files?<span>+</span></summary><p>No. Volum reads public MakerWorld or Printables metadata and lets you attach files you downloaded through the official provider. It never asks for provider credentials.</p></details>
-            <details class="reveal" data-faq-id="open-source"><summary>Is Volum free and open source?<span>+</span></summary><p>Yes. Volum is licensed under GPL-3.0-or-later. Source code and releases are available on GitHub. If Volum is useful to you, please star the project—it helps more makers discover it.</p></details>
+            <details class="reveal" data-faq-id="open-source"><summary>Is Volum really free and open source?<span><i data-lucide="plus" aria-hidden="true"></i></span></summary><p>Yes. There is no trial, subscription, account, or model limit. Volum is licensed under GPL-3.0-or-later, and its source code and releases are public on GitHub.</p></details>
+            <details class="reveal" data-faq-id="file-handling"><summary>Does Volum move or rename my files?<span><i data-lucide="plus" aria-hidden="true"></i></span></summary><p>No. Volum indexes files in place. Collections, tags, favorites, notes, costs, and saved searches live in its local database without changing your folder structure.</p></details>
+            <details class="reveal" data-faq-id="supported-formats"><summary>Which formats are supported?<span><i data-lucide="plus" aria-hidden="true"></i></span></summary><p>STL, OBJ, 3MF, and STEP/STP projects have generated previews and interactive geometry. STEP/STP support uses OpenCascade for metadata, tessellation, thumbnails, and geometry analysis.</p></details>
+            <details class="reveal" data-faq-id="duplicates"><summary>Can duplicate cleanup delete the wrong file?<span><i data-lucide="plus" aria-hidden="true"></i></span></summary><p>Volum never cleans up automatically. It separates exact files from geometry matches, recommends a keeper, preserves companion files and organization metadata, and uses the operating system Trash when you approve cleanup.</p></details>
+            <details class="reveal" data-faq-id="network"><summary>Does the desktop app need an internet connection?<span><i data-lucide="plus" aria-hidden="true"></i></span></summary><p>No connection is required to browse your library. Network access is only used for optional update checks, backups you configure, and public MakerWorld or Printables metadata when you preview a link.</p></details>
+            <details class="reveal" data-faq-id="moved-files"><summary>What if files move or a library drive is disconnected?<span><i data-lucide="plus" aria-hidden="true"></i></span></summary><p>Volum uses stable file fingerprints to recognize moved files and keeps metadata while removable or mounted libraries are unavailable. You can reconnect an offline library at a new path without rebuilding your organization.</p></details>
+            <details class="reveal" data-faq-id="backups"><summary>What does a Volum backup contain?<span><i data-lucide="plus" aria-hidden="true"></i></span></summary><p>A portable, checksummed ZIP containing Volum’s organization, settings, attribution, and user-owned media. It never includes or replaces original STL, 3MF, OBJ, STEP, or STP files. Archives are validated before restore, and Volum first makes a safety backup of its current data.</p></details>
+            <details class="reveal" data-faq-id="web-imports"><summary>Does web import download protected files?<span><i data-lucide="plus" aria-hidden="true"></i></span></summary><p>No. Volum reads public MakerWorld or Printables metadata and lets you attach files you downloaded through the official provider. It never asks for provider credentials.</p></details>
           </div>
         </div>
       </section>
@@ -387,14 +575,17 @@
         <div class="final-cta__grid" aria-hidden="true"></div>
         <div class="section-shell final-cta__inner reveal">
           <img src="./assets/volum-icon.png" alt="" width="84" height="84" />
-          <p class="eyebrow"><span></span> Make the archive useful again</p>
-          <h2>A beautiful home<br />for your 3D models.</h2>
-          <p>Download Volum, choose a folder, and let your library come into view. Like the project? Give it a star on GitHub.</p>
+          <p class="eyebrow"><span></span> Your files are already the library</p>
+          <h2>Bring them<br />into view.</h2>
+          <p>Download Volum, choose a folder, and start browsing. Nothing to import, upload, or subscribe to.</p>
           <div class="hero-actions hero-actions--center">
-            <a class="button button--accent" href="#download" data-download data-download-platform="all" data-download-architecture="choose" data-download-location="final-cta"><span>Choose your platform</span></a>
-            <a class="button button--ghost" href="https://github.com/sabatesduran/volum" rel="noreferrer" data-github-location="final-cta">★ Star on GitHub</a>
+            <a class="button button--accent" href="#download" data-platform-download data-download data-download-platform="all" data-download-architecture="choose" data-download-location="final-cta">
+              <i data-lucide="download" aria-hidden="true"></i>
+              <span data-platform-download-label>Download Volum — free</span>
+            </a>
+            <a class="button button--ghost" href="https://github.com/sabatesduran/volum" rel="noreferrer" data-github-location="final-cta">View on GitHub <i data-lucide="arrow-up-right" aria-hidden="true"></i></a>
           </div>
-          <small>macOS, Linux, Windows x64, and Windows ARM64 available now</small>
+          <small>macOS, Linux, Windows x64, and Windows ARM64 · Version __VOLUM_VERSION__</small>
         </div>
       </section>
     </main>
@@ -402,21 +593,21 @@
     <footer class="site-footer">
       <div class="section-shell footer-inner">
         <a class="brand" href="#top" aria-label="Volum home"><img src="./assets/volum-icon.png" alt="" width="30" height="30" /><span>VOL<span>U</span>M</span></a>
-        <p>Private, local-first, and built for makers.</p>
+        <p>Free, private, local-first, and built for makers.</p>
         <div class="footer-links">
           <a href="#download" data-download data-download-platform="all" data-download-architecture="choose" data-download-location="footer">Download</a>
-          <a href="https://github.com/sabatesduran/volum" data-github-location="footer">Star on GitHub ★</a>
-          <a href="https://github.com/sabatesduran/volum/releases">Releases</a>
-          <a href="https://github.com/sabatesduran/volum/blob/main/LICENSE">GPL-3.0</a>
-          <a href="https://didac.dev/">didac.dev ↗</a>
+          <a href="https://github.com/sabatesduran/volum" rel="noreferrer" data-github-location="footer">GitHub <i class="inline-icon" data-lucide="arrow-up-right" aria-hidden="true"></i></a>
+          <a href="https://ko-fi.com/didacdev" rel="noreferrer" data-support-location="footer">Support on Ko-fi <i class="inline-icon" data-lucide="heart" aria-hidden="true"></i></a>
+          <a href="https://github.com/sabatesduran/volum/blob/main/SECURITY.md" rel="noreferrer">Security</a>
+          <a href="https://github.com/sabatesduran/volum/blob/main/LICENSE" rel="noreferrer">GPL-3.0</a>
         </div>
         <small>© <span data-year></span> Volum</small>
       </div>
     </footer>
 
     <dialog class="shot-dialog" data-shot-dialog aria-label="Expanded product screenshot">
-      <button class="shot-dialog__close" type="button" aria-label="Close screenshot" data-shot-close>×</button>
-      <img src="./assets/screenshots/batraci-mini.webp" alt="" data-shot-image />
+      <button class="shot-dialog__close" type="button" aria-label="Close screenshot" data-shot-close><i data-lucide="x" aria-hidden="true"></i></button>
+      <img src="./assets/screenshots/library.webp" alt="" data-shot-image />
       <p data-shot-caption></p>
     </dialog>
 

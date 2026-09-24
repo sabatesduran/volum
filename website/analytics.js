@@ -15,6 +15,11 @@ export const initAnalytics = async () => {
     api_host: apiHost,
     ui_host: "https://eu.posthog.com",
     defaults: "2026-05-30",
+    autocapture: false,
+    capture_pageview: true,
+    capture_pageleave: true,
+    disable_session_recording: true,
+    persistence: "sessionStorage",
     person_profiles: "identified_only",
     capture_exceptions: true,
     loaded: (client) => {

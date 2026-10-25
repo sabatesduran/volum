@@ -32,13 +32,13 @@ notify = "8"
 blake3 = "1"
 zip = { version = "5", default-features = false, features = ["deflate"] }
 quick-xml = "0.38"
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 open = "5"
 log = "0.4"
 thiserror = "2"
 regex = "1"
 reqwest = { version = "0.13", features = ["brotli", "deflate", "gzip", "query", "stream"] }
-tokio-util = { version = "0.7", features = ["io"] }
+tokio-util = { version = "0.7", features = ["io", "rt"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native-sync-persistent", "crypto-rust", "vendored"] }
 percent-encoding = "2"
 trash = "5"

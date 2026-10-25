@@ -4,13 +4,14 @@ import { useAppStore } from "../app/store";
 import { api } from "../lib/tauri/api";
 import { t } from "../lib/i18n";
 import { DatePicker } from "./DatePicker";
+import { useShallow } from "zustand/react/shallow";
 
 const formats = ["", "stl", "3mf", "obj", "step"];
 
 export function FilterPanel({ onClose }: { onClose: () => void }) {
   const { data: tags = [] } = useQuery({ queryKey: ["tags"], queryFn: api.tags });
   const queryClient = useQueryClient();
-  const { search, modelSort, formatFilter, setFormatFilter, availabilityFilter, setAvailabilityFilter, tagFilter, setTagFilter, dateField, setDateField, dateFrom, dateTo, setDateRange, clearFilters } = useAppStore();
+  const { search, modelSort, formatFilter, setFormatFilter, availabilityFilter, setAvailabilityFilter, tagFilter, setTagFilter, dateField, setDateField, dateFrom, dateTo, setDateRange, clearFilters } = useAppStore(useShallow((state) => ({ search: state.search, modelSort: state.modelSort, formatFilter: state.formatFilter, setFormatFilter: state.setFormatFilter, availabilityFilter: state.availabilityFilter, setAvailabilityFilter: state.setAvailabilityFilter, tagFilter: state.tagFilter, setTagFilter: state.setTagFilter, dateField: state.dateField, setDateField: state.setDateField, dateFrom: state.dateFrom, dateTo: state.dateTo, setDateRange: state.setDateRange, clearFilters: state.clearFilters })));
   const hasFilters = Boolean(search || formatFilter || availabilityFilter || tagFilter || dateFrom || dateTo);
   const saveSearch = async () => {
     const name = window.prompt(t("Name this search"));

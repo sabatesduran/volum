@@ -4,7 +4,7 @@ import { Box, Gift, Hand, Plus, Sparkles, Trash2, WandSparkles, Wrench } from "l
 import { api } from "../lib/tauri/api";
 import { Dialog } from "./Dialog";
 import { t } from "../lib/i18n";
-import type { QueryRule, QueryRuleField } from "../types";
+import type { CustomFieldDefinition, QueryRule, QueryRuleField } from "../types";
 
 const symbols = [{ id: "box", Icon: Box }, { id: "sparkles", Icon: Sparkles }, { id: "gift", Icon: Gift }, { id: "wrench", Icon: Wrench }];
 const colors = ["#ff5a36", "#2f8f64", "#8f6ac8", "#d59b2f", "#397aa8"];
@@ -34,6 +34,21 @@ function operators(field: QueryRuleField): Array<[QueryRule["operator"], string]
   return [["is", "Is"], ["isNot", "Is not"]];
 }
 
+function defaultCustomRule(field: CustomFieldDefinition): QueryRule {
+  if (field.fieldType === "boolean") return { field: "custom", customFieldId: field.id, operator: "is", value: true };
+  if (field.fieldType === "number") return { field: "custom", customFieldId: field.id, operator: "atLeast", value: 1 };
+  if (field.fieldType === "date") return { field: "custom", customFieldId: field.id, operator: "after", value: new Date().toISOString().slice(0, 10) };
+  if (field.fieldType === "select") return { field: "custom", customFieldId: field.id, operator: "is", value: field.options[0] ?? "" };
+  return { field: "custom", customFieldId: field.id, operator: "is", value: "" };
+}
+
+function customOperators(field?: CustomFieldDefinition): Array<[QueryRule["operator"], string]> {
+  if (field?.fieldType === "number") return [["atLeast", "At least"], ["atMost", "At most"], ["greaterThan", "Greater than"], ["lessThan", "Less than"], ["is", "Exactly"]];
+  if (field?.fieldType === "date") return [["after", "After"], ["before", "Before"], ["on", "On"]];
+  if (field?.fieldType === "boolean") return [["is", "Is"]];
+  return [["is", "Is"], ["isNot", "Is not"]];
+}
+
 export function NewCollectionDialog({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
@@ -46,13 +61,14 @@ export function NewCollectionDialog({ onClose }: { onClose: () => void }) {
   const { data: tags = [] } = useQuery({ queryKey: ["tags"], queryFn: api.tags });
   const { data: folders = [] } = useQuery({ queryKey: ["folders"], queryFn: () => api.folders() });
   const { data: roots = [] } = useQuery({ queryKey: ["roots"], queryFn: api.roots });
-  const valid = Boolean(name.trim()) && (!smart || (rules.length > 0 && rules.every((rule) => rule.value !== "")));
+  const { data: customFields = [] } = useQuery({ queryKey: ["custom-fields"], queryFn: api.customFields });
+  const valid = Boolean(name.trim()) && (!smart || (rules.length > 0 && rules.every((rule) => rule.value !== "" && (rule.field !== "custom" || rule.customFieldId))));
   const updateRule = (index: number, next: QueryRule) => setRules((current) => current.map((rule, item) => item === index ? next : rule));
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!valid) return;
     setSaving(true);
-    await api.createCollection({ name: name.trim(), symbol, color, smart, rule: smart ? { version: 1, matchMode, rules } : undefined });
+    await api.createCollection({ name: name.trim(), symbol, color, smart, rule: smart ? { version: rules.some((rule) => rule.field === "custom") ? 2 : 1, matchMode, rules } : undefined });
     await queryClient.invalidateQueries({ queryKey: ["collections"] });
     onClose();
   };
@@ -61,7 +77,7 @@ export function NewCollectionDialog({ onClose }: { onClose: () => void }) {
       <form className="dialog-form" onSubmit={submit}>
         <label className="field"><span>{t("Name")}</span><input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder={t("e.g. To print")} /></label>
         <fieldset><legend>{t("Collection type")}</legend><div className="collection-type-choice"><button type="button" className={!smart ? "is-active" : ""} onClick={() => setSmart(false)}><Hand size={16} /><span><strong>{t("Manual")}</strong><small>{t("Add projects yourself")}</small></span></button><button type="button" className={smart ? "is-active" : ""} onClick={() => setSmart(true)}><WandSparkles size={16} /><span><strong>{t("Smart")}</strong><small>{t("Match rules automatically")}</small></span></button></div></fieldset>
-        {smart && <fieldset className="smart-rules"><legend>{t("Rules")}</legend><div className="segmented"><button type="button" className={matchMode === "all" ? "is-active" : ""} onClick={() => setMatchMode("all")}>{t("Match all")}</button><button type="button" className={matchMode === "any" ? "is-active" : ""} onClick={() => setMatchMode("any")}>{t("Match any")}</button></div>{rules.map((rule, index) => <div className="smart-rule-row" key={`${index}-${rule.field}`}><select aria-label={t("Field")} value={rule.field} onChange={(event) => updateRule(index, defaultRule(event.target.value as QueryRuleField))}>{fields.map(([value, label]) => <option value={value} key={value}>{t(label)}</option>)}</select><select aria-label={t("Operator")} value={rule.operator} onChange={(event) => updateRule(index, { ...rule, operator: event.target.value as QueryRule["operator"] })}>{operators(rule.field).map(([value, label]) => <option value={value} key={value}>{t(label)}</option>)}</select><RuleValue rule={rule} tags={tags} folders={folders} roots={roots} onChange={(value) => updateRule(index, { ...rule, value })} /><button type="button" className="icon-button icon-button--tiny" aria-label={t("Remove rule")} onClick={() => setRules((current) => current.filter((_, item) => item !== index))}><Trash2 size={14} /></button></div>)}<button type="button" className="button button--quiet" onClick={() => setRules((current) => [...current, defaultRule()])}><Plus size={14} /> {t("Add rule")}</button>{rules.length === 0 && <small className="form-hint form-hint--warning">{t("Choose at least one rule.")}</small>}</fieldset>}
+        {smart && <fieldset className="smart-rules"><legend>{t("Rules")}</legend><div className="segmented"><button type="button" className={matchMode === "all" ? "is-active" : ""} onClick={() => setMatchMode("all")}>{t("Match all")}</button><button type="button" className={matchMode === "any" ? "is-active" : ""} onClick={() => setMatchMode("any")}>{t("Match any")}</button></div>{rules.map((rule, index) => { const customField = customFields.find((field) => field.id === rule.customFieldId); return <div className="smart-rule-row" key={`${index}-${rule.field}-${rule.customFieldId ?? ""}`}><select aria-label={t("Field")} value={rule.field === "custom" ? `custom:${rule.customFieldId}` : rule.field} onChange={(event) => { const selected = event.target.value; if (selected.startsWith("custom:")) { const field = customFields.find((item) => item.id === selected.slice(7)); if (field) updateRule(index, defaultCustomRule(field)); } else updateRule(index, defaultRule(selected as QueryRuleField)); }}>{fields.map(([value, label]) => <option value={value} key={value}>{t(label)}</option>)}{customFields.length > 0 && <optgroup label={t("Custom fields")}>{customFields.map((field) => <option value={`custom:${field.id}`} key={field.id}>{field.name}</option>)}</optgroup>}</select><select aria-label={t("Operator")} value={rule.operator} onChange={(event) => updateRule(index, { ...rule, operator: event.target.value as QueryRule["operator"] })}>{(rule.field === "custom" ? customOperators(customField) : operators(rule.field)).map(([value, label]) => <option value={value} key={value}>{t(label)}</option>)}</select><RuleValue rule={rule} customField={customField} tags={tags} folders={folders} roots={roots} onChange={(value) => updateRule(index, { ...rule, value })} /><button type="button" className="icon-button icon-button--tiny" aria-label={t("Remove rule")} onClick={() => setRules((current) => current.filter((_, item) => item !== index))}><Trash2 size={14} /></button></div>; })}<button type="button" className="button button--quiet" onClick={() => setRules((current) => [...current, defaultRule()])}><Plus size={14} /> {t("Add rule")}</button>{rules.length === 0 && <small className="form-hint form-hint--warning">{t("Choose at least one rule.")}</small>}</fieldset>}
         <fieldset><legend>{t("Symbol")}</legend><div className="choice-row">{symbols.map(({ id, Icon }) => <button type="button" key={id} className={`symbol-choice ${symbol === id ? "is-active" : ""}`} onClick={() => setSymbol(id)} aria-label={id}><Icon size={18} /></button>)}</div></fieldset>
         <fieldset><legend>{t("Color")}</legend><div className="choice-row">{colors.map((value) => <button type="button" key={value} className={`color-choice ${color === value ? "is-active" : ""}`} style={{ background: value }} onClick={() => setColor(value)} aria-label={value} />)}</div></fieldset>
         <div className="dialog__actions"><button type="button" className="button button--quiet" onClick={onClose}>{t("Cancel")}</button><button className="button button--primary" disabled={!valid || saving}>{t(saving ? "Creating…" : "Create collection")}</button></div>
@@ -70,7 +86,14 @@ export function NewCollectionDialog({ onClose }: { onClose: () => void }) {
   );
 }
 
-function RuleValue({ rule, tags, folders, roots, onChange }: { rule: QueryRule; tags: Array<{ id: string; name: string }>; folders: Array<{ id: string; relativePath: string }>; roots: Array<{ id: string; displayName: string }>; onChange: (value: string | number | boolean) => void }) {
+function RuleValue({ rule, customField, tags, folders, roots, onChange }: { rule: QueryRule; customField?: CustomFieldDefinition; tags: Array<{ id: string; name: string }>; folders: Array<{ id: string; relativePath: string }>; roots: Array<{ id: string; displayName: string }>; onChange: (value: string | number | boolean) => void }) {
+  if (rule.field === "custom") {
+    if (customField?.fieldType === "boolean") return <select aria-label={t("Value")} value={String(rule.value)} onChange={(event) => onChange(event.target.value === "true")}><option value="true">{t("Yes")}</option><option value="false">{t("No")}</option></select>;
+    if (customField?.fieldType === "number") return <input aria-label={t("Value")} type="number" step="any" value={Number(rule.value)} onChange={(event) => onChange(Number(event.target.value))} />;
+    if (customField?.fieldType === "date") return <input aria-label={t("Value")} type="date" value={String(rule.value)} onChange={(event) => onChange(event.target.value)} />;
+    if (customField?.fieldType === "select") return <select aria-label={t("Value")} value={String(rule.value)} onChange={(event) => onChange(event.target.value)}>{customField.options.map((option) => <option value={option} key={option}>{option}</option>)}</select>;
+    return <input aria-label={t("Value")} type={customField?.fieldType === "url" ? "url" : "text"} value={String(rule.value)} onChange={(event) => onChange(event.target.value)} />;
+  }
   if (rule.field === "format") return <select aria-label={t("Value")} value={String(rule.value)} onChange={(event) => onChange(event.target.value)}>{["stl", "3mf", "obj", "step"].map((value) => <option value={value} key={value}>{value.toUpperCase()}</option>)}</select>;
   if (rule.field === "tag") return <select aria-label={t("Value")} value={String(rule.value)} onChange={(event) => onChange(event.target.value)}><option value="">{t("Choose tag")}</option>{tags.map((tag) => <option value={tag.id} key={tag.id}>{tag.name}</option>)}</select>;
   if (rule.field === "folder") return <select aria-label={t("Value")} value={String(rule.value)} onChange={(event) => onChange(event.target.value)}><option value="">{t("Choose folder")}</option>{folders.map((folder) => <option value={folder.id} key={folder.id}>{folder.relativePath}</option>)}</select>;

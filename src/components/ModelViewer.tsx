@@ -19,6 +19,25 @@ const VIEW_POSITIONS: Record<ModelView, [number, number, number]> = {
   top: [0, 5, 0.001]
 };
 
+const viewerPayloads = new Map<string, Promise<ArrayBuffer>>();
+
+function cachedViewerPayload(assetId: string, plateIndex?: number, revision = "") {
+  const key = `${assetId}:${plateIndex ?? "all"}:${revision}`;
+  const cached = viewerPayloads.get(key);
+  if (cached) {
+    viewerPayloads.delete(key);
+    viewerPayloads.set(key, cached);
+    return cached;
+  }
+  const request = api.viewerMesh(assetId, plateIndex).catch((error) => {
+    viewerPayloads.delete(key);
+    throw error;
+  });
+  viewerPayloads.set(key, request);
+  while (viewerPayloads.size > 4) viewerPayloads.delete(viewerPayloads.keys().next().value!);
+  return request;
+}
+
 function Controls({ resetSignal, view }: { resetSignal: number; view: ModelView }) {
   const { camera, gl, invalidate } = useThree();
   const controls = useMemo(() => new OrbitControls(camera, gl.domElement), [camera, gl.domElement]);
@@ -118,14 +137,14 @@ export function parseViewerMesh(buffer: ArrayBuffer): THREE.Object3D {
     layer.indices.push(indices[offset], indices[offset + 1], indices[offset + 2]);
     layers.set(key, layer);
   }
-  const group = new THREE.Group();
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  const reordered = new Uint32Array(indexCount);
+  const materials: THREE.Material[] = [];
+  let indexStart = 0;
+  let hasBuildPlate = false;
   Array.from(layers.values()).forEach((layer, layerIndex) => {
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    geometry.setIndex(layer.indices);
-    geometry.computeVertexNormals();
-    geometry.computeBoundingBox();
-    geometry.computeBoundingSphere();
+    reordered.set(layer.indices, indexStart);
     const hex = `#${layer.color.map((value) => value.toString(16).padStart(2, "0")).join("")}`;
     const isPlateSurface = hex === "#363740";
     const isPlateGrid = hex === "#535560" || hex === "#6c6f7b" || hex === "#898c97";
@@ -141,15 +160,21 @@ export function parseViewerMesh(buffer: ArrayBuffer): THREE.Object3D {
       polygonOffsetFactor: -layerIndex,
       polygonOffsetUnits: -layerIndex
     });
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.userData.volumSourceMaterial = true;
-    if (isBuildPlate) {
-      mesh.userData.volumBuildPlate = true;
-      group.userData.volumHasBuildPlate = true;
-    }
-    mesh.renderOrder = layerIndex;
-    group.add(mesh);
+    materials.push(material);
+    geometry.addGroup(indexStart, layer.indices.length, layerIndex);
+    indexStart += layer.indices.length;
+    hasBuildPlate ||= isBuildPlate;
   });
+  geometry.setIndex(new THREE.BufferAttribute(reordered, 1));
+  geometry.computeVertexNormals();
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  const mesh = new THREE.Mesh(geometry, materials.length === 1 ? materials[0] : materials);
+  mesh.userData.volumSourceMaterial = true;
+  mesh.renderOrder = layers.size;
+  const group = new THREE.Group();
+  group.userData.volumHasBuildPlate = hasBuildPlate;
+  group.add(mesh);
   return group;
 }
 
@@ -163,13 +188,13 @@ function disposeObject(object?: THREE.Object3D) {
   });
 }
 
-function LoadedObject({ assetId, extension, plateIndex, onError, onReady }: { assetId: string; extension: string; plateIndex?: number; onError: (message: string) => void; onReady: (geometry: ViewerGeometry) => void }) {
+function LoadedObject({ assetId, extension, plateIndex, revision, onError, onReady }: { assetId: string; extension: string; plateIndex?: number; revision?: string; onError: (message: string) => void; onReady: (geometry: ViewerGeometry) => void }) {
   const [object, setObject] = useState<THREE.Object3D>();
   useEffect(() => {
     let disposed = false;
     let loaded: THREE.Object3D | undefined;
     setObject(undefined);
-    api.viewerMesh(assetId, plateIndex).then((buffer) => {
+    cachedViewerPayload(assetId, plateIndex, revision).then((buffer) => {
       if (disposed || buffer.byteLength === 0) return;
       const parsed = parseViewerMesh(buffer);
       const size = new THREE.Box3().setFromObject(parsed).getSize(new THREE.Vector3());
@@ -191,7 +216,7 @@ function LoadedObject({ assetId, extension, plateIndex, onError, onReady }: { as
       disposed = true;
       disposeObject(loaded);
     };
-  }, [assetId, extension, onError, onReady, plateIndex]);
+  }, [assetId, extension, onError, onReady, plateIndex, revision]);
   return object ? <primitive object={object} /> : null;
 }
 
@@ -204,7 +229,7 @@ function DemoObject({ modelId }: { modelId: string }) {
   return <group rotation={[.2, -.25, 0]}><mesh><boxGeometry args={[1.7, .22, 1.2]} />{material}</mesh><mesh position={[-.65, .45, 0]}><boxGeometry args={[.22, .8, 1.2]} />{material}</mesh><mesh position={[.65, .45, 0]}><boxGeometry args={[.22, .8, 1.2]} />{material}</mesh></group>;
 }
 
-export function ModelViewer({ assetId, extension, modelId, plateIndex, resetSignal = 0, view = "iso", onError, onGeometry }: { assetId?: string; extension: string; modelId: string; plateIndex?: number; resetSignal?: number; view?: ModelView; onError?: (message: string) => void; onGeometry?: (geometry: ViewerGeometry) => void }) {
+export function ModelViewer({ assetId, extension, modelId, plateIndex, revision, resetSignal = 0, view = "iso", onError, onGeometry }: { assetId?: string; extension: string; modelId: string; plateIndex?: number; revision?: string; resetSignal?: number; view?: ModelView; onError?: (message: string) => void; onGeometry?: (geometry: ViewerGeometry) => void }) {
   const demo = modelId.startsWith("demo-");
   const [status, setStatus] = useState<"loading" | "ready" | "error">(demo || !assetId ? "ready" : "loading");
   useEffect(() => setStatus(demo || !assetId ? "ready" : "loading"), [assetId, demo, plateIndex]);
@@ -225,7 +250,7 @@ export function ModelViewer({ assetId, extension, modelId, plateIndex, resetSign
         <directionalLight position={[4, 6, 5]} intensity={2.35} />
         <directionalLight position={[-4, 2, -3]} intensity={1.05} color="#dce9ff" />
         <Suspense fallback={null}>
-          {demo || !assetId ? <DemoObject modelId={modelId} /> : <LoadedObject assetId={assetId} extension={extension} plateIndex={plateIndex} onError={handleError} onReady={handleReady} />}
+          {demo || !assetId ? <DemoObject modelId={modelId} /> : <LoadedObject assetId={assetId} extension={extension} plateIndex={plateIndex} revision={revision} onError={handleError} onReady={handleReady} />}
         </Suspense>
         <Controls resetSignal={resetSignal} view={view} />
       </Canvas>

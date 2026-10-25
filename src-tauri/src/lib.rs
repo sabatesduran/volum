@@ -5,12 +5,15 @@ mod geometry;
 mod indexing;
 mod parsers;
 mod previews;
+mod project_docs;
+mod project_packages;
+mod project_storage;
 mod state;
 mod web_sources;
 
 use sqlx::Row;
 use state::AppState;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -36,14 +39,37 @@ pub fn run() {
                 .app_data_dir()
                 .map_err(|error| error.to_string())?;
             backups::apply_pending_restore(&data_dir)?;
-            backups::cleanup_stale_work(&data_dir);
             let state = tauri::async_runtime::block_on(AppState::initialize(&data_dir))?;
-            tauri::async_runtime::block_on(backups::reconcile_backup_credentials(&state))?;
             tauri::async_runtime::block_on(seed_defaults(&state))?;
             app.manage(state);
+            let maintenance_handle = app.handle().clone();
+            let maintenance_data_dir = data_dir.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = tauri::async_runtime::spawn_blocking(move || {
+                    backups::cleanup_stale_work(&maintenance_data_dir);
+                })
+                .await;
+                let state = maintenance_handle.state::<AppState>();
+                if let Err(error) = backups::reconcile_backup_credentials(&state).await {
+                    log::warn!("Could not reconcile backup credentials: {error}");
+                }
+            });
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let state = handle.state::<AppState>();
+                let has_managed_root: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM library_roots WHERE root_kind = 'managed' AND status != 'removed')")
+                    .fetch_one(&state.pool)
+                    .await
+                    .unwrap_or(false);
+                if has_managed_root {
+                    match project_storage::import_managed_inbox_impl(&state).await {
+                        Ok(result) if !result.project_ids.is_empty() => {
+                            let _ = handle.emit("models-changed", ());
+                        }
+                        Ok(_) => {}
+                        Err(error) => log::warn!("Could not import the managed Inbox: {error}"),
+                    }
+                }
                 if let Ok(rows) =
                     sqlx::query("SELECT id FROM library_roots WHERE status != 'removed'")
                         .fetch_all(&state.pool)
@@ -103,6 +129,7 @@ pub fn run() {
             commands::get_viewer_mesh,
             commands::get_cached_thumbnail,
             commands::request_thumbnail,
+            commands::cancel_thumbnail_request,
             commands::get_preferences,
             commands::list_slicer_apps,
             commands::save_preference,
@@ -111,6 +138,35 @@ pub fn run() {
             commands::reveal_asset,
             commands::export_metadata,
             commands::export_diagnostics,
+            project_docs::get_project_documentation,
+            project_docs::add_project_photo,
+            project_docs::update_project_photo,
+            project_docs::delete_project_photo,
+            project_docs::get_project_photo,
+            project_docs::list_custom_field_definitions,
+            project_docs::save_custom_field_definition,
+            project_docs::delete_custom_field_definition,
+            project_docs::set_project_custom_value,
+            project_docs::save_project_bom_item,
+            project_docs::delete_project_bom_item,
+            project_docs::save_assembly_step,
+            project_docs::delete_assembly_step,
+            project_packages::inspect_project_package,
+            project_packages::export_project_package,
+            project_packages::import_project_package,
+            project_storage::get_managed_library_status,
+            project_storage::configure_managed_library,
+            project_storage::list_library_assets,
+            project_storage::import_managed_inbox,
+            project_storage::create_managed_project,
+            project_storage::add_files_to_project,
+            project_storage::rename_project,
+            project_storage::rename_project_file,
+            project_storage::preview_project_consolidation,
+            project_storage::convert_project_to_managed,
+            project_storage::trash_project,
+            project_storage::restore_project_from_trash,
+            project_storage::delete_project_permanently,
             backups::list_backup_destinations,
             backups::save_backup_destination,
             backups::delete_backup_destination,

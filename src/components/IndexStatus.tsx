@@ -5,15 +5,20 @@ import { api, onBackendEvent } from "../lib/tauri/api";
 import { plural, t } from "../lib/i18n";
 
 export function IndexStatus({ roots }: { roots: LibraryRoot[] }) {
-  const [status, setStatus] = useState<ScanStatus>();
+  const [statuses, setStatuses] = useState<Record<string, ScanStatus>>({});
+  const rootIds = roots.map((root) => root.id).join("|");
   useEffect(() => {
-    if (!roots[0]) return;
-    const refresh = () => api.scanStatus(roots[0].id).then(setStatus).catch(() => undefined);
-    refresh();
+    if (!roots.length) return;
+    void Promise.all(roots.map((root) => api.scanStatus(root.id))).then((values) => {
+      setStatuses(Object.fromEntries(values.map((status) => [status.rootId, status])));
+    }).catch(() => undefined);
     let unlisten: () => void = () => undefined;
-    onBackendEvent("scan-progress", refresh).then((fn) => { unlisten = fn; });
+    onBackendEvent<ScanStatus>("scan-progress", (status) => {
+      setStatuses((current) => ({ ...current, [status.rootId]: status }));
+    }).then((fn) => { unlisten = fn; });
     return () => unlisten();
-  }, [roots]);
+  }, [rootIds]);
+  const status = roots.map((root) => statuses[root.id]).find((item) => item?.state === "scanning" || item?.state === "paused" || item?.state === "error") ?? roots.map((root) => statuses[root.id]).find(Boolean);
   if (!status || status.state === "idle") return null;
   if (status.state === "complete") return <div className="index-status index-status--complete"><CheckCircle2 size={15} /><span>{t("Library up to date")}</span><small>{plural(status.processed, "{count} project", "{count} projects")}</small></div>;
   const percent = status.discovered ? Math.round(status.processed / status.discovered * 100) : 0;

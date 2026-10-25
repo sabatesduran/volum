@@ -2,26 +2,31 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Sidebar } from "../components/Sidebar";
 import { Topbar } from "../components/Topbar";
-import { NewCollectionDialog } from "../components/NewCollectionDialog";
 import { Onboarding } from "../components/Onboarding";
 import { IndexStatus } from "../components/IndexStatus";
-import { FilterPanel } from "../components/FilterPanel";
 import { LibraryView } from "../features/library/LibraryView";
-import { SettingsView } from "../features/settings/SettingsView";
-import { WebImportsView } from "../features/web-imports/WebImportsView";
-import { ImportFromWebDialog } from "../components/ImportFromWebDialog";
 import { api, onBackendEvent } from "../lib/tauri/api";
 import { t } from "../lib/i18n";
 import { useAppStore } from "./store";
+import { useShallow } from "zustand/react/shallow";
 
 const ModelDetailView = lazy(() => import("../features/model-detail/ModelDetailView").then((module) => ({ default: module.ModelDetailView })));
+const SettingsView = lazy(() => import("../features/settings/SettingsView").then((module) => ({ default: module.SettingsView })));
+const WebImportsView = lazy(() => import("../features/web-imports/WebImportsView").then((module) => ({ default: module.WebImportsView })));
+const FilterPanel = lazy(() => import("../components/FilterPanel").then((module) => ({ default: module.FilterPanel })));
+const NewCollectionDialog = lazy(() => import("../components/NewCollectionDialog").then((module) => ({ default: module.NewCollectionDialog })));
+const ImportFromWebDialog = lazy(() => import("../components/ImportFromWebDialog").then((module) => ({ default: module.ImportFromWebDialog })));
+const ImportProjectPackageDialog = lazy(() => import("../components/ImportProjectPackageDialog").then((module) => ({ default: module.ImportProjectPackageDialog })));
+const NewProjectDialog = lazy(() => import("../components/NewProjectDialog").then((module) => ({ default: module.NewProjectDialog })));
 
 export default function App() {
   const queryClient = useQueryClient();
-  const { view, selectedModelId, theme, language, density, modelSort, setTheme, setLanguage, setDensity, setModelSort } = useAppStore();
+  const { view, selectedModelId, theme, language, density, modelSort, setTheme, setLanguage, setDensity, setModelSort } = useAppStore(useShallow((state) => ({ view: state.view, selectedModelId: state.selectedModelId, theme: state.theme, language: state.language, density: state.density, modelSort: state.modelSort, setTheme: state.setTheme, setLanguage: state.setLanguage, setDensity: state.setDensity, setModelSort: state.setModelSort })));
   const [newCollection, setNewCollection] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [webImportOpen, setWebImportOpen] = useState(false);
+  const [projectImportOpen, setProjectImportOpen] = useState(false);
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
   const { data: roots, isLoading } = useQuery({ queryKey: ["roots"], queryFn: api.roots });
   const { data: preferences } = useQuery({ queryKey: ["preferences"], queryFn: api.preferences });
   const [preferencesHydrated, setPreferencesHydrated] = useState(false);
@@ -37,13 +42,13 @@ export default function App() {
 
   useEffect(() => {
     if (!preferencesHydrated) return;
-    void Promise.all([
-      api.savePreference("ui_theme", theme),
-      api.savePreference("ui_language", language),
-      api.savePreference("ui_density", density),
-      api.savePreference("ui_model_sort", modelSort)
-    ]).then(() => queryClient.invalidateQueries({ queryKey: ["preferences"] }));
-  }, [density, language, modelSort, preferencesHydrated, queryClient, theme]);
+    const next = { ui_theme: theme, ui_language: language, ui_density: density, ui_model_sort: modelSort };
+    const changed = Object.entries(next).filter(([key, value]) => preferences?.[key] !== value);
+    if (!changed.length) return;
+    void Promise.all(changed.map(([key, value]) => api.savePreference(key, value))).then(() => {
+      queryClient.setQueryData<Record<string, string>>(["preferences"], (current = {}) => ({ ...current, ...next }));
+    });
+  }, [density, language, modelSort, preferences, preferencesHydrated, queryClient, theme]);
 
   useEffect(() => {
     const apply = () => {
@@ -62,6 +67,10 @@ export default function App() {
         event.preventDefault();
         document.querySelector<HTMLInputElement>(".search-field input")?.focus();
       }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "n") {
+        event.preventDefault();
+        if (!selectedModelId) setNewProjectOpen(true);
+      }
       if (event.key === "Escape" && selectedModelId) useAppStore.getState().selectModel();
     };
     window.addEventListener("keydown", onKey);
@@ -70,14 +79,32 @@ export default function App() {
 
   useEffect(() => {
     const unlisteners: Array<() => void> = [];
+    let disposed = false;
+    let modelsTimer: number | undefined;
+    const invalidateModels = () => {
+      if (modelsTimer != null) return;
+      modelsTimer = window.setTimeout(() => {
+        modelsTimer = undefined;
+        ["models", "folders", "library-assets", "collections", "duplicate-groups", "duplicate-stats"]
+          .forEach((key) => queryClient.invalidateQueries({ queryKey: [key] }));
+        if (selectedModelId) {
+          void queryClient.invalidateQueries({ queryKey: ["model", selectedModelId], exact: true });
+          void queryClient.invalidateQueries({ queryKey: ["related-models", selectedModelId], exact: true });
+        }
+      }, 200);
+    };
     Promise.all([
-      onBackendEvent("models-changed", () => { queryClient.invalidateQueries({ queryKey: ["models"] }); queryClient.invalidateQueries({ queryKey: ["folders"] }); queryClient.invalidateQueries({ queryKey: ["collections"] }); queryClient.invalidateQueries({ queryKey: ["related-models"] }); queryClient.invalidateQueries({ queryKey: ["duplicate-groups"] }); queryClient.invalidateQueries({ queryKey: ["duplicate-stats"] }); queryClient.invalidateQueries({ queryKey: ["web-sources"] }); }),
+      onBackendEvent("models-changed", invalidateModels),
       onBackendEvent("root-status-changed", () => queryClient.invalidateQueries({ queryKey: ["roots"] })),
       onBackendEvent("web-sources-changed", () => queryClient.invalidateQueries({ queryKey: ["web-sources"] })),
       onBackendEvent("backups-changed", () => { queryClient.invalidateQueries({ queryKey: ["backup-destinations"] }); queryClient.invalidateQueries({ queryKey: ["backup-runs"] }); queryClient.invalidateQueries({ queryKey: ["backup-archives"] }); })
-    ]).then((values) => unlisteners.push(...values));
-    return () => unlisteners.forEach((unlisten) => unlisten());
-  }, [queryClient]);
+    ]).then((values) => disposed ? values.forEach((unlisten) => unlisten()) : unlisteners.push(...values));
+    return () => {
+      disposed = true;
+      if (modelsTimer != null) window.clearTimeout(modelsTimer);
+      unlisteners.forEach((unlisten) => unlisten());
+    };
+  }, [queryClient, selectedModelId]);
 
   if (isLoading) return <div className="app-boot"><div className="app-boot__mark">V</div></div>;
   if (!roots?.length) return <Onboarding onComplete={() => queryClient.invalidateQueries({ queryKey: ["roots"] })} />;
@@ -86,13 +113,17 @@ export default function App() {
     <div className="app-shell" data-language={language}>
       {!selectedModelId && <Sidebar onNewCollection={() => setNewCollection(true)} />}
       <main className={`app-main ${selectedModelId ? "app-main--detail" : ""}`}>
-        {!selectedModelId && view !== "settings" && view !== "web" && <Topbar onImport={() => setWebImportOpen(true)} onFilters={() => setFiltersOpen((value) => !value)} />}
-        {selectedModelId ? <Suspense fallback={<div className="detail-loading"><span>{t("Preparing project…")}</span></div>}><ModelDetailView modelId={selectedModelId} /></Suspense> : view === "settings" ? <SettingsView /> : view === "web" ? <WebImportsView onImport={() => setWebImportOpen(true)} /> : <LibraryView onNewCollection={() => setNewCollection(true)} />}
+        {!selectedModelId && view !== "settings" && view !== "web" && <Topbar onNewProject={() => setNewProjectOpen(true)} onImport={() => setWebImportOpen(true)} onProjectImport={() => setProjectImportOpen(true)} onFilters={() => setFiltersOpen((value) => !value)} />}
+        <Suspense fallback={<div className="detail-loading"><span>{t("Preparing project…")}</span></div>}>{selectedModelId ? <ModelDetailView modelId={selectedModelId} /> : view === "settings" ? <SettingsView /> : view === "web" ? <WebImportsView onImport={() => setWebImportOpen(true)} /> : <LibraryView roots={roots} onNewCollection={() => setNewCollection(true)} onNewProject={() => setNewProjectOpen(true)} />}</Suspense>
       </main>
       {!selectedModelId && <IndexStatus roots={roots} />}
-      {filtersOpen && !selectedModelId && <FilterPanel onClose={() => setFiltersOpen(false)} />}
-      {newCollection && <NewCollectionDialog onClose={() => setNewCollection(false)} />}
-      {webImportOpen && <ImportFromWebDialog onClose={() => setWebImportOpen(false)} />}
+      <Suspense fallback={null}>
+        {filtersOpen && !selectedModelId && <FilterPanel onClose={() => setFiltersOpen(false)} />}
+        {newCollection && <NewCollectionDialog onClose={() => setNewCollection(false)} />}
+        {webImportOpen && <ImportFromWebDialog onClose={() => setWebImportOpen(false)} />}
+        {projectImportOpen && <ImportProjectPackageDialog onClose={() => setProjectImportOpen(false)} />}
+        {newProjectOpen && <NewProjectDialog projectIds={useAppStore.getState().selectedModelIds} onClose={() => setNewProjectOpen(false)} />}
+      </Suspense>
     </div>
   );
 }

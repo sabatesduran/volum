@@ -1,6 +1,6 @@
 import {
   Clock3, Copy, FolderTree, Globe2, Heart, LayoutGrid, LibraryBig, Plus, Settings2,
-  Wrench, Gift, Sparkles, Box, Search, type LucideIcon
+  Wrench, Gift, Sparkles, Box, Search, Trash2, type LucideIcon
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/tauri/api";
@@ -8,6 +8,7 @@ import { useAppStore } from "../app/store";
 import { Brand } from "./Brand";
 import type { ViewId } from "../types";
 import { t } from "../lib/i18n";
+import { useShallow } from "zustand/react/shallow";
 
 const mainItems: Array<[ViewId, string, LucideIcon]> = [
   ["library", "Library", LibraryBig],
@@ -20,7 +21,7 @@ const mainItems: Array<[ViewId, string, LucideIcon]> = [
 const symbols: Record<string, LucideIcon> = { wrench: Wrench, gift: Gift, sparkles: Sparkles, box: Box };
 
 export function Sidebar({ onNewCollection }: { onNewCollection: () => void }) {
-  const { view, selectView, selectCollection, selectSavedSearch, selectedCollectionId, selectedSavedSearchId, sidebarCollapsed } = useAppStore();
+  const { view, selectView, selectCollection, selectSavedSearch, selectedCollectionId, selectedSavedSearchId, sidebarCollapsed } = useAppStore(useShallow((state) => ({ view: state.view, selectView: state.selectView, selectCollection: state.selectCollection, selectSavedSearch: state.selectSavedSearch, selectedCollectionId: state.selectedCollectionId, selectedSavedSearchId: state.selectedSavedSearchId, sidebarCollapsed: state.sidebarCollapsed })));
   const queryClient = useQueryClient();
   const { data: collections = [] } = useQuery({ queryKey: ["collections"], queryFn: api.collections });
   const { data: duplicateStats } = useQuery({ queryKey: ["duplicate-stats"], queryFn: api.duplicateStats });
@@ -82,7 +83,7 @@ export function Sidebar({ onNewCollection }: { onNewCollection: () => void }) {
           </div>
         )}
       </nav>
-      <div className="sidebar__bottom">{item("settings", "Settings", Settings2)}</div>
+      <div className="sidebar__bottom">{item("trash", "Trash", Trash2)}{item("settings", "Settings", Settings2)}</div>
     </aside>
   );
 }

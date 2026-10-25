@@ -4,10 +4,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAppStore } from "../app/store";
 import { api } from "../lib/tauri/api";
 import { t } from "../lib/i18n";
+import { useShallow } from "zustand/react/shallow";
 
 export function SelectionBar() {
   const queryClient = useQueryClient();
-  const { selectedModelIds, clearModelSelection } = useAppStore();
+  const { selectedModelIds, clearModelSelection } = useAppStore(useShallow((state) => ({ selectedModelIds: state.selectedModelIds, clearModelSelection: state.clearModelSelection })));
   const { data: collections = [] } = useQuery({ queryKey: ["collections"], queryFn: api.collections });
   const { data: tags = [] } = useQuery({ queryKey: ["tags"], queryFn: api.tags });
   const [collectionId, setCollectionId] = useState("");

@@ -92,7 +92,7 @@ pub async fn save_web_source(
             .await
             .map_err(db_error)?;
     let id = existing.unwrap_or_else(|| Uuid::new_v4().to_string());
-    sqlx::query("INSERT INTO web_sources (id, provider, remote_id, canonical_url, title, creator, description, license, image_url, filament_grams, status, fetched_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'saved', ?, ?, ?) ON CONFLICT(canonical_url) DO UPDATE SET provider = excluded.provider, remote_id = excluded.remote_id, title = excluded.title, creator = excluded.creator, description = excluded.description, license = excluded.license, image_url = excluded.image_url, filament_grams = excluded.filament_grams, fetched_at = excluded.fetched_at, updated_at = excluded.updated_at")
+    sqlx::query("INSERT INTO web_sources (id, provider, remote_id, canonical_url, title, creator, description, license, image_url, filament_grams, status, fetched_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'saved', ?, ?, ?) ON CONFLICT(id) DO UPDATE SET provider = excluded.provider, remote_id = excluded.remote_id, canonical_url = excluded.canonical_url, title = excluded.title, creator = excluded.creator, description = excluded.description, license = excluded.license, image_url = excluded.image_url, filament_grams = excluded.filament_grams, fetched_at = excluded.fetched_at, updated_at = excluded.updated_at")
         .bind(&id)
         .bind(provider)
         .bind(remote_id)
@@ -153,6 +153,37 @@ pub async fn attach_web_source_file(
         .await
         .map_err(db_error)?
         .ok_or_else(|| "Saved web model not found".to_string())?;
+    let managed_root: Option<String> = sqlx::query_scalar("SELECT id FROM library_roots WHERE root_kind = 'managed' AND status != 'removed' ORDER BY created_at LIMIT 1")
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(db_error)?;
+    if managed_root.is_some() {
+        let title: String = source_row.get("title");
+        let project_id = crate::project_storage::move_paths_into_managed_project(
+            &title,
+            vec![source_path.to_string_lossy().to_string()],
+            &state,
+        )
+        .await?;
+        let asset = sqlx::query("SELECT a.root_id, a.relative_path FROM assets a JOIN model_assets ma ON ma.asset_id = a.id WHERE ma.model_id = ? ORDER BY ma.sort_order LIMIT 1")
+            .bind(&project_id)
+            .fetch_one(&state.pool)
+            .await
+            .map_err(db_error)?;
+        sqlx::query("UPDATE web_sources SET status = 'imported', root_id = ?, relative_path = ?, model_id = ?, updated_at = ? WHERE id = ?")
+            .bind(asset.get::<String, _>("root_id"))
+            .bind(asset.get::<String, _>("relative_path"))
+            .bind(&project_id)
+            .bind(now())
+            .bind(&source_id)
+            .execute(&state.pool)
+            .await
+            .map_err(db_error)?;
+        let _ = app.emit("models-changed", managed_root);
+        let _ = app.emit("web-sources-changed", &source_id);
+        return get_web_source(&source_id, &state.pool).await;
+    }
+    let _guard = state.file_operation_lock.lock().await;
     let (root_id, root_canonical, import_directory, relative_import_directory) =
         resolve_import_directory(&state).await?;
     let provider: String = source_row.get("provider");
@@ -308,7 +339,7 @@ pub async fn source_for_model(
     state: &AppState,
 ) -> CommandResult<Option<WebSource>> {
     let row = sqlx::query(&format!(
-        "{WEB_SOURCE_SELECT} WHERE ws.model_id = ? OR EXISTS (SELECT 1 FROM assets linked_a JOIN model_assets linked_ma ON linked_ma.asset_id = linked_a.id WHERE linked_ma.model_id = ? AND linked_a.root_id = ws.root_id AND linked_a.relative_path = ws.relative_path) LIMIT 1"
+        "{WEB_SOURCE_SELECT} WHERE ws.model_id = ? OR EXISTS (SELECT 1 FROM assets linked_a JOIN model_assets linked_ma ON linked_ma.asset_id = linked_a.id WHERE linked_ma.model_id = ? AND linked_a.root_id = ws.root_id AND linked_a.relative_path = ws.relative_path) ORDER BY ws.updated_at DESC LIMIT 1"
     ))
     .bind(model_id)
     .bind(model_id)

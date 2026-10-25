@@ -9,6 +9,7 @@ pub struct LibraryRoot {
     pub status: String,
     pub last_scan_at: Option<String>,
     pub model_count: i64,
+    pub root_kind: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -116,8 +117,99 @@ pub struct ModelSummary {
     pub missing: bool,
     pub asset_count: i64,
     pub bundle_mode: String,
+    pub storage_mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cover_photo_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dimensions_mm: Option<[f64; 3]>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectPhoto {
+    pub id: String,
+    pub model_id: String,
+    pub original_filename: String,
+    pub mime_type: String,
+    pub byte_size: i64,
+    pub width: i64,
+    pub height: i64,
+    pub caption: String,
+    pub sort_order: f64,
+    pub is_cover: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomFieldDefinition {
+    pub id: String,
+    pub name: String,
+    pub field_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    #[serde(default)]
+    pub options: Vec<String>,
+    pub sort_order: f64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectCustomValue {
+    pub field_id: String,
+    pub value: serde_json::Value,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectBomItem {
+    pub id: String,
+    pub model_id: String,
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub linked_asset_id: Option<String>,
+    pub name: String,
+    pub quantity: f64,
+    pub unit: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    pub notes: String,
+    pub sort_order: f64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssemblyStep {
+    pub id: String,
+    pub model_id: String,
+    pub title: String,
+    pub instructions: String,
+    pub sort_order: f64,
+    #[serde(default)]
+    pub bom_item_ids: Vec<String>,
+    #[serde(default)]
+    pub photo_ids: Vec<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectDocumentation {
+    #[serde(default)]
+    pub photos: Vec<ProjectPhoto>,
+    #[serde(default)]
+    pub custom_values: Vec<ProjectCustomValue>,
+    #[serde(default)]
+    pub bom_items: Vec<ProjectBomItem>,
+    #[serde(default)]
+    pub assembly_steps: Vec<AssemblyStep>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -193,7 +285,9 @@ pub struct ModelQuery {
     pub has_web_source: Option<bool>,
     pub min_asset_count: Option<i64>,
     pub max_asset_count: Option<i64>,
+    pub trashed: Option<bool>,
     pub sort: Option<String>,
+    pub cursor: Option<String>,
     pub offset: Option<i64>,
     pub limit: Option<i64>,
 }
@@ -205,6 +299,8 @@ pub struct Page<T> {
     pub total: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_offset: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -270,6 +366,8 @@ pub struct QueryRule {
     pub field: String,
     pub operator: String,
     pub value: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_field_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

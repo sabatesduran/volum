@@ -2,6 +2,7 @@ import type {
   BackupDestination,
   BackupRun,
   Collection,
+  CustomFieldDefinition,
   DuplicateGroup,
   Folder,
   LibraryRoot,
@@ -11,6 +12,7 @@ import type {
   ModelSummary,
   Page,
   PreviewPayload,
+  ProjectDocumentation,
   ScanStatus,
   SavedSearch,
   SlicerApplication,
@@ -54,6 +56,7 @@ let models: ModelSummary[] = names.map(([displayName, primaryExtension, folderNa
   missing: false,
   assetCount: index % 3 === 0 ? 2 : 1,
   bundleMode: "automatic",
+  storageMode: "linked",
   dimensionsMm: dimensionsMm as [number, number, number]
 }));
 
@@ -78,6 +81,11 @@ let preferences: Record<string, string> = {};
 let backupDestinations: BackupDestination[] = [];
 let backupRuns: BackupRun[] = [];
 let savedSearches: SavedSearch[] = [];
+let customFields: CustomFieldDefinition[] = [
+  { id: "field-status", name: "Build status", fieldType: "select", options: ["Idea", "Printing", "Complete"], sortOrder: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: "field-hours", name: "Assembly time", fieldType: "number", unit: "h", options: [], sortOrder: 2, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+];
+const projectDocs: Record<string, ProjectDocumentation> = Object.fromEntries(models.map((model) => [model.id, { photos: [], customValues: model.id === "demo-1" ? [{ fieldId: "field-status", value: "Complete", updatedAt: new Date().toISOString() }] : [], bomItems: [], assemblySteps: [] }]));
 
 const memberships: Record<string, string[]> = {
   "demo-1": ["c-print", "c-gifts"], "demo-2": ["c-garage"], "demo-4": ["c-print", "c-garage"],
@@ -86,18 +94,41 @@ const memberships: Record<string, string[]> = {
 
 export const demoRoot: LibraryRoot = {
   id: "demo-root", path: "/Users/you/3D Models", displayName: "3D Models", status: "online",
-  lastScanAt: new Date().toISOString(), modelCount: models.length
+  lastScanAt: new Date().toISOString(), modelCount: models.length, rootKind: "linked"
+};
+let managedRoot: LibraryRoot | undefined = {
+  id: "managed-root", path: "/Users/you/Volum", displayName: "Volum", status: "online",
+  lastScanAt: new Date().toISOString(), modelCount: 0, rootKind: "managed"
 };
 
 export async function mockInvoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
   await new Promise((resolve) => setTimeout(resolve, command === "list_models" ? 80 : 25));
   switch (command) {
-    case "list_roots": return [demoRoot] as T;
+    case "list_roots": return [...(managedRoot ? [managedRoot] : []), demoRoot] as T;
     case "add_library_root": return demoRoot as T;
     case "remove_library_root": return undefined as T;
     case "reconnect_library_root": return { ...demoRoot, path: String(args.path), status: "online" } as T;
     case "start_scan": return undefined as T;
     case "pause_scan": return undefined as T;
+    case "get_managed_library_status": return { root: managedRoot, projectsPath: managedRoot ? `${managedRoot.path}/Projects` : undefined, inboxPath: managedRoot ? `${managedRoot.path}/Inbox` : undefined, trashPath: managedRoot ? `${managedRoot.path}/Trash` : undefined } as T;
+    case "configure_managed_library": managedRoot = { id: "managed-root", path: String(args.path), displayName: String(args.path).split(/[\\/]/).pop() || "Volum", status: "online", modelCount: 0, rootKind: "managed" }; return managedRoot as T;
+    case "list_library_assets": return models.flatMap((model) => model.primaryAssetId ? [{ id: model.primaryAssetId, projectId: model.id, projectName: model.displayName, filename: `${model.displayName}.${model.primaryExtension}`, extension: model.primaryExtension, byteSize: 1_000_000, missing: model.missing, storageMode: model.storageMode, rootName: demoRoot.displayName, relativePath: model.relativeFolder }] : []) as T;
+    case "import_managed_inbox": return { projectIds: [], skipped: 0, errors: [] } as T;
+    case "create_managed_project": {
+      const input = args.input as { name: string; assetIds: string[]; filePaths: string[]; transferMode: "move" | "copy" | "link" };
+      const id = `demo-${crypto.randomUUID()}`;
+      const model: ModelSummary = { id, displayName: input.name, folderId: "managed-projects", folderName: input.name, relativeFolder: `Projects/${input.name}`, primaryAssetId: input.assetIds[0], primaryExtension: input.filePaths[0]?.split(".").pop()?.toLowerCase() ?? (input.assetIds.length ? "stl" : ""), favorite: false, addedAt: new Date().toISOString(), modifiedAt: new Date().toISOString(), missing: false, assetCount: input.assetIds.length + input.filePaths.length, bundleMode: "manual", storageMode: input.transferMode === "link" ? "linked" : "managed" };
+      models = [model, ...models];
+      return id as T;
+    }
+    case "add_files_to_project": return [] as T;
+    case "rename_project": models = models.map((model) => model.id === args.projectId ? { ...model, displayName: String(args.name) } : model); return undefined as T;
+    case "rename_project_file": return undefined as T;
+    case "preview_project_consolidation": { const model = models.find((item) => item.id === args.projectId)!; return { projectId: model.id, projectName: model.displayName, fileCount: model.assetCount, totalBytes: model.assetCount * 1_000_000, sourceFolders: [model.relativeFolder], managedFolderName: model.displayName, alreadyManaged: model.storageMode === "managed" } as T; }
+    case "convert_project_to_managed": { const input = args.input as { projectId: string }; models = models.map((model) => model.id === input.projectId ? { ...model, storageMode: "managed", relativeFolder: `Projects/${model.displayName}` } : model); return undefined as T; }
+    case "trash_project": return undefined as T;
+    case "restore_project_from_trash": return undefined as T;
+    case "delete_project_permanently": models = models.filter((model) => model.id !== args.projectId); return undefined as T;
     case "list_folders": return folders as T;
     case "list_models": {
       const query = (args.query ?? {}) as ModelQuery;
@@ -120,9 +151,9 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
         const field = query.sort === "added" ? "addedAt" : query.sort === "opened" ? "lastOpenedAt" : "modifiedAt";
         return (b[field] ?? "").localeCompare(a[field] ?? "") || a.displayName.localeCompare(b.displayName) || a.id.localeCompare(b.id);
       });
-      const offset = query.offset ?? 0;
+      const offset = query.cursor?.startsWith("mock:") ? Number(query.cursor.slice(5)) || 0 : query.offset ?? 0;
       const limit = query.limit ?? 100;
-      return { items: output.slice(offset, offset + limit), total: output.length, nextOffset: offset + limit < output.length ? offset + limit : undefined } as Page<ModelSummary> as T;
+      return { items: output.slice(offset, offset + limit), total: output.length, nextCursor: offset + limit < output.length ? `mock:${offset + limit}` : undefined } as Page<ModelSummary> as T;
     }
     case "get_model": {
       const model = models.find((item) => item.id === args.modelId)!;
@@ -165,6 +196,46 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
       return undefined as T;
     }
     case "save_notes": return undefined as T;
+    case "get_project_documentation": return (projectDocs[String(args.modelId)] ?? { photos: [], customValues: [], bomItems: [], assemblySteps: [] }) as T;
+    case "list_custom_field_definitions": return customFields as T;
+    case "save_custom_field_definition": {
+      const input = args.input as { id?: string; name: string; fieldType: CustomFieldDefinition["fieldType"]; unit?: string; options: string[] };
+      const timestamp = new Date().toISOString();
+      const previous = customFields.find((field) => field.id === input.id);
+      const field: CustomFieldDefinition = { ...input, id: input.id ?? crypto.randomUUID(), sortOrder: previous?.sortOrder ?? customFields.length + 1, createdAt: previous?.createdAt ?? timestamp, updatedAt: timestamp };
+      customFields = [...customFields.filter((item) => item.id !== field.id), field];
+      return field as T;
+    }
+    case "delete_custom_field_definition": customFields = customFields.filter((field) => field.id !== args.fieldId); Object.values(projectDocs).forEach((docs) => docs.customValues = docs.customValues.filter((value) => value.fieldId !== args.fieldId)); return undefined as T;
+    case "set_project_custom_value": {
+      const input = args.input as { modelId: string; fieldId: string; value?: string | number | boolean };
+      const docs = projectDocs[input.modelId] ??= { photos: [], customValues: [], bomItems: [], assemblySteps: [] };
+      docs.customValues = docs.customValues.filter((value) => value.fieldId !== input.fieldId);
+      if (input.value != null) docs.customValues.push({ fieldId: input.fieldId, value: input.value, updatedAt: new Date().toISOString() });
+      return undefined as T;
+    }
+    case "save_project_bom_item": {
+      const input = args.input as Record<string, unknown> & { modelId: string; id?: string };
+      const docs = projectDocs[input.modelId] ??= { photos: [], customValues: [], bomItems: [], assemblySteps: [] };
+      const timestamp = new Date().toISOString();
+      const item = { ...input, id: input.id ?? crypto.randomUUID(), sortOrder: Number(input.sortOrder ?? docs.bomItems.length + 1), createdAt: timestamp, updatedAt: timestamp };
+      docs.bomItems = [...docs.bomItems.filter((value) => value.id !== item.id), item as ProjectDocumentation["bomItems"][number]].sort((a, b) => a.sortOrder - b.sortOrder);
+      return item as T;
+    }
+    case "delete_project_bom_item": Object.values(projectDocs).forEach((docs) => docs.bomItems = docs.bomItems.filter((item) => item.id !== args.itemId)); return undefined as T;
+    case "save_assembly_step": {
+      const input = args.input as Record<string, unknown> & { modelId: string; id?: string };
+      const docs = projectDocs[input.modelId] ??= { photos: [], customValues: [], bomItems: [], assemblySteps: [] };
+      const timestamp = new Date().toISOString();
+      const step = { ...input, id: input.id ?? crypto.randomUUID(), sortOrder: Number(input.sortOrder ?? docs.assemblySteps.length + 1), createdAt: timestamp, updatedAt: timestamp };
+      docs.assemblySteps = [...docs.assemblySteps.filter((value) => value.id !== step.id), step as ProjectDocumentation["assemblySteps"][number]].sort((a, b) => a.sortOrder - b.sortOrder);
+      return step as T;
+    }
+    case "delete_assembly_step": Object.values(projectDocs).forEach((docs) => docs.assemblySteps = docs.assemblySteps.filter((step) => step.id !== args.stepId)); return undefined as T;
+    case "get_project_photo": return new ArrayBuffer(0) as T;
+    case "inspect_project_package": return { formatVersion: 1, appVersion: "0.2.0", packageProjectId: "demo-package", packageExportId: crypto.randomUUID(), projectName: "Portable demo project", exportedAt: new Date().toISOString(), fileCount: 2, photoCount: 3, bomItemCount: 4, assemblyStepCount: 2, totalBytes: 4_200_000, alreadyImported: false } as T;
+    case "export_project_package": return undefined as T;
+    case "import_project_package": return "demo-1" as T;
     case "list_saved_searches": return savedSearches as T;
     case "save_saved_search": {
       const input = args.input as { id?: string; name: string; query: ModelQuery };
@@ -228,6 +299,8 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
       { id: "ultimaker-cura", name: "UltiMaker Cura", installed: false, custom: false, brandColor: "#00a1e0" }
     ] as SlicerApplication[] as T;
     case "request_thumbnail": return false as T;
+    case "cancel_thumbnail_request": return undefined as T;
+    case "get_cached_thumbnail": return new ArrayBuffer(0) as T;
     case "get_viewer_mesh": return new ArrayBuffer(0) as T;
     case "save_preference": preferences = { ...preferences, [String(args.key)]: String(args.value) }; return undefined as T;
     case "list_backup_destinations": return backupDestinations as T;
@@ -267,7 +340,7 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
       return { costPerPieceMinor: each, batchCostMinor: each * quantity } as T;
     }
     case "get_preview_payload": return { extension: "", bytes: [], sourceAssetId: args.assetId } as PreviewPayload as T;
-    case "get_3mf_plate_thumbnail": return null as T;
+    case "get_3mf_plate_thumbnail": return new ArrayBuffer(0) as T;
     default: return undefined as T;
   }
 }

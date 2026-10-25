@@ -20,6 +20,12 @@ describe("language resolution", () => {
     expect(translate("Settings", "en")).toBe("Settings");
   });
 
+  it("localizes the first-run choices", () => {
+    expect(translate("Use my existing projects", "ca")).toBe("Fes servir els meus projectes");
+    expect(translate("Start a new Volum library", "es")).toBe("Crear una biblioteca nueva de Volum");
+    expect(translate("Finding your 3D projects…", "es")).toBe("Buscando tus proyectos 3D…");
+  });
+
   it("lets an explicit preference override the system language", () => {
     expect(resolveLanguagePreference("system", "ca-ES")).toBe("ca");
     expect(resolveLanguagePreference("system", "fr-FR")).toBe("en");

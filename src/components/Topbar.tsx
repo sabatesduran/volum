@@ -1,9 +1,10 @@
-import { Search, PanelLeft, X, SlidersHorizontal, Link2 } from "lucide-react";
+import { Search, PanelLeft, X, SlidersHorizontal, Link2, PackageOpen, Plus } from "lucide-react";
 import { useAppStore } from "../app/store";
 import { t } from "../lib/i18n";
+import { useShallow } from "zustand/react/shallow";
 
-export function Topbar({ onFilters, onImport }: { onFilters?: () => void; onImport?: () => void }) {
-  const { search, setSearch, toggleSidebar, formatFilter, availabilityFilter, tagFilter, dateFrom, dateTo } = useAppStore();
+export function Topbar({ onNewProject, onFilters, onImport, onProjectImport }: { onNewProject?: () => void; onFilters?: () => void; onImport?: () => void; onProjectImport?: () => void }) {
+  const { search, setSearch, toggleSidebar, formatFilter, availabilityFilter, tagFilter, dateFrom, dateTo } = useAppStore(useShallow((state) => ({ search: state.search, setSearch: state.setSearch, toggleSidebar: state.toggleSidebar, formatFilter: state.formatFilter, availabilityFilter: state.availabilityFilter, tagFilter: state.tagFilter, dateFrom: state.dateFrom, dateTo: state.dateTo })));
   const activeFilters = [formatFilter, availabilityFilter, tagFilter, dateFrom || dateTo].filter(Boolean).length;
   return (
     <header className="topbar">
@@ -19,7 +20,9 @@ export function Topbar({ onFilters, onImport }: { onFilters?: () => void; onImpo
         {search && <button onClick={() => setSearch("")} aria-label={t("Clear search")}><X size={15} /></button>}
         <kbd>⌘ K</kbd>
       </div>
+      <button className="button button--primary topbar__new-project" onClick={onNewProject}><Plus size={16} /><span>{t("New project")}</span></button>
       <button className="button button--quiet topbar__import" onClick={onImport}><Link2 size={16} /><span>{t("Import link")}</span></button>
+      <button className="button button--quiet topbar__import" onClick={onProjectImport}><PackageOpen size={16} /><span>{t("Import project")}</span></button>
       <button className={`button button--quiet topbar__filter ${activeFilters ? "is-active" : ""}`} onClick={onFilters}><SlidersHorizontal size={16} /><span>{t("Filter")}{activeFilters ? ` · ${activeFilters}` : ""}</span></button>
     </header>
   );

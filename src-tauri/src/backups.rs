@@ -21,11 +21,11 @@ use walkdir::WalkDir;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
 const BACKUP_FORMAT: &str = "volum-backup";
-const BACKUP_FORMAT_VERSION: u32 = 1;
+const BACKUP_FORMAT_VERSION: u32 = 2;
 const BACKUP_PREFIX: &str = "volum-backup-";
 const KEYRING_SERVICE: &str = "dev.didac.volum.backup";
-const MAX_RESTORE_ENTRIES: usize = 50_000;
-const MAX_RESTORE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const MAX_RESTORE_ENTRIES: usize = 100_000;
+const MAX_RESTORE_BYTES: u64 = 32 * 1024 * 1024 * 1024;
 const MAX_RESTORE_ARCHIVE_BYTES: u64 = MAX_RESTORE_BYTES + 64 * 1024 * 1024;
 const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 const SCHEDULE_RETRY_DELAY: ChronoDuration = ChronoDuration::hours(1);
@@ -260,6 +260,19 @@ pub async fn save_backup_destination(
         }
         if path.starts_with(&state.data_dir) {
             return Err("Choose a backup folder outside Volum’s app-data folder".into());
+        }
+        let managed_roots: Vec<String> = sqlx::query_scalar(
+            "SELECT path FROM library_roots WHERE root_kind = 'managed' AND status != 'removed'",
+        )
+        .fetch_all(&state.pool)
+        .await
+        .map_err(db_error)?;
+        if managed_roots
+            .iter()
+            .map(PathBuf::from)
+            .any(|managed| path.starts_with(managed))
+        {
+            return Err("Choose a backup folder outside the managed Volum library".into());
         }
         path.to_string_lossy().to_string()
     } else {
@@ -565,6 +578,7 @@ async fn create_backup_archive(
     destination: &Path,
     state: &AppState,
 ) -> CommandResult<BackupManifest> {
+    let _file_guard = state.file_operation_lock.lock().await;
     if let Some(parent) = destination.parent() {
         tokio::fs::create_dir_all(parent)
             .await
@@ -590,6 +604,12 @@ async fn create_backup_archive(
     };
     let destination = destination.to_path_buf();
     let media = state.data_dir.join("media");
+    let managed_root: Option<String> = sqlx::query_scalar("SELECT path FROM library_roots WHERE root_kind = 'managed' AND status != 'removed' ORDER BY created_at LIMIT 1")
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(db_error)?
+        ;
+    let managed_root = managed_root.map(PathBuf::from);
     let snapshot_for_cleanup = snapshot.clone();
     let result = tokio::task::spawn_blocking(move || {
         let mut sources = Vec::new();
@@ -609,15 +629,47 @@ async fn create_backup_archive(
                 sources.push(archive_source(entry.path(), &archive_path)?);
             }
         }
+        if let Some(managed_root) = managed_root.filter(|path| path.is_dir()) {
+            for entry in WalkDir::new(&managed_root)
+                .follow_links(false)
+                .into_iter()
+                .filter_entry(|entry| {
+                    entry.path() == managed_root
+                        || entry
+                            .path()
+                            .strip_prefix(&managed_root)
+                            .ok()
+                            .and_then(|relative| relative.components().next())
+                            .is_none_or(|component| component.as_os_str() != ".staging")
+                })
+            {
+                let entry = entry.map_err(|error| format!("Could not read the managed library: {error}"))?;
+                if entry.file_type().is_symlink() {
+                    return Err("The managed library contains a symbolic link, which cannot be backed up safely".into());
+                }
+                if !entry.file_type().is_file() {
+                    continue;
+                }
+                let relative = entry
+                    .path()
+                    .strip_prefix(&managed_root)
+                    .map_err(|error| error.to_string())?;
+                let archive_path = format!(
+                    "managed-library/{}",
+                    relative.to_string_lossy().replace('\\', "/")
+                );
+                sources.push(archive_source(entry.path(), &archive_path)?);
+            }
+        }
         if sources.len() + 2 > MAX_RESTORE_ENTRIES {
-            return Err("There are too many user-media files to create a restorable backup".into());
+            return Err("There are too many Volum files to create a restorable backup".into());
         }
         let source_bytes = sources
             .iter()
             .try_fold(0_u64, |total, source| total.checked_add(source.byte_size))
             .ok_or_else(|| "The backup source size is invalid".to_string())?;
         if source_bytes > MAX_RESTORE_BYTES {
-            return Err("Volum data and user media exceed the 2 GB backup limit".into());
+            return Err("Volum data and managed project files exceed the 32 GB backup limit".into());
         }
         let files = sources
             .iter()
@@ -1178,7 +1230,10 @@ fn validate_and_extract_backup(
         serde_json::from_slice(&bytes)
             .map_err(|error| format!("Could not read the backup manifest: {error}"))?
     };
-    if manifest.format != BACKUP_FORMAT || manifest.format_version != BACKUP_FORMAT_VERSION {
+    if manifest.format != BACKUP_FORMAT
+        || manifest.format_version == 0
+        || manifest.format_version > BACKUP_FORMAT_VERSION
+    {
         return Err("This backup format is not supported by this version of Volum".into());
     }
     let checksums: BTreeMap<String, String> = {
@@ -1304,7 +1359,10 @@ fn safe_backup_entry(name: &str) -> bool {
     let safe_components = path
         .components()
         .all(|component| matches!(component, Component::Normal(_)));
-    safe_components && (name == "database/volum.sqlite3" || name.starts_with("media/"))
+    safe_components
+        && (name == "database/volum.sqlite3"
+            || name.starts_with("media/")
+            || name.starts_with("managed-library/"))
 }
 
 async fn validate_staged_database(
@@ -1446,6 +1504,10 @@ pub fn apply_pending_restore(data_dir: &Path) -> CommandResult<()> {
     let old_media = data_dir.join("media.pre-restore");
     let media_new = data_dir.join("media.restore-new");
     let staged_media = staging.join("media");
+    let staged_managed = staging.join("managed-library");
+    let managed = data_dir.join("Managed Library");
+    let old_managed = data_dir.join("Managed Library.pre-restore");
+    let managed_new = data_dir.join("Managed Library.restore-new");
 
     let _ = std::fs::remove_file(&database_new);
     std::fs::copy(&staged_database, &database_new)
@@ -1458,6 +1520,11 @@ pub fn apply_pending_restore(data_dir: &Path) -> CommandResult<()> {
     let _ = std::fs::remove_dir_all(&media_new);
     copy_directory(&staged_media, &media_new)
         .map_err(|error| format!("Could not prepare restored Volum media: {error}"))?;
+    if staged_managed.is_dir() {
+        let _ = std::fs::remove_dir_all(&managed_new);
+        copy_directory(&staged_managed, &managed_new)
+            .map_err(|error| format!("Could not prepare the restored managed library: {error}"))?;
+    }
 
     let _ = std::fs::remove_file(data_dir.join("volum.sqlite3-wal"));
     let _ = std::fs::remove_file(data_dir.join("volum.sqlite3-shm"));
@@ -1472,30 +1539,180 @@ pub fn apply_pending_restore(data_dir: &Path) -> CommandResult<()> {
         }
         return Err(format!("Could not activate the restored database: {error}"));
     }
+    let mut media_preserved = false;
+    let mut managed_preserved = false;
     let _ = std::fs::remove_dir_all(&old_media);
     if media.exists() {
         if let Err(error) = std::fs::rename(&media, &old_media) {
-            let _ = std::fs::remove_file(&database);
-            if previous.exists() {
-                let _ = std::fs::rename(&previous, &database);
-            }
+            let rollback = rollback_activated_restore(
+                &database,
+                &previous,
+                &media,
+                &old_media,
+                false,
+                false,
+                &managed,
+                &old_managed,
+                false,
+                false,
+            );
             let _ = std::fs::remove_dir_all(&media_new);
-            return Err(format!("Could not preserve current Volum media: {error}"));
+            return Err(restore_error(
+                &format!("Could not preserve current Volum media: {error}"),
+                rollback,
+            ));
         }
+        media_preserved = true;
     }
     if let Err(error) = std::fs::rename(&media_new, &media) {
-        if old_media.exists() {
-            let _ = std::fs::rename(&old_media, &media);
+        let rollback = rollback_activated_restore(
+            &database,
+            &previous,
+            &media,
+            &old_media,
+            media_preserved,
+            false,
+            &managed,
+            &old_managed,
+            false,
+            false,
+        );
+        return Err(restore_error(
+            &format!("Could not restore Volum media: {error}"),
+            rollback,
+        ));
+    }
+    let media_activated = true;
+    if staged_managed.is_dir() {
+        let _ = std::fs::remove_dir_all(&old_managed);
+        if managed.exists() {
+            if let Err(error) = std::fs::rename(&managed, &old_managed) {
+                let rollback = rollback_activated_restore(
+                    &database,
+                    &previous,
+                    &media,
+                    &old_media,
+                    media_preserved,
+                    media_activated,
+                    &managed,
+                    &old_managed,
+                    false,
+                    false,
+                );
+                return Err(restore_error(
+                    &format!("Could not preserve the current restored managed library: {error}"),
+                    rollback,
+                ));
+            }
+            managed_preserved = true;
         }
-        let _ = std::fs::remove_file(&database);
-        if previous.exists() {
-            let _ = std::fs::rename(&previous, &database);
+        if let Err(error) = std::fs::rename(&managed_new, &managed) {
+            let rollback = rollback_activated_restore(
+                &database,
+                &previous,
+                &media,
+                &old_media,
+                media_preserved,
+                media_activated,
+                &managed,
+                &old_managed,
+                managed_preserved,
+                false,
+            );
+            return Err(restore_error(
+                &format!("Could not restore managed project files: {error}"),
+                rollback,
+            ));
         }
-        return Err(format!("Could not restore Volum media: {error}"));
+        let managed_activated = true;
+        if let Err(error) = std::fs::write(
+            data_dir.join("managed-restore-pending"),
+            managed.to_string_lossy().as_bytes(),
+        ) {
+            let _ = std::fs::remove_file(data_dir.join("managed-restore-pending"));
+            let rollback = rollback_activated_restore(
+                &database,
+                &previous,
+                &media,
+                &old_media,
+                media_preserved,
+                media_activated,
+                &managed,
+                &old_managed,
+                managed_preserved,
+                managed_activated,
+            );
+            return Err(restore_error(
+                &format!("Could not finish the managed-library restore: {error}"),
+                rollback,
+            ));
+        }
     }
     std::fs::remove_file(marker_path).map_err(|error| error.to_string())?;
     let _ = std::fs::remove_dir_all(staging);
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn rollback_activated_restore(
+    database: &Path,
+    previous: &Path,
+    media: &Path,
+    old_media: &Path,
+    media_preserved: bool,
+    media_activated: bool,
+    managed: &Path,
+    old_managed: &Path,
+    managed_preserved: bool,
+    managed_activated: bool,
+) -> Vec<String> {
+    let mut errors = Vec::new();
+    if managed_activated && managed.exists() {
+        if let Err(error) = std::fs::remove_dir_all(managed) {
+            errors.push(format!(
+                "could not remove restored managed library: {error}"
+            ));
+        }
+    }
+    if managed_preserved && old_managed.exists() && !managed.exists() {
+        if let Err(error) = std::fs::rename(old_managed, managed) {
+            errors.push(format!(
+                "could not restore previous managed library: {error}"
+            ));
+        }
+    }
+    if media_activated && media.exists() {
+        if let Err(error) = std::fs::remove_dir_all(media) {
+            errors.push(format!("could not remove restored media: {error}"));
+        }
+    }
+    if media_preserved && old_media.exists() && !media.exists() {
+        if let Err(error) = std::fs::rename(old_media, media) {
+            errors.push(format!("could not restore previous media: {error}"));
+        }
+    }
+    if database.exists() {
+        if let Err(error) = std::fs::remove_file(database) {
+            errors.push(format!("could not remove restored database: {error}"));
+        }
+    }
+    if previous.exists() && !database.exists() {
+        if let Err(error) = std::fs::rename(previous, database) {
+            errors.push(format!("could not restore previous database: {error}"));
+        }
+    }
+    errors
+}
+
+fn restore_error(message: &str, rollback_errors: Vec<String>) -> String {
+    if rollback_errors.is_empty() {
+        message.to_string()
+    } else {
+        format!(
+            "{message}. Restore rollback needs attention: {}",
+            rollback_errors.join("; ")
+        )
+    }
 }
 
 pub fn cleanup_stale_work(data_dir: &Path) {
@@ -1504,6 +1721,7 @@ pub fn cleanup_stale_work(data_dir: &Path) {
         "restore-downloads",
         "restore-staging",
         "media.restore-new",
+        "Managed Library.restore-new",
     ] {
         let _ = std::fs::remove_dir_all(data_dir.join(directory));
     }
@@ -1819,12 +2037,27 @@ mod tests {
     #[tokio::test]
     async fn creates_and_validates_a_portable_backup() {
         let data = tempfile::tempdir().unwrap();
+        let managed = tempfile::tempdir().unwrap();
         let state = AppState::initialize(data.path()).await.unwrap();
         sqlx::query("INSERT INTO user_overrides (id, entity_type, entity_id, key, value_json, updated_at) VALUES ('preference', 'app', 'global', 'ui_theme', '\"dark\"', ?)")
             .bind(now()).execute(&state.pool).await.unwrap();
         let media = data.path().join("media/covers");
         std::fs::create_dir_all(&media).unwrap();
         std::fs::write(media.join("cover.png"), b"user-owned-media").unwrap();
+        std::fs::create_dir_all(managed.path().join("Projects/Robot/.volum")).unwrap();
+        std::fs::write(
+            managed.path().join("Projects/Robot/arm.stl"),
+            b"managed-model",
+        )
+        .unwrap();
+        sqlx::query("INSERT INTO library_roots (id, path, display_name, status, root_kind, created_at, updated_at) VALUES (?, ?, 'Managed', 'online', 'managed', ?, ?)")
+            .bind(Uuid::new_v4().to_string())
+            .bind(managed.path().to_string_lossy().to_string())
+            .bind(now())
+            .bind(now())
+            .execute(&state.pool)
+            .await
+            .unwrap();
         let archive = data.path().join("portable.zip");
         let manifest = create_backup_archive(&archive, &state).await.unwrap();
         assert_eq!(manifest.format, BACKUP_FORMAT);
@@ -1836,6 +2069,10 @@ mod tests {
             .files
             .iter()
             .any(|file| file.path == "media/covers/cover.png"));
+        assert!(manifest
+            .files
+            .iter()
+            .any(|file| file.path == "managed-library/Projects/Robot/arm.stl"));
 
         let extracted = data.path().join("extracted");
         let (validated, _) = validate_and_extract_backup(&archive, &extracted).unwrap();
@@ -1843,6 +2080,10 @@ mod tests {
         assert_eq!(
             std::fs::read(extracted.join("media/covers/cover.png")).unwrap(),
             b"user-owned-media"
+        );
+        assert_eq!(
+            std::fs::read(extracted.join("managed-library/Projects/Robot/arm.stl")).unwrap(),
+            b"managed-model"
         );
         let options = sqlx::sqlite::SqliteConnectOptions::from_str(
             extracted
@@ -1940,12 +2181,27 @@ mod tests {
     #[tokio::test]
     async fn applies_a_prepared_restore_and_replaces_user_media() {
         let root = tempfile::tempdir().unwrap();
+        let managed = tempfile::tempdir().unwrap();
         let data = root.path().join("app-data");
         let state = AppState::initialize(&data).await.unwrap();
         sqlx::query("INSERT INTO user_overrides (id, entity_type, entity_id, key, value_json, updated_at) VALUES ('preference', 'app', 'global', 'ui_theme', '\"dark\"', ?)")
             .bind(now()).execute(&state.pool).await.unwrap();
         std::fs::create_dir_all(data.join("media/covers")).unwrap();
         std::fs::write(data.join("media/covers/cover.png"), b"original").unwrap();
+        std::fs::create_dir_all(managed.path().join("Projects/Robot")).unwrap();
+        std::fs::write(
+            managed.path().join("Projects/Robot/arm.stl"),
+            b"managed-original",
+        )
+        .unwrap();
+        sqlx::query("INSERT INTO library_roots (id, path, display_name, status, root_kind, created_at, updated_at) VALUES (?, ?, 'Managed', 'online', 'managed', ?, ?)")
+            .bind(Uuid::new_v4().to_string())
+            .bind(managed.path().to_string_lossy().to_string())
+            .bind(now())
+            .bind(now())
+            .execute(&state.pool)
+            .await
+            .unwrap();
         let archive = root.path().join("restore.zip");
         create_backup_archive(&archive, &state).await.unwrap();
 
@@ -1980,7 +2236,65 @@ mod tests {
             std::fs::read(data.join("media/covers/cover.png")).unwrap(),
             b"original"
         );
+        assert_eq!(
+            std::fs::read(data.join("Managed Library/Projects/Robot/arm.stl")).unwrap(),
+            b"managed-original"
+        );
+        let restored_managed_path: String =
+            sqlx::query_scalar("SELECT path FROM library_roots WHERE root_kind = 'managed'")
+                .fetch_one(&restored.pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            restored_managed_path,
+            data.join("Managed Library").to_string_lossy()
+        );
         assert!(data.join("volum.sqlite3.pre-restore.bak").is_file());
         assert!(!data.join("restore-pending.json").exists());
+    }
+
+    #[test]
+    fn restore_rollback_reinstates_database_media_and_managed_files() {
+        let root = tempfile::tempdir().unwrap();
+        let database = root.path().join("volum.sqlite3");
+        let previous = root.path().join("volum.sqlite3.pre-restore.bak");
+        let media = root.path().join("media");
+        let old_media = root.path().join("media.pre-restore");
+        let managed = root.path().join("Managed Library");
+        let old_managed = root.path().join("Managed Library.pre-restore");
+        std::fs::write(&database, b"restored-db").unwrap();
+        std::fs::write(&previous, b"original-db").unwrap();
+        std::fs::create_dir_all(&media).unwrap();
+        std::fs::write(media.join("cover.png"), b"restored-media").unwrap();
+        std::fs::create_dir_all(&old_media).unwrap();
+        std::fs::write(old_media.join("cover.png"), b"original-media").unwrap();
+        std::fs::create_dir_all(managed.join("Projects")).unwrap();
+        std::fs::write(managed.join("Projects/restored.stl"), b"restored-model").unwrap();
+        std::fs::create_dir_all(old_managed.join("Projects")).unwrap();
+        std::fs::write(old_managed.join("Projects/original.stl"), b"original-model").unwrap();
+
+        let errors = rollback_activated_restore(
+            &database,
+            &previous,
+            &media,
+            &old_media,
+            true,
+            true,
+            &managed,
+            &old_managed,
+            true,
+            true,
+        );
+
+        assert!(errors.is_empty());
+        assert_eq!(std::fs::read(database).unwrap(), b"original-db");
+        assert_eq!(
+            std::fs::read(media.join("cover.png")).unwrap(),
+            b"original-media"
+        );
+        assert_eq!(
+            std::fs::read(managed.join("Projects/original.stl")).unwrap(),
+            b"original-model"
+        );
     }
 }

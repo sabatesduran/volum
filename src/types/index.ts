@@ -1,4 +1,4 @@
-export type ViewId = "library" | "recent" | "favorites" | "duplicates" | "web" | "folders" | "collections" | "saved" | "settings";
+export type ViewId = "library" | "recent" | "favorites" | "duplicates" | "web" | "folders" | "collections" | "saved" | "trash" | "settings";
 export type Density = "comfortable" | "compact" | "large";
 export type Theme = "system" | "light" | "dark";
 export type LanguagePreference = "system" | "en" | "ca" | "es";
@@ -10,6 +10,7 @@ export interface LibraryRoot {
   status: "online" | "offline" | "scanning" | "paused" | "error";
   lastScanAt?: string;
   modelCount: number;
+  rootKind: "linked" | "managed";
 }
 
 export interface Folder {
@@ -83,7 +84,128 @@ export interface ModelSummary {
   missing: boolean;
   assetCount: number;
   bundleMode: "automatic" | "manual";
+  storageMode: "linked" | "managed";
+  coverPhotoId?: string;
   dimensionsMm?: [number, number, number];
+}
+
+export interface ProjectPhoto {
+  id: string;
+  modelId: string;
+  originalFilename: string;
+  mimeType: string;
+  byteSize: number;
+  width: number;
+  height: number;
+  caption: string;
+  sortOrder: number;
+  isCover: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type CustomFieldType = "text" | "number" | "date" | "boolean" | "url" | "select";
+
+export interface CustomFieldDefinition {
+  id: string;
+  name: string;
+  fieldType: CustomFieldType;
+  unit?: string;
+  options: string[];
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectCustomValue {
+  fieldId: string;
+  value: string | number | boolean;
+  updatedAt: string;
+}
+
+export interface ProjectBomItem {
+  id: string;
+  modelId: string;
+  kind: "printed" | "purchased";
+  linkedAssetId?: string;
+  name: string;
+  quantity: number;
+  unit: string;
+  url?: string;
+  notes: string;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AssemblyStep {
+  id: string;
+  modelId: string;
+  title: string;
+  instructions: string;
+  sortOrder: number;
+  bomItemIds: string[];
+  photoIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectDocumentation {
+  photos: ProjectPhoto[];
+  customValues: ProjectCustomValue[];
+  bomItems: ProjectBomItem[];
+  assemblySteps: AssemblyStep[];
+}
+
+export interface ProjectPackagePreview {
+  formatVersion: number;
+  appVersion: string;
+  packageProjectId: string;
+  packageExportId: string;
+  projectName: string;
+  exportedAt: string;
+  fileCount: number;
+  photoCount: number;
+  bomItemCount: number;
+  assemblyStepCount: number;
+  totalBytes: number;
+  alreadyImported: boolean;
+}
+
+export interface ManagedLibraryStatus {
+  root?: LibraryRoot;
+  projectsPath?: string;
+  inboxPath?: string;
+  trashPath?: string;
+}
+
+export interface LibraryAssetCandidate {
+  id: string;
+  projectId: string;
+  projectName: string;
+  filename: string;
+  extension: string;
+  byteSize: number;
+  missing: boolean;
+  storageMode: "linked" | "managed";
+  rootName: string;
+  relativePath: string;
+}
+
+export interface ConsolidationPreview {
+  projectId: string;
+  projectName: string;
+  fileCount: number;
+  totalBytes: number;
+  sourceFolders: string[];
+  managedFolderName: string;
+  alreadyManaged: boolean;
+}
+
+export interface InboxImportResult {
+  projectIds: string[];
+  skipped: number;
+  errors: string[];
 }
 
 export interface ModelDetail extends ModelSummary {
@@ -130,13 +252,14 @@ export interface SmartCollectionRule {
   availability?: "available" | "offline";
 }
 
-export type QueryRuleField = "text" | "folder" | "library" | "tag" | "format" | "availability" | "favorite" | "webSource" | "parseStatus" | "duplicate" | "added" | "modified" | "opened" | "fileCount" | "width" | "depth" | "height";
+export type QueryRuleField = "text" | "folder" | "library" | "tag" | "format" | "availability" | "favorite" | "webSource" | "parseStatus" | "duplicate" | "added" | "modified" | "opened" | "fileCount" | "width" | "depth" | "height" | "custom";
 export type QueryRuleOperator = "is" | "isNot" | "before" | "after" | "on" | "greaterThan" | "lessThan" | "atLeast" | "atMost";
 
 export interface QueryRule {
   field: QueryRuleField;
   operator: QueryRuleOperator;
   value: string | number | boolean;
+  customFieldId?: string;
 }
 
 export interface SavedSearch {
@@ -331,7 +454,9 @@ export interface ModelQuery {
   hasWebSource?: boolean;
   minAssetCount?: number;
   maxAssetCount?: number;
+  trashed?: boolean;
   sort?: ModelSort;
+  cursor?: string;
   offset?: number;
   limit?: number;
 }
@@ -340,6 +465,7 @@ export interface Page<T> {
   items: T[];
   total: number;
   nextOffset?: number;
+  nextCursor?: string;
 }
 
 export interface PreviewPayload {

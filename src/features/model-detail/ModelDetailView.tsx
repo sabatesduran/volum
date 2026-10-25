@@ -2,16 +2,20 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft, Box, Check, ChevronDown, Clock3, Copy, ExternalLink, FileBox, FolderOpen, Globe2,
-  GitBranch, Heart, Layers3, LoaderCircle, Plus, Printer, RotateCcw, Save, Scale, ScanSearch, Scissors, Star, Tags, TriangleAlert, X
+  GitBranch, Heart, Layers3, LoaderCircle, Package, Pencil, Plus, Printer, RotateCcw, Save, Scale, ScanSearch, Scissors, Star, Tags, Trash2, TriangleAlert, X
 } from "lucide-react";
+import { save as chooseSavePath } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "../../app/store";
 import { ModelViewer, type ModelView, type ViewerGeometry } from "../../components/ModelViewer";
-import { api } from "../../lib/tauri/api";
+import { api, isTauri } from "../../lib/tauri/api";
 import { formatBytes, formatCurrency, formatDate, formatDimensions, formatDuration, formatNumber, titleCase } from "../../lib/format";
 import { enabledSlicers, parseSlicerConfig } from "../../lib/slicers";
 import { SlicerIcon } from "../../components/SlicerIcon";
 import type { CostEstimate, Material, SlicerApplication, ThreeMfMetadata, ThreeMfPlate } from "../../types";
 import { intlLocale, plural, t } from "../../lib/i18n";
+import { ProjectDocumentationSections } from "./ProjectDocumentationSections";
+import { AddProjectFilesDialog, ConsolidateProjectDialog } from "../../components/ProjectStorageDialogs";
+import { cachedObjectUrl } from "../../lib/mediaCache";
 
 function OpenInSlicer({ assetId, disabled, applications, defaultId }: { assetId?: string; disabled: boolean; applications: SlicerApplication[]; defaultId?: string }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -141,11 +145,12 @@ function PlateThumbnail({ assetId, plate }: { assetId: string; plate: ThreeMfPla
   const { data } = useQuery({ queryKey: ["plate-thumbnail", assetId, plate.index], queryFn: () => api.plateThumbnail(assetId, plate.index), enabled: plate.thumbnail });
   const [source, setSource] = useState<string>();
   useEffect(() => {
-    if (!data?.length) { setSource(undefined); return; }
-    const url = URL.createObjectURL(new Blob([new Uint8Array(data)], { type: "image/png" }));
-    setSource(url);
-    return () => URL.revokeObjectURL(url);
-  }, [data]);
+    if (!data?.byteLength) { setSource(undefined); return; }
+    let active = true;
+    void cachedObjectUrl(`plate:${assetId}:${plate.index}`, "image/png", async () => data)
+      .then((url) => { if (active) setSource(url); });
+    return () => { active = false; };
+  }, [assetId, data, plate.index]);
   return <div className="plate-thumbnail">{source ? <img src={source} alt={t("Plate {index}", { index: plate.index })} /> : <span><Box size={18} />{t("Plate {index}", { index: plate.index })}</span>}</div>;
 }
 
@@ -157,12 +162,18 @@ function ThreeMfInspector({ assetId, metadata, selectedPlateIndex, onSelectPlate
 export function ModelDetailView({ modelId }: { modelId: string }) {
   const queryClient = useQueryClient();
   const selectModel = useAppStore((state) => state.selectModel);
+  const [loadSecondary, setLoadSecondary] = useState(false);
+  useEffect(() => {
+    setLoadSecondary(false);
+    const timer = window.setTimeout(() => setLoadSecondary(true), 200);
+    return () => window.clearTimeout(timer);
+  }, [modelId]);
   const { data: model, isLoading, error } = useQuery({ queryKey: ["model", modelId], queryFn: () => api.model(modelId) });
-  const { data: related = [] } = useQuery({ queryKey: ["related-models", modelId], queryFn: () => api.relatedModels(modelId) });
+  const { data: related = [] } = useQuery({ queryKey: ["related-models", modelId], queryFn: () => api.relatedModels(modelId), enabled: loadSecondary });
   const { data: preferences = {} } = useQuery({ queryKey: ["preferences"], queryFn: api.preferences });
   const slicerConfig = useMemo(() => parseSlicerConfig(preferences), [preferences]);
   const customSlicerKey = slicerConfig.customApps.map((app) => `${app.id}:${app.path}`).join("|");
-  const { data: slicerApplications = [] } = useQuery({ queryKey: ["slicers", customSlicerKey], queryFn: () => api.slicers(slicerConfig.customApps) });
+  const { data: slicerApplications = [] } = useQuery({ queryKey: ["slicers", customSlicerKey], queryFn: () => api.slicers(slicerConfig.customApps), staleTime: Infinity });
   const availableSlicers = useMemo(() => enabledSlicers(slicerConfig, slicerApplications), [slicerApplications, slicerConfig]);
   const [activeAssetId, setActiveAssetId] = useState<string>();
   const [resetSignal, setResetSignal] = useState(0);
@@ -172,6 +183,9 @@ export function ModelDetailView({ modelId }: { modelId: string }) {
   const [previewError, setPreviewError] = useState("");
   const [notes, setNotes] = useState("");
   const [splitAssetIds, setSplitAssetIds] = useState<string[]>([]);
+  const [exporting, setExporting] = useState(false);
+  const [addingFiles, setAddingFiles] = useState(false);
+  const [consolidating, setConsolidating] = useState(false);
   useEffect(() => {
     if (model) {
       setActiveAssetId(model.primaryAssetId ?? model.assets[0]?.id);
@@ -199,6 +213,30 @@ export function ModelDetailView({ modelId }: { modelId: string }) {
     await refreshProject();
     selectModel(newId);
   };
+  const exportPackage = async () => {
+    if (!model || !isTauri()) return;
+    const filename = `${model.displayName.replace(/[\\/:*?"<>|]/g, "_")}.volumproject`;
+    const path = await chooseSavePath({ defaultPath: filename, filters: [{ name: t("Volum project package"), extensions: ["volumproject"] }] });
+    if (!path) return;
+    setExporting(true);
+    try {
+      await api.exportProjectPackage(model.id, path.endsWith(".volumproject") ? path : `${path}.volumproject`);
+    } catch (reason) {
+      window.alert(reason instanceof Error ? reason.message : String(reason));
+    } finally { setExporting(false); }
+  };
+  const renameProject = async () => {
+    if (!model) return;
+    const name = window.prompt(t(model.storageMode === "managed" ? "Rename project and managed folder" : "Rename project"), model.displayName);
+    if (!name?.trim() || name.trim() === model.displayName) return;
+    try { await api.renameProject(model.id, name.trim()); await refreshProject(); }
+    catch (reason) { window.alert(reason instanceof Error ? reason.message : String(reason)); }
+  };
+  const trashProject = async () => {
+    if (!model || !window.confirm(t(model.storageMode === "managed" ? "Move this project and its folder to Volum Trash?" : "Move this project to Volum Trash? Its linked files will stay where they are."))) return;
+    try { await api.trashProject(model.id); await refreshProject(); selectModel(); }
+    catch (reason) { window.alert(reason instanceof Error ? reason.message : String(reason)); }
+  };
 
   if (isLoading) return <div className="detail-loading"><LoaderCircle className="spin" /><span>{t("Preparing project…")}</span></div>;
   if (error || !model) return <div className="empty-state"><TriangleAlert /><h2>{t("Couldn’t open this project")}</h2><p>{error instanceof Error ? error.message : t("The project may have moved.")}</p><button className="button" onClick={() => selectModel()}>{t("Back to library")}</button></div>;
@@ -214,7 +252,7 @@ export function ModelDetailView({ modelId }: { modelId: string }) {
           </div>
         </div>
         <div className="viewer-wrap">
-          <ModelViewer assetId={activeAsset?.id} extension={activeAsset?.extension ?? model.primaryExtension} modelId={model.id} plateIndex={activePlateIndex} resetSignal={resetSignal} view={cameraView} onError={setPreviewError} onGeometry={setViewerGeometry} />
+          <ModelViewer assetId={activeAsset?.id} extension={activeAsset?.extension ?? model.primaryExtension} modelId={model.id} plateIndex={activePlateIndex} revision={activeAsset?.modifiedAt} resetSignal={resetSignal} view={cameraView} onError={setPreviewError} onGeometry={setViewerGeometry} />
           {previewError && <div className="viewer-error"><TriangleAlert size={15} />{previewError}</div>}
           {viewerPlates.length > 1 && <div className="viewer-plate-controls" role="group" aria-label={t("3MF plate")}><button type="button" className={activePlateIndex == null ? "is-active" : ""} onClick={() => setActivePlateIndex(undefined)}>{t("All plates")}</button>{viewerPlates.map((plate) => <button type="button" key={plate.index} className={activePlateIndex === plate.index ? "is-active" : ""} onClick={() => setActivePlateIndex(plate.index)}>{plate.name || t("Plate {index}", { index: plate.index })}</button>)}</div>}
           <div className="viewer-view-controls" role="group" aria-label={t("Model view")}>{(["iso", "front", "side", "top"] as ModelView[]).map((view) => <button type="button" key={view} className={cameraView === view ? "is-active" : ""} onClick={() => setCameraView(view)}>{t(view === "iso" ? "Isometric" : view === "front" ? "Front" : view === "side" ? "Side" : "Top")}</button>)}</div>
@@ -224,13 +262,17 @@ export function ModelDetailView({ modelId }: { modelId: string }) {
       </section>
       <aside className="model-detail__inspector">
         <header className="inspector-header">
-          <div className="eyebrow">{t("{format} project · {count} files", { format: model.primaryExtension.toUpperCase(), count: model.assetCount })}</div>
-          <h1>{model.displayName}</h1>
+           <div className="eyebrow">{model.assetCount ? t("{format} project · {count} files", { format: model.primaryExtension.toUpperCase(), count: model.assetCount }) : t("Empty project")}</div>
+           <div className="inspector-title"><h1>{model.displayName}</h1><button className="icon-button icon-button--tiny" onClick={() => void renameProject()} aria-label={t("Rename project")} title={t("Rename project")}><Pencil size={14} /></button></div>
           <button className="breadcrumb-button" onClick={() => { useAppStore.getState().selectFolder(model.folderId); }}><FolderOpen size={14} />{model.rootName} / {model.relativeFolder}</button>
         </header>
         <div className="primary-actions">
           <OpenInSlicer assetId={activeAsset?.id} disabled={!activeAsset || activeAsset.missing} applications={availableSlicers} defaultId={slicerConfig.defaultId} />
-          <button className="button button--quiet" disabled={!activeAsset || activeAsset.missing} onClick={() => activeAsset && api.revealAsset(activeAsset.id)}><FolderOpen size={16} /> {t("Reveal")}</button>
+           <button className="button button--quiet" disabled={!activeAsset || activeAsset.missing} onClick={() => activeAsset && api.revealAsset(activeAsset.id)}><FolderOpen size={16} /> {t("Reveal")}</button>
+           <button className="button button--quiet" onClick={() => setAddingFiles(true)}><Plus size={16} /> {t("Add files")}</button>
+           {model.storageMode === "linked" && <button className="button button--quiet" onClick={() => setConsolidating(true)}><FolderOpen size={16} /> {t("Organize in Volum")}</button>}
+           <button className="button button--quiet" disabled={exporting || !isTauri()} onClick={() => void exportPackage()}><Package size={16} /> {t(exporting ? "Exporting…" : "Export package")}</button>
+           <button className="button button--quiet button--danger" onClick={() => void trashProject()}><Trash2 size={16} /> {t("Trash")}</button>
         </div>
         <div className="inspector-scroll">
           <DetailSection title={t("Details")} icon={<Scale size={16} />}>
@@ -240,9 +282,10 @@ export function ModelDetailView({ modelId }: { modelId: string }) {
           {activeAsset?.metadata.threeMf && <DetailSection title={t("3MF plates & profile · {count}", { count: activeAsset.metadata.threeMf.plates?.length ?? 0 })} icon={<Printer size={16} />}><ThreeMfInspector assetId={activeAsset.id} metadata={activeAsset.metadata.threeMf} selectedPlateIndex={activePlateIndex} onSelectPlate={setActivePlateIndex} onShowAll={() => setActivePlateIndex(undefined)} /></DetailSection>}
           <DetailSection title={t("Project files · {count}", { count: model.assets.length })} icon={<Layers3 size={16} />}>
             <p className="quiet-copy">{t("Keep printable files, source geometry, plates, and versions together in one project.")}</p>
-            <div className="asset-list asset-list--project">{model.assets.map((asset) => <div key={asset.id} className={asset.id === activeAsset?.id ? "is-active" : ""}><label className="asset-select"><input type="checkbox" checked={splitAssetIds.includes(asset.id)} onChange={(event) => setSplitAssetIds((current) => event.target.checked ? [...current, asset.id] : current.filter((id) => id !== asset.id))} aria-label={t("Select {filename}", { filename: asset.filename })} /></label><button className="asset-list__main" onClick={() => setActiveAssetId(asset.id)}><span className="file-icon">{asset.extension.toUpperCase()}</span><span><strong>{asset.filename}</strong><small>{formatBytes(asset.byteSize)} · {t(titleCase(asset.role))} · {t(titleCase(asset.parseStatus))}</small></span></button><button className={`icon-button icon-button--tiny ${asset.id === model.primaryAssetId ? "is-favorite" : ""}`} disabled={asset.id === model.primaryAssetId || asset.missing} title={t(asset.id === model.primaryAssetId ? "Primary preview" : asset.missing ? "File unavailable" : "Use as primary preview")} onClick={async () => { await api.setProjectPrimary(model.id, asset.id); await refreshProject(); }}><Star size={13} fill={asset.id === model.primaryAssetId ? "currentColor" : "none"} /></button></div>)}</div>
-            {splitAssetIds.length > 0 && splitAssetIds.length < model.assets.length && <button className="button button--quiet button--full" onClick={() => void splitFiles()}><Scissors size={14} /> {t("Split selected files into a new project")}</button>}
+             <div className="asset-list asset-list--project">{model.assets.map((asset) => <div key={asset.id} className={asset.id === activeAsset?.id ? "is-active" : ""}>{model.storageMode === "linked" ? <label className="asset-select"><input type="checkbox" checked={splitAssetIds.includes(asset.id)} onChange={(event) => setSplitAssetIds((current) => event.target.checked ? [...current, asset.id] : current.filter((id) => id !== asset.id))} aria-label={t("Select {filename}", { filename: asset.filename })} /></label> : <span className="asset-select-spacer" />}<button className="asset-list__main" onClick={() => setActiveAssetId(asset.id)}><span className="file-icon">{asset.extension.toUpperCase()}</span><span><strong>{asset.filename}</strong><small>{formatBytes(asset.byteSize)} · {t(titleCase(asset.role))} · {t(titleCase(asset.parseStatus))}</small></span></button><button className="icon-button icon-button--tiny" title={t("Rename file")} aria-label={t("Rename {filename}", { filename: asset.filename })} onClick={async () => { const name = window.prompt(t("Rename file (extension is protected)"), asset.filename); if (!name?.trim() || name.trim() === asset.filename) return; try { await api.renameProjectFile(asset.id, name.trim()); await refreshProject(); } catch (reason) { window.alert(reason instanceof Error ? reason.message : String(reason)); } }}><Pencil size={13} /></button><button className={`icon-button icon-button--tiny ${asset.id === model.primaryAssetId ? "is-favorite" : ""}`} disabled={asset.id === model.primaryAssetId || asset.missing} title={t(asset.id === model.primaryAssetId ? "Primary preview" : asset.missing ? "File unavailable" : "Use as primary preview")} onClick={async () => { await api.setProjectPrimary(model.id, asset.id); await refreshProject(); }}><Star size={13} fill={asset.id === model.primaryAssetId ? "currentColor" : "none"} /></button></div>)}</div>
+             {model.storageMode === "linked" && splitAssetIds.length > 0 && splitAssetIds.length < model.assets.length && <button className="button button--quiet button--full" onClick={() => void splitFiles()}><Scissors size={14} /> {t("Split selected files into a new project")}</button>}
           </DetailSection>
+          <ProjectDocumentationSections modelId={model.id} assets={model.assets} />
           <DetailSection title={`${t("Tags")}${model.tags.length ? ` · ${model.tags.length}` : ""}`} icon={<Tags size={16} />}><TagEditor modelId={model.id} selected={model.tags} /></DetailSection>
           <DetailSection title={t("Collections")} icon={<Box size={16} />}><CollectionPicker modelId={model.id} selected={model.collectionIds} /></DetailSection>
           {related.length > 0 && <DetailSection title={t("Copies & versions · {count}", { count: related.length })} icon={<GitBranch size={16} />}><div className="related-models">{related.map((item) => <div className="related-models__row" key={item.id}><button onClick={() => selectModel(item.id)}><span className={`related-models__icon is-${item.relationship}`}>{item.relationship === "duplicate" ? <Copy size={14} /> : item.relationship === "geometry" ? <ScanSearch size={14} /> : <GitBranch size={14} />}</span><span><strong>{item.displayName}</strong><small>{t(item.relationship === "duplicate" ? "Exact duplicate" : item.relationship === "geometry" ? "Same geometry" : "Possible version")} · {item.relativeFolder || t("Library root")}</small></span><span className="file-pill">{item.primaryExtension.toUpperCase()}</span></button><button className="icon-button icon-button--tiny" title={t("Add to this project")} aria-label={t("Add {name} to this project", { name: item.displayName })} onClick={async () => { if (!window.confirm(t("Bundle this project and transfer its organization metadata?"))) return; await api.mergeProjects(model.id, [item.id]); await refreshProject(); }}><Layers3 size={14} /></button></div>)}</div></DetailSection>}
@@ -252,7 +295,9 @@ export function ModelDetailView({ modelId }: { modelId: string }) {
             <button className="button button--quiet button--full" disabled={notes === model.notes} onClick={async () => { await api.saveNotes(model.id, notes); queryClient.invalidateQueries({ queryKey: ["model", model.id] }); }}><Save size={15} /> {t("Save notes")}</button>
           </DetailSection>
         </div>
-      </aside>
+       </aside>
+      {addingFiles && <AddProjectFilesDialog model={model} onClose={() => setAddingFiles(false)} onComplete={refreshProject} />}
+      {consolidating && <ConsolidateProjectDialog model={model} onClose={() => setConsolidating(false)} onComplete={refreshProject} />}
     </div>
   );
 }

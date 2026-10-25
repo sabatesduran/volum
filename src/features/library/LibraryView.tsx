@@ -1,14 +1,15 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, Check, ChevronDown, FolderPlus, Grid2X2, Pencil, Plus, Rows3, ScanSearch, Sparkles, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowRight, Check, ChevronDown, FolderPlus, Grid2X2, HardDrive, LoaderCircle, Pencil, Plus, Rows3, ScanSearch, Sparkles, Trash2, TriangleAlert } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "../../app/store";
 import { ModelGrid } from "../../components/ModelGrid";
 import { DuplicateStacks } from "../../components/DuplicateStacks";
 import { SelectionBar } from "../../components/SelectionBar";
 import { api, isTauri } from "../../lib/tauri/api";
-import type { Density, ModelQuery, ModelSort } from "../../types";
+import type { Density, LibraryRoot, ModelQuery, ModelSort } from "../../types";
 import { plural, t } from "../../lib/i18n";
+import { useShallow } from "zustand/react/shallow";
 
 const sortOptions: Array<[ModelSort, string]> = [
   ["modified", "Recently modified"],
@@ -19,6 +20,15 @@ const sortOptions: Array<[ModelSort, string]> = [
 
 function sortLabel(sort: ModelSort) {
   return t(sortOptions.find(([value]) => value === sort)?.[1] ?? "Recently modified");
+}
+
+function useDebouncedValue<T>(value: T, delay: number) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(value), delay);
+    return () => window.clearTimeout(timer);
+  }, [delay, value]);
+  return debounced;
 }
 
 function SortControl({ value, onChange }: { value: ModelSort; onChange: (value: ModelSort) => void }) {
@@ -36,15 +46,27 @@ function SortControl({ value, onChange }: { value: ModelSort; onChange: (value: 
 }
 
 function DensityControl() {
-  const { density, setDensity } = useAppStore();
+  const { density, setDensity } = useAppStore(useShallow((state) => ({ density: state.density, setDensity: state.setDensity })));
   const choices: Array<[Density, React.ReactNode, string]> = [["compact", <Rows3 size={15} />, "Compact"], ["comfortable", <Grid2X2 size={15} />, "Comfortable"], ["large", <ScanSearch size={16} />, "Large preview"]];
   return <div className="segmented density-control" aria-label={t("Grid density")}>{choices.map(([value, icon, label]) => <button key={value} className={density === value ? "is-active" : ""} onClick={() => setDensity(value)} title={t(label)}>{icon}</button>)}</div>;
 }
 
-export function LibraryView({ onNewCollection }: { onNewCollection: () => void }) {
+export function FirstLibraryState({ roots, addingFolder, error, onAddFolder, onNewProject }: { roots: LibraryRoot[]; addingFolder: boolean; error: string; onAddFolder: () => void; onNewProject: () => void }) {
+  const linked = roots.filter((root) => root.rootKind === "linked");
+  const scanFailed = linked.some((root) => root.status === "error");
+  const scanning = linked.some((root) => root.status === "scanning" || root.status === "paused" || !root.lastScanAt);
+  if (!linked.length) return <div className="empty-state empty-state--first-use"><span className="empty-state__icon"><HardDrive size={24} /></span><h2>{t("Your Volum library is ready")}</h2><p>{t("Create a new project here, or add folders you already use without moving their files.")}</p><div className="empty-state__actions"><button className="button button--primary" onClick={onNewProject}><Plus size={15} />{t("New project")}</button><button className="button button--quiet" disabled={addingFolder} onClick={onAddFolder}>{addingFolder ? <LoaderCircle className="spin" size={15} /> : <FolderPlus size={15} />}{t(addingFolder ? "Adding folder…" : "Add existing folder")}</button></div>{error && <div className="form-error" role="alert">{error}</div>}</div>;
+  if (scanFailed) return <div className="empty-state empty-state--first-use"><span className="empty-state__icon empty-state__icon--warning"><TriangleAlert size={24} /></span><h2>{t("This folder needs attention")}</h2><p>{t("Volum could not finish scanning it. Check that the folder is available, or choose another one.")}</p><div className="empty-state__actions"><button className="button button--primary" disabled={addingFolder} onClick={onAddFolder}>{addingFolder ? <LoaderCircle className="spin" size={15} /> : <FolderPlus size={15} />}{t(addingFolder ? "Adding folder…" : "Choose another folder")}</button></div>{error && <div className="form-error" role="alert">{error}</div>}</div>;
+  if (scanning) return <div className="empty-state empty-state--first-use"><span className="empty-state__icon"><LoaderCircle className="spin" size={24} /></span><h2>{t("Finding your 3D projects…")}</h2><p>{t("Projects will appear here as Volum indexes files and builds previews in the background.")}</p></div>;
+  return <div className="empty-state empty-state--first-use"><span className="empty-state__icon"><FolderPlus size={24} /></span><h2>{t("No supported 3D files found")}</h2><p>{t("Choose another folder containing STL, 3MF, OBJ, STEP, or STP files.")}</p><div className="empty-state__actions"><button className="button button--primary" disabled={addingFolder} onClick={onAddFolder}>{addingFolder ? <LoaderCircle className="spin" size={15} /> : <FolderPlus size={15} />}{t(addingFolder ? "Adding folder…" : "Choose another folder")}</button></div>{error && <div className="form-error" role="alert">{error}</div>}</div>;
+}
+
+export function LibraryView({ onNewCollection, onNewProject, roots }: { onNewCollection: () => void; onNewProject: () => void; roots: LibraryRoot[] }) {
   const queryClient = useQueryClient();
   const [addingFolder, setAddingFolder] = useState(false);
-  const { search, view, selectedFolderId, selectedCollectionId, selectedSavedSearchId, selectView, selectFolder, selectCollection, formatFilter, availabilityFilter, tagFilter, dateField, dateFrom, dateTo, modelSort, setModelSort } = useAppStore();
+  const [folderError, setFolderError] = useState("");
+  const { search, view, selectedFolderId, selectedCollectionId, selectedSavedSearchId, selectView, selectFolder, selectCollection, formatFilter, availabilityFilter, tagFilter, dateField, dateFrom, dateTo, modelSort, setModelSort } = useAppStore(useShallow((state) => ({ search: state.search, view: state.view, selectedFolderId: state.selectedFolderId, selectedCollectionId: state.selectedCollectionId, selectedSavedSearchId: state.selectedSavedSearchId, selectView: state.selectView, selectFolder: state.selectFolder, selectCollection: state.selectCollection, formatFilter: state.formatFilter, availabilityFilter: state.availabilityFilter, tagFilter: state.tagFilter, dateField: state.dateField, dateFrom: state.dateFrom, dateTo: state.dateTo, modelSort: state.modelSort, setModelSort: state.setModelSort })));
+  const debouncedSearch = useDebouncedValue(search, 90);
   const { data: folders = [] } = useQuery({ queryKey: ["folders"], queryFn: () => api.folders() });
   const { data: collections = [] } = useQuery({ queryKey: ["collections"], queryFn: api.collections });
   const { data: savedSearches = [] } = useQuery({ queryKey: ["saved-searches"], queryFn: api.savedSearches });
@@ -65,7 +87,7 @@ export function LibraryView({ onNewCollection }: { onNewCollection: () => void }
     return <div className="tree-branch" key={folder.id}><button className={`tree-item ${depth > 0 ? "tree-item--child" : ""} ${selectedFolderId === folder.id ? "is-active" : ""}`} style={{ paddingLeft: 9 + depth * 16 }} onClick={() => selectFolder(folder.id)}>{hasChildren ? <ChevronDown size={14} /> : <span />}<span>{folder.name}</span><small>{folder.modelCount}</small></button>{renderFolders(folder.id, depth + 1)}</div>;
   });
   const modelQuery: ModelQuery = {
-    search: search || undefined,
+    search: debouncedSearch || undefined,
     folderId: view === "folders" ? selectedFolderId : undefined,
     collectionId: view === "collections" ? selectedCollectionId : undefined,
     favorite: view === "favorites" || undefined,
@@ -77,19 +99,21 @@ export function LibraryView({ onNewCollection }: { onNewCollection: () => void }
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
     duplicates: view === "duplicates" || undefined,
+    trashed: view === "trash" || undefined,
     sort: modelSort,
     limit: 48
   };
   const { data, isLoading, isFetchingNextPage, hasNextPage, fetchNextPage } = useInfiniteQuery({
     queryKey: ["models", modelQuery],
     enabled: view !== "duplicates",
-    initialPageParam: 0,
-    queryFn: ({ pageParam }) => api.models({ ...modelQuery, offset: pageParam }),
-    getNextPageParam: (page) => page.nextOffset
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => api.models({ ...modelQuery, cursor: pageParam ?? undefined }),
+    getNextPageParam: (page) => page.nextCursor
   });
   const models = data?.pages.flatMap((page) => page.items) ?? [];
   const total = data?.pages[0]?.total ?? 0;
-  const pagination = { loadingMore: isFetchingNextPage, hasMore: Boolean(hasNextPage), onLoadMore: () => { void fetchNextPage(); } };
+  const loadMore = useCallback(() => { void fetchNextPage(); }, [fetchNextPage]);
+  const pagination = { loadingMore: isFetchingNextPage, hasMore: Boolean(hasNextPage), onLoadMore: loadMore };
   const duplicateQuery = useInfiniteQuery({
     queryKey: ["duplicate-groups"],
     enabled: view === "duplicates",
@@ -98,10 +122,11 @@ export function LibraryView({ onNewCollection }: { onNewCollection: () => void }
     getNextPageParam: (page) => page.nextOffset
   });
   const duplicateGroups = duplicateQuery.data?.pages.flatMap((page) => page.items) ?? [];
-  const invalidate = () => { queryClient.invalidateQueries({ queryKey: ["models"] }); };
+  const invalidate = useCallback(() => { void queryClient.invalidateQueries({ queryKey: ["models"] }); }, [queryClient]);
   const addFolder = async () => {
     if (addingFolder) return;
     setAddingFolder(true);
+    setFolderError("");
     try {
       const path = isTauri() ? await open({ directory: true, multiple: false, title: t("Choose a 3D project folder") }) : "/Users/you/New Projects";
       if (!path || Array.isArray(path)) return;
@@ -112,6 +137,8 @@ export function LibraryView({ onNewCollection }: { onNewCollection: () => void }
         queryClient.invalidateQueries({ queryKey: ["folders"] }),
         queryClient.invalidateQueries({ queryKey: ["models"] })
       ]);
+    } catch (reason) {
+      setFolderError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setAddingFolder(false);
     }
@@ -147,13 +174,14 @@ export function LibraryView({ onNewCollection }: { onNewCollection: () => void }
     return <section className="content-view content-view--grid"><header className="view-header"><div><div className="eyebrow">{t("File and geometry matches")}</div><h1>{t("Duplicates")}</h1><p>{duplicateStats ? `${plural(duplicateStats.groups, "{count} stack", "{count} stacks")} · ${plural(duplicateStats.models, "{count} project", "{count} projects")} · ${plural(duplicateStats.redundantCopies, "{count} redundant copy", "{count} redundant copies")}` : t("Analyzing project geometry…")}</p></div><DensityControl /></header><DuplicateStacks groups={duplicateGroups} loading={duplicateQuery.isLoading} loadingMore={duplicateQuery.isFetchingNextPage} hasMore={Boolean(duplicateQuery.hasNextPage)} onLoadMore={() => { void duplicateQuery.fetchNextPage(); }} /></section>;
   }
 
-  const title = view === "saved" ? selectedSavedSearch?.name ?? t("Saved search") : search ? t("Results for “{search}”", { search }) : view === "favorites" ? t("Favorites") : view === "recent" ? t("Recent") : view === "collections" ? selectedCollection?.name ?? t("Collection") : t("Your library");
-  const subtitle = view === "saved" ? t("{count} projects matching this saved search", { count: total }) : search ? t("{count} matching projects", { count: total }) : view === "favorites" ? t("Projects you want close at hand.") : view === "recent" ? t("Projects you added, changed, or opened recently.") : view === "collections" ? selectedCollection?.smart ? t("{count} projects matching this collection’s rules", { count: total }) : t("{count} projects from across your folders", { count: total }) : plural(total, "{count} project in your library", "{count} projects in your library");
+  const title = view === "trash" ? t("Trash") : view === "saved" ? selectedSavedSearch?.name ?? t("Saved search") : search ? t("Results for “{search}”", { search }) : view === "favorites" ? t("Favorites") : view === "recent" ? t("Recent") : view === "collections" ? selectedCollection?.name ?? t("Collection") : t("Your library");
+  const subtitle = view === "trash" ? t("Projects stay here until you restore or permanently delete them.") : view === "saved" ? t("{count} projects matching this saved search", { count: total }) : search ? t("{count} matching projects", { count: total }) : view === "favorites" ? t("Projects you want close at hand.") : view === "recent" ? t("Projects you added, changed, or opened recently.") : view === "collections" ? selectedCollection?.smart ? t("{count} projects matching this collection’s rules", { count: total }) : t("{count} projects from across your folders", { count: total }) : plural(total, "{count} project in your library", "{count} projects in your library");
+  const firstUseEmpty = view === "library" && !search && !formatFilter && !availabilityFilter && !tagFilter && !dateFrom && !dateTo && !isLoading && total === 0 && roots.every((root) => root.modelCount === 0);
   return (
     <section className={`content-view content-view--grid ${view === "library" && !search ? "library-home" : ""}`}>
       <header className="view-header"><div><div className="eyebrow">{view === "library" ? t("Local 3D project library") : t(view === "favorites" ? "Favorites" : view === "recent" ? "Recent" : view === "saved" ? "Saved search" : "Collections")}</div><h1>{title}</h1><p>{subtitle}</p></div><div className="view-header__controls">{view === "saved" && selectedSavedSearch && <><button className="icon-button" title={t("Rename saved search")} aria-label={t("Rename saved search")} onClick={async () => { const name = window.prompt(t("Name this search"), selectedSavedSearch.name); if (!name?.trim()) return; await api.saveSavedSearch({ id: selectedSavedSearch.id, name: name.trim(), query: selectedSavedSearch.query }); await queryClient.invalidateQueries({ queryKey: ["saved-searches"] }); }}><Pencil size={15} /></button><button className="icon-button" title={t("Delete saved search")} aria-label={t("Delete saved search")} onClick={async () => { await api.deleteSavedSearch(selectedSavedSearch.id); await queryClient.invalidateQueries({ queryKey: ["saved-searches"] }); selectView("library"); }}><Trash2 size={16} /></button></>}<SortControl value={modelSort} onChange={setModelSort} /><DensityControl /></div></header>
       {view === "library" && !search && collections.length > 0 && <div className="home-collections"><div className="section-heading"><h2>{t("Collections")}</h2><button onClick={() => useAppStore.getState().selectView("collections")}>{t("View all")} <ArrowRight size={14} /></button></div><div className="home-collection-row">{collections.slice(0, 4).map((collection) => <button key={collection.id} onClick={() => selectCollection(collection.id)}><span style={{ background: collection.color }}>{collection.symbol.slice(0, 1).toUpperCase()}</span><div><strong>{collection.name}</strong><small>{plural(collection.modelCount, "{count} project", "{count} projects")}</small></div></button>)}</div><div className="section-heading section-heading--models"><h2>{sortLabel(modelSort)}</h2><span>{t("{count} total", { count: total })}</span></div></div>}
-      <ModelGrid models={models} loading={isLoading} {...pagination} context={view === "recent" ? "date" : search ? "format" : "folder"} onChanged={invalidate} /><SelectionBar />
+      {firstUseEmpty ? <FirstLibraryState roots={roots} addingFolder={addingFolder} error={folderError} onAddFolder={() => void addFolder()} onNewProject={onNewProject} /> : <ModelGrid models={models} loading={isLoading} {...pagination} context={view === "recent" ? "date" : search ? "format" : "folder"} onChanged={invalidate} trashed={view === "trash"} />}{view !== "trash" && !firstUseEmpty && <SelectionBar />}
     </section>
   );
 }

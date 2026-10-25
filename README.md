@@ -58,6 +58,10 @@ The Linux AppImage is built on Ubuntu 22.04 for broad glibc compatibility. Autom
 
 Windows installers are not yet Authenticode-signed, so Microsoft Defender SmartScreen may ask for confirmation. Tauri updater signatures and SHA-256 checksum files are published beside both installers. The Windows 11 ARM64 release has been exercised natively, and the x64 release through Windows' built-in emulation, with STL, OBJ, 3MF, Explorer reveal, search, and installed slicers.
 
+## Support
+
+Volum is free and open source. If it saves you time, you can support continued development on [Ko-fi](https://ko-fi.com/didacdev).
+
 Validation:
 
 ```bash

@@ -1,4 +1,4 @@
-use crate::{domain::*, indexing, parsers, previews, state::AppState, web_sources};
+use crate::{domain::*, indexing, parsers, previews, project_docs, state::AppState, web_sources};
 use chrono::{NaiveDate, Utc};
 use serde_json::json;
 use sqlx::Row;
@@ -17,12 +17,21 @@ struct DuplicateMatchRow {
     confidence: f64,
     byte_size: i64,
     model_count: i64,
-    latest_modified: String,
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelPageCursor {
+    sort: String,
+    primary: String,
+    secondary: String,
+    name: String,
+    id: String,
 }
 
 #[tauri::command]
 pub async fn list_roots(state: State<'_, AppState>) -> CommandResult<Vec<LibraryRoot>> {
-    let rows = sqlx::query("SELECT r.id, r.path, r.display_name, r.status, r.last_scan_at, COUNT(DISTINCT CASE WHEN m.missing_since IS NULL THEN m.id END) model_count FROM library_roots r LEFT JOIN folders f ON f.root_id = r.id LEFT JOIN models m ON m.folder_id = f.id GROUP BY r.id ORDER BY r.created_at").fetch_all(&state.pool).await.map_err(db_error)?;
+    let rows = sqlx::query("SELECT r.id, r.path, r.display_name, r.status, r.last_scan_at, r.root_kind, COUNT(DISTINCT CASE WHEN m.missing_since IS NULL AND m.trashed_at IS NULL THEN m.id END) model_count FROM library_roots r LEFT JOIN folders f ON f.root_id = r.id LEFT JOIN models m ON m.folder_id = f.id GROUP BY r.id ORDER BY CASE r.root_kind WHEN 'managed' THEN 0 ELSE 1 END, r.created_at").fetch_all(&state.pool).await.map_err(db_error)?;
     Ok(rows
         .into_iter()
         .map(|row| LibraryRoot {
@@ -32,6 +41,7 @@ pub async fn list_roots(state: State<'_, AppState>) -> CommandResult<Vec<Library
             status: row.get("status"),
             last_scan_at: row.get("last_scan_at"),
             model_count: row.get("model_count"),
+            root_kind: row.get("root_kind"),
         })
         .collect())
 }
@@ -47,8 +57,21 @@ pub async fn add_library_root(
         return Err("The selected path is not a folder".into());
     }
     let normalized = canonical.to_string_lossy().to_string();
+    let managed_paths: Vec<String> = sqlx::query_scalar(
+        "SELECT path FROM library_roots WHERE root_kind = 'managed' AND status != 'removed'",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .map_err(db_error)?;
+    if managed_paths
+        .iter()
+        .map(PathBuf::from)
+        .any(|managed| canonical.starts_with(&managed) || managed.starts_with(&canonical))
+    {
+        return Err("A linked library cannot overlap the managed Volum library".into());
+    }
     if let Some(row) = sqlx::query(
-        "SELECT id, path, display_name, status, last_scan_at FROM library_roots WHERE path = ?",
+        "SELECT id, path, display_name, status, last_scan_at, root_kind FROM library_roots WHERE path = ?",
     )
     .bind(&normalized)
     .fetch_optional(&state.pool)
@@ -62,6 +85,7 @@ pub async fn add_library_root(
             status: row.get("status"),
             last_scan_at: row.get("last_scan_at"),
             model_count: 0,
+            root_kind: row.get("root_kind"),
         });
     }
     let id = Uuid::new_v4().to_string();
@@ -80,6 +104,7 @@ pub async fn add_library_root(
         status: "online".into(),
         last_scan_at: None,
         model_count: 0,
+        root_kind: "linked".into(),
     })
 }
 
@@ -89,6 +114,15 @@ pub async fn remove_library_root(
     keep_metadata: bool,
     state: State<'_, AppState>,
 ) -> CommandResult<()> {
+    let kind: Option<String> =
+        sqlx::query_scalar("SELECT root_kind FROM library_roots WHERE id = ?")
+            .bind(&root_id)
+            .fetch_optional(&state.pool)
+            .await
+            .map_err(db_error)?;
+    if kind.as_deref() == Some("managed") {
+        return Err("The managed Volum library cannot be removed as a linked folder".into());
+    }
     if keep_metadata {
         sqlx::query("UPDATE library_roots SET status = 'offline', updated_at = ? WHERE id = ?")
             .bind(now())
@@ -121,6 +155,30 @@ pub async fn reconnect_library_root(
         return Err("The selected path is not a folder".into());
     }
     let normalized = canonical.to_string_lossy().to_string();
+    let root_kind: String = sqlx::query_scalar("SELECT root_kind FROM library_roots WHERE id = ?")
+        .bind(&root_id)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(db_error)?
+        .ok_or_else(|| "Library not found".to_string())?;
+    if root_kind == "managed" && !canonical.join(".volum-library.json").is_file() {
+        return Err("Choose the original managed Volum library folder".into());
+    }
+    let other_roots = sqlx::query(
+        "SELECT path, root_kind FROM library_roots WHERE id != ? AND status != 'removed'",
+    )
+    .bind(&root_id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(db_error)?;
+    for other in other_roots {
+        let other_path = PathBuf::from(other.get::<String, _>("path"));
+        if (root_kind == "managed" || other.get::<String, _>("root_kind") == "managed")
+            && (canonical.starts_with(&other_path) || other_path.starts_with(&canonical))
+        {
+            return Err("Managed and linked libraries cannot overlap".into());
+        }
+    }
     let conflict: Option<String> =
         sqlx::query_scalar("SELECT id FROM library_roots WHERE path = ? AND id != ?")
             .bind(&normalized)
@@ -147,7 +205,7 @@ pub async fn reconnect_library_root(
     if let Ok(mut watchers) = state.watchers.lock() {
         watchers.remove(&root_id);
     }
-    let row = sqlx::query("SELECT id, path, display_name, status, last_scan_at, (SELECT COUNT(*) FROM models m JOIN folders f ON f.id = m.folder_id WHERE f.root_id = library_roots.id AND m.missing_since IS NULL) model_count FROM library_roots WHERE id = ?")
+    let row = sqlx::query("SELECT id, path, display_name, status, last_scan_at, root_kind, (SELECT COUNT(*) FROM models m JOIN folders f ON f.id = m.folder_id WHERE f.root_id = library_roots.id AND m.missing_since IS NULL) model_count FROM library_roots WHERE id = ?")
         .bind(&root_id)
         .fetch_one(&state.pool)
         .await
@@ -159,6 +217,7 @@ pub async fn reconnect_library_root(
         status: row.get("status"),
         last_scan_at: row.get("last_scan_at"),
         model_count: row.get("model_count"),
+        root_kind: row.get("root_kind"),
     })
 }
 
@@ -189,18 +248,44 @@ pub async fn list_folders(
     root_id: Option<String>,
     state: State<'_, AppState>,
 ) -> CommandResult<Vec<Folder>> {
-    let rows = sqlx::query("SELECT f.id, f.root_id, f.parent_id, f.relative_path, f.name, (SELECT COUNT(DISTINCT descendant_model.id) FROM folders descendant JOIN models descendant_model ON descendant_model.folder_id = descendant.id WHERE descendant.root_id = f.root_id AND descendant_model.missing_since IS NULL AND (descendant.relative_path = f.relative_path OR substr(descendant.relative_path, 1, length(f.relative_path) + 1) = f.relative_path || '/')) model_count FROM folders f WHERE (? IS NULL OR f.root_id = ?) AND f.relative_path != '' ORDER BY lower(f.relative_path)").bind(&root_id).bind(&root_id).fetch_all(&state.pool).await.map_err(db_error)?;
-    Ok(rows
-        .into_iter()
-        .map(|row| Folder {
-            id: row.get("id"),
+    let rows = sqlx::query("SELECT f.id, f.root_id, f.parent_id, f.relative_path, f.name, COUNT(m.id) direct_count FROM folders f LEFT JOIN models m ON m.folder_id = f.id AND m.missing_since IS NULL AND m.trashed_at IS NULL WHERE (? IS NULL OR f.root_id = ?) AND f.relative_path != '' AND f.relative_path NOT LIKE 'Trash/%' GROUP BY f.id ORDER BY lower(f.relative_path)")
+        .bind(&root_id)
+        .bind(&root_id)
+        .fetch_all(&state.pool)
+        .await
+        .map_err(db_error)?;
+    let mut folders = Vec::with_capacity(rows.len());
+    let mut counts = HashMap::<String, i64>::with_capacity(rows.len());
+    let mut parents = HashMap::<String, Option<String>>::with_capacity(rows.len());
+    for row in rows {
+        let id: String = row.get("id");
+        let parent_id: Option<String> = row.get("parent_id");
+        counts.insert(id.clone(), row.get("direct_count"));
+        parents.insert(id.clone(), parent_id.clone());
+        folders.push(Folder {
+            id,
             root_id: row.get("root_id"),
-            parent_id: row.get("parent_id"),
+            parent_id,
             relative_path: row.get("relative_path"),
             name: row.get("name"),
-            model_count: row.get("model_count"),
-        })
-        .collect())
+            model_count: 0,
+        });
+    }
+    let mut by_depth = folders
+        .iter()
+        .map(|folder| (folder.relative_path.matches('/').count(), folder.id.clone()))
+        .collect::<Vec<_>>();
+    by_depth.sort_by_key(|(depth, _)| std::cmp::Reverse(*depth));
+    for (_, id) in by_depth {
+        let count = counts.get(&id).copied().unwrap_or_default();
+        if let Some(Some(parent_id)) = parents.get(&id) {
+            *counts.entry(parent_id.clone()).or_default() += count;
+        }
+    }
+    for folder in &mut folders {
+        folder.model_count = counts.get(&folder.id).copied().unwrap_or_default();
+    }
+    Ok(folders)
 }
 
 #[tauri::command]
@@ -253,7 +338,7 @@ pub async fn list_models(
     let date_column = if query.date_field.as_deref() == Some("added") {
         "m.added_at"
     } else {
-        "COALESCE((SELECT MAX(project_asset.modified_at) FROM model_assets project_membership JOIN assets project_asset ON project_asset.id = project_membership.asset_id WHERE project_membership.model_id = m.id), m.updated_at)"
+        "COALESCE(m.asset_modified_at, m.updated_at)"
     };
     let favorite = i64::from(query.favorite.unwrap_or(false));
     let recent = i64::from(query.recent.unwrap_or(false));
@@ -261,48 +346,71 @@ pub async fn list_models(
     let duplicates = 0_i64;
     let limit = query.limit.unwrap_or(100).clamp(1, 500);
     let offset = query.offset.unwrap_or(0).max(0);
-    let where_sql = format!(" WHERE (? = '' OR m.id IN (SELECT model_id FROM model_search WHERE model_search MATCH ?)) AND (? = '' OR m.folder_id IN (SELECT descendant.id FROM folders descendant JOIN folders selected ON selected.id = ? WHERE descendant.root_id = selected.root_id AND (descendant.relative_path = selected.relative_path OR substr(descendant.relative_path, 1, length(selected.relative_path) + 1) = selected.relative_path || '/'))) AND (? = '' OR EXISTS (SELECT 1 FROM collection_items ci WHERE ci.model_id = m.id AND ci.collection_id = ?)) AND (? = 0 OR m.favorite = 1) AND (? = 0 OR m.last_opened_at IS NOT NULL) AND (? = '' OR EXISTS (SELECT 1 FROM model_assets fma JOIN assets fa ON fa.id = fma.asset_id WHERE fma.model_id = m.id AND CASE fa.extension WHEN 'stp' THEN 'step' ELSE fa.extension END = ?)) AND (? = '' OR (? = 'available' AND m.missing_since IS NULL) OR (? = 'offline' AND m.missing_since IS NOT NULL)) AND (? = '' OR EXISTS (SELECT 1 FROM model_tags mt WHERE mt.model_id = m.id AND mt.tag_id = ?)) AND (? = '' OR EXISTS (SELECT 1 FROM model_assets sfma JOIN assets sfa ON sfa.id = sfma.asset_id WHERE sfma.model_id = m.id AND CASE sfa.extension WHEN 'stp' THEN 'step' ELSE sfa.extension END = ?)) AND (? = '' OR (? = 'available' AND m.missing_since IS NULL) OR (? = 'offline' AND m.missing_since IS NOT NULL)) AND (? = '' OR EXISTS (SELECT 1 FROM model_tags smt WHERE smt.model_id = m.id AND smt.tag_id = ?)) AND (? = '' OR date({date_column}) >= date(?)) AND (? = '' OR date({date_column}) <= date(?)) AND (? = 0 OR EXISTS (SELECT 1 FROM model_assets dma JOIN assets da ON da.id = dma.asset_id LEFT JOIN asset_geometry dg ON dg.asset_id = da.id WHERE dma.model_id = m.id AND ((da.content_hash IS NOT NULL AND EXISTS (SELECT 1 FROM model_assets oma JOIN assets oa ON oa.id = oma.asset_id WHERE oma.model_id != m.id AND oa.content_hash = da.content_hash)) OR (dg.geometry_hash IS NOT NULL AND EXISTS (SELECT 1 FROM model_assets oma JOIN asset_geometry og ON og.asset_id = oma.asset_id WHERE oma.model_id != m.id AND og.geometry_hash = dg.geometry_hash))))) AND ({rich_smart_sql}) AND ({project_filter_sql}) ");
-    let count_sql = format!("SELECT COUNT(*) FROM models m JOIN folders f ON f.id = m.folder_id LEFT JOIN assets pa ON pa.id = m.primary_asset_id{where_sql}");
-    let total: i64 = sqlx::query_scalar(&count_sql)
-        .bind(&search)
-        .bind(&search_match)
-        .bind(&folder)
-        .bind(&folder)
-        .bind(&collection)
-        .bind(&collection)
-        .bind(favorite)
-        .bind(recent)
-        .bind(&format)
-        .bind(&format)
-        .bind(&availability)
-        .bind(&availability)
-        .bind(&availability)
-        .bind(&tag)
-        .bind(&tag)
-        .bind(&smart_format)
-        .bind(&smart_format)
-        .bind(&smart_availability)
-        .bind(&smart_availability)
-        .bind(&smart_availability)
-        .bind(&smart_tag)
-        .bind(&smart_tag)
-        .bind(&date_from)
-        .bind(&date_from)
-        .bind(&date_to)
-        .bind(&date_to)
-        .bind(duplicates)
-        .fetch_one(&state.pool)
-        .await
-        .map_err(db_error)?;
-    let order = match query.sort.as_deref() {
-        Some("name") => "lower(m.display_name) ASC, m.id ASC",
-        Some("added") => "m.added_at DESC, lower(m.display_name) ASC, m.id ASC",
-        Some("opened") => {
-            "m.last_opened_at DESC, m.updated_at DESC, lower(m.display_name) ASC, m.id ASC"
-        }
-        _ => "COALESCE((SELECT MAX(project_asset.modified_at) FROM model_assets project_membership JOIN assets project_asset ON project_asset.id = project_membership.asset_id WHERE project_membership.model_id = m.id), m.updated_at) DESC, lower(m.display_name) ASC, m.id ASC",
+    let trash_condition = if query.trashed.unwrap_or(false) {
+        "m.trashed_at IS NOT NULL"
+    } else {
+        "m.trashed_at IS NULL"
     };
-    let data_sql = format!("SELECT m.id, m.display_name, m.folder_id, f.name folder_name, f.relative_path, m.primary_asset_id, COALESCE(pa.extension, '') primary_extension, m.favorite, m.added_at, COALESCE((SELECT MAX(project_asset.modified_at) FROM model_assets project_membership JOIN assets project_asset ON project_asset.id = project_membership.asset_id WHERE project_membership.model_id = m.id), m.updated_at) modified_at, m.last_opened_at, m.missing_since, m.bundle_mode, COUNT(DISTINCT ma.asset_id) asset_count, COALESCE(pa.metadata_json, '{{}}') metadata_json FROM models m JOIN folders f ON f.id = m.folder_id LEFT JOIN assets pa ON pa.id = m.primary_asset_id LEFT JOIN model_assets ma ON ma.model_id = m.id{where_sql}GROUP BY m.id ORDER BY {order} LIMIT ? OFFSET ?");
+    let where_sql = format!(" WHERE {trash_condition} AND (? = '' OR m.id IN (SELECT model_id FROM model_search WHERE model_search MATCH ?)) AND (? = '' OR m.folder_id IN (SELECT descendant.id FROM folders descendant JOIN folders selected ON selected.id = ? WHERE descendant.root_id = selected.root_id AND (descendant.relative_path = selected.relative_path OR substr(descendant.relative_path, 1, length(selected.relative_path) + 1) = selected.relative_path || '/'))) AND (? = '' OR EXISTS (SELECT 1 FROM collection_items ci WHERE ci.model_id = m.id AND ci.collection_id = ?)) AND (? = 0 OR m.favorite = 1) AND (? = 0 OR m.last_opened_at IS NOT NULL) AND (? = '' OR EXISTS (SELECT 1 FROM model_assets fma JOIN assets fa ON fa.id = fma.asset_id WHERE fma.model_id = m.id AND CASE fa.extension WHEN 'stp' THEN 'step' ELSE fa.extension END = ?)) AND (? = '' OR (? = 'available' AND m.missing_since IS NULL) OR (? = 'offline' AND m.missing_since IS NOT NULL)) AND (? = '' OR EXISTS (SELECT 1 FROM model_tags mt WHERE mt.model_id = m.id AND mt.tag_id = ?)) AND (? = '' OR EXISTS (SELECT 1 FROM model_assets sfma JOIN assets sfa ON sfa.id = sfma.asset_id WHERE sfma.model_id = m.id AND CASE sfa.extension WHEN 'stp' THEN 'step' ELSE sfa.extension END = ?)) AND (? = '' OR (? = 'available' AND m.missing_since IS NULL) OR (? = 'offline' AND m.missing_since IS NOT NULL)) AND (? = '' OR EXISTS (SELECT 1 FROM model_tags smt WHERE smt.model_id = m.id AND smt.tag_id = ?)) AND (? = '' OR date({date_column}) >= date(?)) AND (? = '' OR date({date_column}) <= date(?)) AND (? = 0 OR EXISTS (SELECT 1 FROM model_assets dma JOIN assets da ON da.id = dma.asset_id LEFT JOIN asset_geometry dg ON dg.asset_id = da.id WHERE dma.model_id = m.id AND ((da.content_hash IS NOT NULL AND EXISTS (SELECT 1 FROM model_assets oma JOIN assets oa ON oa.id = oma.asset_id WHERE oma.model_id != m.id AND oa.content_hash = da.content_hash)) OR (dg.geometry_hash IS NOT NULL AND EXISTS (SELECT 1 FROM model_assets oma JOIN asset_geometry og ON og.asset_id = oma.asset_id WHERE oma.model_id != m.id AND og.geometry_hash = dg.geometry_hash))))) AND ({rich_smart_sql}) AND ({project_filter_sql}) ");
+    let count_sql = format!("SELECT COUNT(*) FROM models m JOIN folders f ON f.id = m.folder_id LEFT JOIN assets pa ON pa.id = m.primary_asset_id{where_sql}");
+    let total: i64 = if query.cursor.is_none() && offset == 0 {
+        sqlx::query_scalar(&count_sql)
+            .bind(&search)
+            .bind(&search_match)
+            .bind(&folder)
+            .bind(&folder)
+            .bind(&collection)
+            .bind(&collection)
+            .bind(favorite)
+            .bind(recent)
+            .bind(&format)
+            .bind(&format)
+            .bind(&availability)
+            .bind(&availability)
+            .bind(&availability)
+            .bind(&tag)
+            .bind(&tag)
+            .bind(&smart_format)
+            .bind(&smart_format)
+            .bind(&smart_availability)
+            .bind(&smart_availability)
+            .bind(&smart_availability)
+            .bind(&smart_tag)
+            .bind(&smart_tag)
+            .bind(&date_from)
+            .bind(&date_from)
+            .bind(&date_to)
+            .bind(&date_to)
+            .bind(duplicates)
+            .fetch_one(&state.pool)
+            .await
+            .map_err(db_error)?
+    } else {
+        -1
+    };
+    let order = match query.sort.as_deref() {
+        Some("name") => "m.display_name COLLATE NOCASE ASC, m.id ASC",
+        Some("added") => "m.added_at DESC, m.display_name COLLATE NOCASE ASC, m.id ASC",
+        Some("opened") => {
+            "COALESCE(m.last_opened_at, '') DESC, COALESCE(m.asset_modified_at, m.updated_at) DESC, m.display_name COLLATE NOCASE ASC, m.id ASC"
+        }
+        _ => "COALESCE(m.asset_modified_at, m.updated_at) DESC, m.display_name COLLATE NOCASE ASC, m.id ASC",
+    };
+    let cursor = query
+        .cursor
+        .as_deref()
+        .map(serde_json::from_str::<ModelPageCursor>)
+        .transpose()
+        .map_err(|_| "Invalid model page cursor".to_string())?;
+    let cursor_condition = cursor
+        .as_ref()
+        .map(|cursor| model_cursor_condition(query.sort.as_deref(), cursor))
+        .transpose()?;
+    let page_where_sql = match cursor_condition {
+        Some(condition) => format!("{where_sql} AND ({condition})"),
+        None => where_sql,
+    };
+    let data_sql = format!("SELECT m.id, m.display_name, m.folder_id, f.name folder_name, f.relative_path, m.primary_asset_id, COALESCE(pa.extension, '') primary_extension, m.favorite, m.added_at, COALESCE(m.asset_modified_at, m.updated_at) modified_at, m.last_opened_at, m.missing_since, m.bundle_mode, m.storage_mode, (SELECT pp.id FROM project_photos pp WHERE pp.model_id = m.id AND pp.is_cover = 1 LIMIT 1) cover_photo_id, m.asset_count, COALESCE(pa.metadata_json, '{{}}') metadata_json FROM models m JOIN folders f ON f.id = m.folder_id LEFT JOIN assets pa ON pa.id = m.primary_asset_id{page_where_sql} ORDER BY {order} LIMIT ? OFFSET ?");
     let rows = sqlx::query(&data_sql)
         .bind(&search)
         .bind(&search_match)
@@ -331,29 +439,42 @@ pub async fn list_models(
         .bind(&date_to)
         .bind(&date_to)
         .bind(duplicates)
-        .bind(limit)
-        .bind(offset)
+        .bind(limit + 1)
+        .bind(if cursor.is_some() { 0 } else { offset })
         .fetch_all(&state.pool)
         .await
         .map_err(db_error)?;
-    let items = rows
+    let mut items = rows
         .into_iter()
         .map(summary_from_row)
         .collect::<Result<Vec<_>, _>>()?;
+    let has_more = items.len() as i64 > limit;
+    if has_more {
+        items.pop();
+    }
+    let next_cursor = if has_more {
+        items
+            .last()
+            .map(|item| encode_model_cursor(query.sort.as_deref(), item))
+            .transpose()?
+    } else {
+        None
+    };
     Ok(Page {
         items,
         total,
-        next_offset: if offset + limit < total {
+        next_offset: if query.cursor.is_none() && total >= 0 && offset + limit < total {
             Some(offset + limit)
         } else {
             None
         },
+        next_cursor,
     })
 }
 
 #[tauri::command]
 pub async fn get_model(model_id: String, state: State<'_, AppState>) -> CommandResult<ModelDetail> {
-    let row = sqlx::query("SELECT m.id, m.display_name, m.folder_id, f.name folder_name, f.relative_path, m.primary_asset_id, COALESCE(pa.extension, '') primary_extension, m.favorite, m.added_at, COALESCE((SELECT MAX(project_asset.modified_at) FROM model_assets project_membership JOIN assets project_asset ON project_asset.id = project_membership.asset_id WHERE project_membership.model_id = m.id), m.updated_at) modified_at, m.last_opened_at, m.missing_since, m.bundle_mode, COUNT(DISTINCT ma.asset_id) asset_count, COALESCE(pa.metadata_json, '{}') metadata_json, m.notes, r.id root_id, r.display_name root_name, r.path root_path FROM models m JOIN folders f ON f.id = m.folder_id JOIN library_roots r ON r.id = f.root_id LEFT JOIN assets pa ON pa.id = m.primary_asset_id LEFT JOIN model_assets ma ON ma.model_id = m.id WHERE m.id = ? GROUP BY m.id").bind(&model_id).fetch_optional(&state.pool).await.map_err(db_error)?.ok_or_else(|| "Project not found".to_string())?;
+    let row = sqlx::query("SELECT m.id, m.display_name, m.folder_id, f.name folder_name, f.relative_path, m.primary_asset_id, COALESCE(pa.extension, '') primary_extension, m.favorite, m.added_at, COALESCE(m.asset_modified_at, m.updated_at) modified_at, m.last_opened_at, m.missing_since, m.bundle_mode, m.storage_mode, m.asset_count, COALESCE(pa.metadata_json, '{}') metadata_json, m.notes, r.id root_id, r.display_name root_name, r.path root_path FROM models m JOIN folders f ON f.id = m.folder_id JOIN library_roots r ON r.id = f.root_id LEFT JOIN assets pa ON pa.id = m.primary_asset_id WHERE m.id = ?").bind(&model_id).fetch_optional(&state.pool).await.map_err(db_error)?.ok_or_else(|| "Project not found".to_string())?;
     let notes = row.get("notes");
     let root_id = row.get("root_id");
     let root_name = row.get("root_name");
@@ -542,19 +663,24 @@ pub async fn delete_saved_search(
 pub async fn list_collections(state: State<'_, AppState>) -> CommandResult<Vec<Collection>> {
     let rows = sqlx::query("SELECT c.id, c.name, c.symbol, c.color, c.created_at, c.kind, c.rule_json, COUNT(ci.model_id) model_count FROM collections c LEFT JOIN collection_items ci ON ci.collection_id = c.id GROUP BY c.id ORDER BY c.sort_order, lower(c.name)").fetch_all(&state.pool).await.map_err(db_error)?;
     let mut collections = Vec::with_capacity(rows.len());
+    let mut smart_count_queries = Vec::new();
     for row in rows {
         let smart = row.get::<String, _>("kind") == "smart";
         let rule = smart.then(|| {
             serde_json::from_str::<SmartCollectionRule>(&row.get::<String, _>("rule_json"))
                 .unwrap_or_default()
         });
-        let model_count = if let Some(rule) = &rule {
-            count_smart_collection(rule, &state.pool).await?
-        } else {
-            row.get("model_count")
-        };
+        let model_count = row.get("model_count");
+        let id: String = row.get("id");
+        if let Some(rule) = &rule {
+            smart_count_queries.push(format!(
+                "SELECT {} collection_id, ({}) model_count",
+                sql_string(&id),
+                smart_collection_count_sql(rule)?
+            ));
+        }
         collections.push(Collection {
-            id: row.get("id"),
+            id,
             name: row.get("name"),
             symbol: row.get("symbol"),
             color: row.get("color"),
@@ -563,6 +689,26 @@ pub async fn list_collections(state: State<'_, AppState>) -> CommandResult<Vec<C
             smart,
             rule,
         });
+    }
+    if !smart_count_queries.is_empty() {
+        let smart_counts = sqlx::query(&smart_count_queries.join(" UNION ALL "))
+            .fetch_all(&state.pool)
+            .await
+            .map_err(db_error)?;
+        let counts = smart_counts
+            .into_iter()
+            .map(|row| {
+                (
+                    row.get::<String, _>("collection_id"),
+                    row.get::<i64, _>("model_count"),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        for collection in &mut collections {
+            if let Some(count) = counts.get(&collection.id) {
+                collection.model_count = *count;
+            }
+        }
     }
     Ok(collections)
 }
@@ -844,14 +990,14 @@ pub async fn list_related_models(
 
 #[tauri::command]
 pub async fn get_duplicate_stats(state: State<'_, AppState>) -> CommandResult<DuplicateStats> {
-    let matches = duplicate_match_rows(&state.pool).await?;
+    let row = sqlx::query(&format!("WITH matches AS ({}) SELECT COUNT(*) groups, COALESCE(SUM(model_count), 0) models, COALESCE(SUM(model_count - 1), 0) redundant_copies FROM matches", duplicate_matches_sql()))
+        .fetch_one(&state.pool)
+        .await
+        .map_err(db_error)?;
     Ok(DuplicateStats {
-        groups: matches.len() as i64,
-        models: matches.iter().map(|group| group.model_count).sum(),
-        redundant_copies: matches
-            .iter()
-            .map(|group| group.model_count.saturating_sub(1))
-            .sum(),
+        groups: row.get("groups"),
+        models: row.get("models"),
+        redundant_copies: row.get("redundant_copies"),
     })
 }
 
@@ -863,34 +1009,34 @@ pub async fn list_duplicate_groups(
 ) -> CommandResult<Page<DuplicateGroup>> {
     let offset = offset.max(0);
     let limit = limit.clamp(1, 100);
-    let matches = duplicate_match_rows(&state.pool).await?;
-    let total = matches.len() as i64;
+    let (matches, total) = duplicate_match_rows_page(&state.pool, offset, limit).await?;
+    let exact_values = matches
+        .iter()
+        .filter(|item| item.match_kind == "exact")
+        .map(|item| item.value.clone())
+        .collect::<Vec<_>>();
+    let geometry_values = matches
+        .iter()
+        .filter(|item| item.match_kind == "geometry")
+        .map(|item| item.value.clone())
+        .collect::<Vec<_>>();
+    let (exact_models, geometry_models) = tokio::try_join!(
+        duplicate_models_for_values(&state.pool, "exact", &exact_values),
+        duplicate_models_for_values(&state.pool, "geometry", &geometry_values)
+    )?;
     let mut groups = Vec::with_capacity(limit as usize);
-    for match_row in matches
-        .into_iter()
-        .skip(offset as usize)
-        .take(limit as usize)
-    {
-        let condition = if match_row.match_kind == "exact" {
-            "matching_asset.content_hash = ?"
+    for match_row in matches {
+        let models = if match_row.match_kind == "exact" {
+            exact_models
+                .get(&match_row.value)
+                .cloned()
+                .unwrap_or_default()
         } else {
-            "matching_geometry.geometry_hash = ?"
+            geometry_models
+                .get(&match_row.value)
+                .cloned()
+                .unwrap_or_default()
         };
-        let geometry_join = if match_row.match_kind == "geometry" {
-            " JOIN asset_geometry matching_geometry ON matching_geometry.asset_id = matching_asset.id"
-        } else {
-            " LEFT JOIN asset_geometry matching_geometry ON matching_geometry.asset_id = matching_asset.id"
-        };
-        let sql = format!("SELECT m.id, m.display_name, m.folder_id, f.name folder_name, f.relative_path, m.primary_asset_id, COALESCE(pa.extension, '') primary_extension, m.favorite, m.added_at, COALESCE((SELECT MAX(project_asset.modified_at) FROM model_assets project_membership JOIN assets project_asset ON project_asset.id = project_membership.asset_id WHERE project_membership.model_id = m.id), m.updated_at) modified_at, m.last_opened_at, m.missing_since, m.bundle_mode, COUNT(DISTINCT all_ma.asset_id) asset_count, COALESCE(pa.metadata_json, '{{}}') metadata_json FROM models m JOIN folders f ON f.id = m.folder_id LEFT JOIN assets pa ON pa.id = m.primary_asset_id JOIN model_assets matching_ma ON matching_ma.model_id = m.id JOIN assets matching_asset ON matching_asset.id = matching_ma.asset_id{geometry_join} LEFT JOIN model_assets all_ma ON all_ma.model_id = m.id WHERE {condition} AND matching_asset.missing_since IS NULL GROUP BY m.id ORDER BY lower(m.display_name), f.relative_path");
-        let rows = sqlx::query(&sql)
-            .bind(&match_row.value)
-            .fetch_all(&state.pool)
-            .await
-            .map_err(db_error)?;
-        let models = rows
-            .into_iter()
-            .map(summary_from_row)
-            .collect::<Result<Vec<_>, _>>()?;
         groups.push(DuplicateGroup {
             id: match_row.match_key.clone(),
             match_key: match_row.match_key,
@@ -905,6 +1051,7 @@ pub async fn list_duplicate_groups(
         items: groups,
         total,
         next_offset: (offset + limit < total).then_some(offset + limit),
+        next_cursor: None,
     })
 }
 
@@ -921,6 +1068,15 @@ pub async fn split_project(
     input: SplitProjectInput,
     state: State<'_, AppState>,
 ) -> CommandResult<String> {
+    let storage_mode: String = sqlx::query_scalar("SELECT storage_mode FROM models WHERE id = ?")
+        .bind(&input.project_id)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(db_error)?
+        .ok_or_else(|| "Project not found".to_string())?;
+    if storage_mode == "managed" {
+        return Err("Use New Project with Move to split files from a managed project".into());
+    }
     let name = input.name.trim();
     if name.is_empty() || name.chars().count() > 160 {
         return Err("Project names must contain 1–160 characters".into());
@@ -976,6 +1132,13 @@ pub async fn split_project(
             .await
             .map_err(db_error)?;
     }
+    sqlx::query("UPDATE project_bom_items SET linked_asset_id = NULL, updated_at = ? WHERE model_id = ? AND linked_asset_id IN (SELECT value FROM json_each(?))")
+        .bind(&timestamp)
+        .bind(&input.project_id)
+        .bind(serde_json::to_string(&input.asset_ids).map_err(|error| error.to_string())?)
+        .execute(&mut *transaction)
+        .await
+        .map_err(db_error)?;
     set_best_primary(&project_id, &mut transaction).await?;
     set_best_primary(&input.project_id, &mut transaction).await?;
     sqlx::query("UPDATE models SET grouping_key = 'manual:' || id, bundle_mode = 'manual', updated_at = ? WHERE id = ?")
@@ -1135,7 +1298,7 @@ pub async fn cleanup_duplicate_group(
     Ok(())
 }
 
-async fn merge_projects_impl(
+pub(crate) async fn merge_projects_impl(
     keeper_id: &str,
     project_ids: &[String],
     pool: &sqlx::SqlitePool,
@@ -1160,6 +1323,27 @@ async fn merge_projects_impl(
         .map_err(db_error)?;
     if keeper_exists == 0 {
         return Err("Keeper project not found".into());
+    }
+    let managed_with_files: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM models m WHERE m.id IN (SELECT value FROM json_each(?)) AND m.storage_mode = 'managed' AND EXISTS (SELECT 1 FROM model_assets WHERE model_id = m.id)")
+        .bind(serde_json::to_string(&sources).map_err(|error| error.to_string())?)
+        .fetch_one(pool)
+        .await
+        .map_err(db_error)?;
+    let keeper_managed: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM models WHERE id = ? AND storage_mode = 'managed'")
+            .bind(keeper_id)
+            .fetch_one(pool)
+            .await
+            .map_err(db_error)?;
+    let source_files: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM model_assets WHERE model_id IN (SELECT value FROM json_each(?))",
+    )
+    .bind(serde_json::to_string(&sources).map_err(|error| error.to_string())?)
+    .fetch_one(pool)
+    .await
+    .map_err(db_error)?;
+    if managed_with_files > 0 || (keeper_managed > 0 && source_files > 0) {
+        return Err("Managed projects must be combined with New Project and Move so every file is consolidated safely".into());
     }
     let timestamp = now();
     let mut transaction = pool.begin().await.map_err(db_error)?;
@@ -1205,6 +1389,7 @@ async fn merge_projects_impl(
             .execute(&mut *transaction)
             .await
             .map_err(db_error)?;
+        project_docs::transfer_documentation(source_id, keeper_id, &mut transaction).await?;
         sqlx::query("UPDATE model_assets SET model_id = ? WHERE model_id = ?")
             .bind(keeper_id)
             .bind(source_id)
@@ -1243,44 +1428,78 @@ async fn set_best_primary(
     Ok(())
 }
 
-async fn duplicate_match_rows(pool: &sqlx::SqlitePool) -> CommandResult<Vec<DuplicateMatchRow>> {
-    let exact = sqlx::query("SELECT a.content_hash match_value, MAX(a.byte_size) byte_size, COUNT(DISTINCT ma.model_id) model_count, MAX(a.modified_at) latest_modified FROM assets a JOIN model_assets ma ON ma.asset_id = a.id WHERE a.missing_since IS NULL AND a.content_hash IS NOT NULL AND NOT EXISTS (SELECT 1 FROM duplicate_dismissals d WHERE d.match_key = 'exact:' || a.content_hash) GROUP BY a.content_hash HAVING COUNT(DISTINCT ma.model_id) > 1")
+fn duplicate_matches_sql() -> &'static str {
+    "SELECT 'exact' match_kind, a.content_hash match_value, MAX(a.byte_size) byte_size, COUNT(DISTINCT ma.model_id) model_count, MAX(a.modified_at) latest_modified FROM assets a JOIN model_assets ma ON ma.asset_id = a.id WHERE a.missing_since IS NULL AND a.content_hash IS NOT NULL AND NOT EXISTS (SELECT 1 FROM duplicate_dismissals d WHERE d.match_key = 'exact:' || a.content_hash) GROUP BY a.content_hash HAVING COUNT(DISTINCT ma.model_id) > 1 UNION ALL SELECT 'geometry' match_kind, g.geometry_hash match_value, MAX(a.byte_size) byte_size, COUNT(DISTINCT ma.model_id) model_count, MAX(a.modified_at) latest_modified FROM asset_geometry g JOIN assets a ON a.id = g.asset_id JOIN model_assets ma ON ma.asset_id = a.id WHERE a.missing_since IS NULL AND NOT EXISTS (SELECT 1 FROM duplicate_dismissals d WHERE d.match_key = 'geometry:' || g.geometry_hash) GROUP BY g.geometry_hash HAVING COUNT(DISTINCT ma.model_id) > 1 AND COUNT(DISTINCT COALESCE(a.content_hash, a.id)) > 1"
+}
+
+async fn duplicate_match_rows_page(
+    pool: &sqlx::SqlitePool,
+    offset: i64,
+    limit: i64,
+) -> CommandResult<(Vec<DuplicateMatchRow>, i64)> {
+    let sql = format!(
+        "WITH matches AS ({}) SELECT match_kind, match_value, byte_size, model_count, latest_modified, COUNT(*) OVER() total_count FROM matches ORDER BY latest_modified DESC, match_kind, match_value LIMIT ? OFFSET ?",
+        duplicate_matches_sql()
+    );
+    let rows = sqlx::query(&sql)
+        .bind(limit)
+        .bind(offset)
         .fetch_all(pool)
         .await
         .map_err(db_error)?;
-    let geometry = sqlx::query("SELECT g.geometry_hash match_value, MAX(a.byte_size) byte_size, COUNT(DISTINCT ma.model_id) model_count, MAX(a.modified_at) latest_modified FROM asset_geometry g JOIN assets a ON a.id = g.asset_id JOIN model_assets ma ON ma.asset_id = a.id WHERE a.missing_since IS NULL AND NOT EXISTS (SELECT 1 FROM duplicate_dismissals d WHERE d.match_key = 'geometry:' || g.geometry_hash) GROUP BY g.geometry_hash HAVING COUNT(DISTINCT ma.model_id) > 1 AND COUNT(DISTINCT COALESCE(a.content_hash, a.id)) > 1")
-        .fetch_all(pool)
-        .await
-        .map_err(db_error)?;
-    let mut matches = exact
+    let total = rows
+        .first()
+        .map(|row| row.get::<i64, _>("total_count"))
+        .unwrap_or_default();
+    let matches = rows
         .into_iter()
         .map(|row| {
             let value: String = row.get("match_value");
+            let match_kind: String = row.get("match_kind");
             DuplicateMatchRow {
-                match_key: format!("exact:{value}"),
+                match_key: format!("{match_kind}:{value}"),
                 value,
-                match_kind: "exact".into(),
-                confidence: 1.0,
+                confidence: if match_kind == "exact" { 1.0 } else { 0.96 },
+                match_kind,
                 byte_size: row.get("byte_size"),
                 model_count: row.get("model_count"),
-                latest_modified: row.get("latest_modified"),
             }
         })
-        .chain(geometry.into_iter().map(|row| {
-            let value: String = row.get("match_value");
-            DuplicateMatchRow {
-                match_key: format!("geometry:{value}"),
-                value,
-                match_kind: "geometry".into(),
-                confidence: 0.96,
-                byte_size: row.get("byte_size"),
-                model_count: row.get("model_count"),
-                latest_modified: row.get("latest_modified"),
-            }
-        }))
-        .collect::<Vec<_>>();
-    matches.sort_by(|left, right| right.latest_modified.cmp(&left.latest_modified));
-    Ok(matches)
+        .collect();
+    Ok((matches, total))
+}
+
+async fn duplicate_models_for_values(
+    pool: &sqlx::SqlitePool,
+    kind: &str,
+    values: &[String],
+) -> CommandResult<HashMap<String, Vec<ModelSummary>>> {
+    if values.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let (value_column, geometry_join) = if kind == "exact" {
+        ("matching_asset.content_hash", "")
+    } else {
+        (
+            "matching_geometry.geometry_hash",
+            " JOIN asset_geometry matching_geometry ON matching_geometry.asset_id = matching_asset.id",
+        )
+    };
+    let sql = format!("SELECT {value_column} match_value, m.id, m.display_name, m.folder_id, f.name folder_name, f.relative_path, m.primary_asset_id, COALESCE(pa.extension, '') primary_extension, m.favorite, m.added_at, COALESCE(m.asset_modified_at, m.updated_at) modified_at, m.last_opened_at, m.missing_since, m.bundle_mode, m.storage_mode, (SELECT pp.id FROM project_photos pp WHERE pp.model_id = m.id AND pp.is_cover = 1 LIMIT 1) cover_photo_id, m.asset_count, COALESCE(pa.metadata_json, '{{}}') metadata_json FROM models m JOIN folders f ON f.id = m.folder_id LEFT JOIN assets pa ON pa.id = m.primary_asset_id JOIN model_assets matching_ma ON matching_ma.model_id = m.id JOIN assets matching_asset ON matching_asset.id = matching_ma.asset_id{geometry_join} WHERE {value_column} IN (SELECT value FROM json_each(?)) AND matching_asset.missing_since IS NULL GROUP BY match_value, m.id ORDER BY match_value, lower(m.display_name), f.relative_path");
+    let rows = sqlx::query(&sql)
+        .bind(serde_json::to_string(values).map_err(|error| error.to_string())?)
+        .fetch_all(pool)
+        .await
+        .map_err(db_error)?;
+    let mut grouped = HashMap::<String, Vec<ModelSummary>>::new();
+    for row in rows {
+        let value: String = row.get("match_value");
+        grouped
+            .entry(value)
+            .or_default()
+            .push(summary_from_row(row)?);
+    }
+    Ok(grouped)
 }
 
 #[tauri::command]
@@ -1379,14 +1598,18 @@ pub async fn get_3mf_plate_thumbnail(
     asset_id: String,
     plate_index: u32,
     state: State<'_, AppState>,
-) -> CommandResult<Option<Vec<u8>>> {
+) -> CommandResult<tauri::ipc::Response> {
     let (path, extension) = asset_path(&asset_id, &state).await?;
     if extension != "3mf" {
         return Err("Plate thumbnails are only available for 3MF files".into());
     }
-    tokio::task::spawn_blocking(move || parsers::embedded_3mf_plate_thumbnail(&path, plate_index))
-        .await
-        .map_err(|error| error.to_string())?
+    let bytes = tokio::task::spawn_blocking(move || {
+        parsers::embedded_3mf_plate_thumbnail(&path, plate_index)
+    })
+    .await
+    .map_err(|error| error.to_string())??
+    .unwrap_or_default();
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 #[tauri::command]
@@ -1396,10 +1619,40 @@ pub async fn get_viewer_mesh(
     state: State<'_, AppState>,
 ) -> CommandResult<tauri::ipc::Response> {
     let (path, extension) = asset_path(&asset_id, &state).await?;
+    let fingerprint = current_thumbnail_revision(&asset_id, &state.pool).await?;
+    let plate_key = plate_index
+        .map(|index| index.to_string())
+        .unwrap_or_else(|| "all".into());
+    if let Some(row) = sqlx::query("SELECT id, cache_path FROM viewer_meshes WHERE asset_id = ? AND fingerprint = ? AND plate_key = ? AND renderer_version = 'viewer-2'")
+        .bind(&asset_id)
+        .bind(&fingerprint)
+        .bind(&plate_key)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(db_error)?
+    {
+        if let Ok(bytes) = tokio::fs::read(PathBuf::from(row.get::<String, _>("cache_path"))).await {
+            let _ = sqlx::query("UPDATE viewer_meshes SET last_accessed_at = ? WHERE id = ? AND julianday(last_accessed_at) < julianday('now', '-1 hour')")
+                .bind(now())
+                .bind(row.get::<String, _>("id"))
+                .execute(&state.pool)
+                .await;
+            return Ok(tauri::ipc::Response::new(bytes));
+        }
+    }
     let bytes =
         tokio::task::spawn_blocking(move || previews::viewer_mesh(&path, &extension, plate_index))
             .await
             .map_err(|error| error.to_string())??;
+    persist_viewer_mesh(
+        &asset_id,
+        &fingerprint,
+        &plate_key,
+        &bytes,
+        &state.pool,
+        &state.data_dir,
+    )
+    .await?;
     Ok(tauri::ipc::Response::new(bytes))
 }
 
@@ -1407,8 +1660,11 @@ pub async fn get_viewer_mesh(
 pub async fn get_cached_thumbnail(
     asset_id: String,
     state: State<'_, AppState>,
-) -> CommandResult<Option<Vec<u8>>> {
-    read_cached_thumbnail(&asset_id, &state.pool).await
+) -> CommandResult<tauri::ipc::Response> {
+    let bytes = read_cached_thumbnail(&asset_id, &state.pool)
+        .await?
+        .unwrap_or_default();
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -1439,23 +1695,40 @@ pub async fn request_thumbnail(
         if !pending.insert(asset_id.clone()) {
             return Ok(false);
         }
+        if pending.len() > 256 {
+            pending.remove(&asset_id);
+            return Err(
+                "The preview queue is busy; this preview can be requested again when visible"
+                    .into(),
+            );
+        }
     }
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    state
+        .thumbnail_cancellations
+        .lock()
+        .await
+        .insert(asset_id.clone(), cancellation.clone());
     let pool = state.pool.clone();
     let data_dir = state.data_dir.clone();
     let workers = state.thumbnail_workers.clone();
     let pending = state.thumbnail_pending.clone();
+    let cancellations = state.thumbnail_cancellations.clone();
     let queued_asset_id = asset_id.clone();
     tauri::async_runtime::spawn(async move {
-        let result: CommandResult<()> = async {
-            let _worker = workers
-                .acquire_owned()
-                .await
-                .map_err(|_| "Thumbnail worker queue is unavailable".to_string())?;
+        let result: CommandResult<bool> = async {
+            let _worker = tokio::select! {
+                worker = workers.acquire_owned() => worker.map_err(|_| "Thumbnail worker queue is unavailable".to_string())?,
+                _ = cancellation.cancelled() => return Ok(false),
+            };
+            if cancellation.is_cancelled() {
+                return Ok(false);
+            }
             if read_cached_thumbnail(&queued_asset_id, &pool)
                 .await?
                 .is_some()
             {
-                return Ok(());
+                return Ok(true);
             }
             let revision = current_thumbnail_revision(&queued_asset_id, &pool).await?;
             let render_path = path.clone();
@@ -1470,6 +1743,9 @@ pub async fn request_thumbnail(
             })
             .await
             .map_err(|error| error.to_string())??;
+            if cancellation.is_cancelled() {
+                return Ok(false);
+            }
             if current_thumbnail_revision(&queued_asset_id, &pool)
                 .await
                 .ok()
@@ -1478,14 +1754,16 @@ pub async fn request_thumbnail(
             {
                 persist_thumbnail(&queued_asset_id, &revision, &bytes, &pool, &data_dir).await?;
             }
-            Ok(())
+            Ok(true)
         }
         .await;
         pending.lock().await.remove(&queued_asset_id);
+        cancellations.lock().await.remove(&queued_asset_id);
         match result {
-            Ok(()) => {
+            Ok(true) => {
                 let _ = app.emit("preview-ready", &queued_asset_id);
             }
+            Ok(false) => {}
             Err(message) => {
                 log::warn!("Thumbnail generation failed for {queued_asset_id}: {message}");
                 let _ = app.emit(
@@ -1499,6 +1777,17 @@ pub async fn request_thumbnail(
         }
     });
     Ok(true)
+}
+
+#[tauri::command]
+pub async fn cancel_thumbnail_request(
+    asset_id: String,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    if let Some(cancellation) = state.thumbnail_cancellations.lock().await.get(&asset_id) {
+        cancellation.cancel();
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1743,7 +2032,7 @@ async fn read_cached_thumbnail(
     let path = PathBuf::from(row.get::<String, _>("cache_path"));
     match tokio::fs::read(path).await {
         Ok(bytes) => {
-            let _ = sqlx::query("UPDATE thumbnails SET created_at = ? WHERE id = ?")
+            let _ = sqlx::query("UPDATE thumbnails SET created_at = ? WHERE id = ? AND julianday(created_at) < julianday('now', '-1 hour')")
                 .bind(now())
                 .bind(row.get::<String, _>("id"))
                 .execute(pool)
@@ -1813,15 +2102,87 @@ async fn persist_thumbnail(
     tokio::fs::rename(&temporary, &path)
         .await
         .map_err(|error| error.to_string())?;
-    sqlx::query("INSERT INTO thumbnails (id, asset_id, fingerprint, renderer_version, preset, width, height, cache_path, created_at) VALUES (?, ?, ?, 'cpu-4', 'studio', 480, 360, ?, ?) ON CONFLICT(asset_id, fingerprint, renderer_version, preset, width, height) DO UPDATE SET cache_path = excluded.cache_path, created_at = excluded.created_at")
+    sqlx::query("INSERT INTO thumbnails (id, asset_id, fingerprint, renderer_version, preset, width, height, cache_path, byte_size, created_at) VALUES (?, ?, ?, 'cpu-4', 'studio', 480, 360, ?, ?, ?) ON CONFLICT(asset_id, fingerprint, renderer_version, preset, width, height) DO UPDATE SET cache_path = excluded.cache_path, byte_size = excluded.byte_size, created_at = excluded.created_at")
         .bind(Uuid::new_v4().to_string())
         .bind(asset_id)
         .bind(fingerprint)
         .bind(path.to_string_lossy().to_string())
+        .bind(bytes.len() as i64)
         .bind(now())
         .execute(pool)
         .await
         .map_err(db_error)?;
+    Ok(())
+}
+
+async fn persist_viewer_mesh(
+    asset_id: &str,
+    fingerprint: &str,
+    plate_key: &str,
+    bytes: &[u8],
+    pool: &sqlx::SqlitePool,
+    data_dir: &Path,
+) -> CommandResult<()> {
+    let directory = data_dir.join("viewer-meshes");
+    tokio::fs::create_dir_all(&directory)
+        .await
+        .map_err(|error| error.to_string())?;
+    let cache_name =
+        blake3::hash(format!("{asset_id}|{fingerprint}|{plate_key}|viewer-2").as_bytes())
+            .to_hex()
+            .to_string();
+    let path = directory.join(format!("{cache_name}.vlm"));
+    let temporary = directory.join(format!("{}.tmp", Uuid::new_v4()));
+    tokio::fs::write(&temporary, bytes)
+        .await
+        .map_err(|error| error.to_string())?;
+    tokio::fs::rename(&temporary, &path)
+        .await
+        .map_err(|error| error.to_string())?;
+    let timestamp = now();
+    sqlx::query("INSERT INTO viewer_meshes (id, asset_id, fingerprint, plate_key, renderer_version, cache_path, byte_size, last_accessed_at, created_at) VALUES (?, ?, ?, ?, 'viewer-2', ?, ?, ?, ?) ON CONFLICT(asset_id, fingerprint, plate_key, renderer_version) DO UPDATE SET cache_path = excluded.cache_path, byte_size = excluded.byte_size, last_accessed_at = excluded.last_accessed_at")
+        .bind(Uuid::new_v4().to_string())
+        .bind(asset_id)
+        .bind(fingerprint)
+        .bind(plate_key)
+        .bind(path.to_string_lossy().to_string())
+        .bind(bytes.len() as i64)
+        .bind(&timestamp)
+        .bind(&timestamp)
+        .execute(pool)
+        .await
+        .map_err(db_error)?;
+    cleanup_viewer_mesh_cache(pool, 1024 * 1024 * 1024).await
+}
+
+async fn cleanup_viewer_mesh_cache(pool: &sqlx::SqlitePool, max_bytes: i64) -> CommandResult<()> {
+    let total: i64 = sqlx::query_scalar("SELECT COALESCE(SUM(byte_size), 0) FROM viewer_meshes")
+        .fetch_one(pool)
+        .await
+        .map_err(db_error)?;
+    if total <= max_bytes {
+        return Ok(());
+    }
+    let rows = sqlx::query(
+        "SELECT id, cache_path, byte_size FROM viewer_meshes ORDER BY last_accessed_at DESC",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(db_error)?;
+    let mut retained = 0_i64;
+    for row in rows {
+        let size = row.get::<i64, _>("byte_size").max(0);
+        if retained.saturating_add(size) <= max_bytes {
+            retained += size;
+            continue;
+        }
+        let _ = tokio::fs::remove_file(PathBuf::from(row.get::<String, _>("cache_path"))).await;
+        sqlx::query("DELETE FROM viewer_meshes WHERE id = ?")
+            .bind(row.get::<String, _>("id"))
+            .execute(pool)
+            .await
+            .map_err(db_error)?;
+    }
     Ok(())
 }
 
@@ -1864,6 +2225,10 @@ fn summary_from_row(row: sqlx::sqlite::SqliteRow) -> Result<ModelSummary, String
         bundle_mode: row
             .try_get("bundle_mode")
             .unwrap_or_else(|_| "automatic".to_string()),
+        storage_mode: row
+            .try_get("storage_mode")
+            .unwrap_or_else(|_| "linked".to_string()),
+        cover_photo_id: row.try_get("cover_photo_id").unwrap_or(None),
         dimensions_mm: metadata.dimensions_mm,
     })
 }
@@ -1889,6 +2254,62 @@ fn fts_query(input: &str) -> String {
         .map(|token| format!("\"{}\"*", token.replace('"', "")))
         .collect::<Vec<_>>()
         .join(" AND ")
+}
+
+fn model_sort_name(sort: Option<&str>) -> &'static str {
+    match sort {
+        Some("name") => "name",
+        Some("added") => "added",
+        Some("opened") => "opened",
+        _ => "modified",
+    }
+}
+
+fn model_cursor_condition(sort: Option<&str>, cursor: &ModelPageCursor) -> CommandResult<String> {
+    let sort = model_sort_name(sort);
+    if cursor.sort != sort {
+        return Err("Model page cursor does not match the selected sort".into());
+    }
+    let primary = sql_string(&cursor.primary);
+    let secondary = sql_string(&cursor.secondary);
+    let name = sql_string(&cursor.name);
+    let id = sql_string(&cursor.id);
+    let name_tail = format!("((m.display_name COLLATE NOCASE) > ({name} COLLATE NOCASE) OR ((m.display_name COLLATE NOCASE) = ({name} COLLATE NOCASE) AND m.id > {id}))");
+    Ok(match sort {
+        "name" => name_tail,
+        "added" => format!("m.added_at < {primary} OR (m.added_at = {primary} AND {name_tail})"),
+        "opened" => {
+            let opened = "COALESCE(m.last_opened_at, '')";
+            let modified = "COALESCE(m.asset_modified_at, m.updated_at)";
+            format!("{opened} < {primary} OR ({opened} = {primary} AND ({modified} < {secondary} OR ({modified} = {secondary} AND {name_tail})))")
+        }
+        _ => {
+            let modified = "COALESCE(m.asset_modified_at, m.updated_at)";
+            format!("{modified} < {primary} OR ({modified} = {primary} AND {name_tail})")
+        }
+    })
+}
+
+fn encode_model_cursor(sort: Option<&str>, item: &ModelSummary) -> CommandResult<String> {
+    let sort = model_sort_name(sort);
+    let primary = match sort {
+        "name" => item.display_name.to_lowercase(),
+        "added" => item.added_at.clone(),
+        "opened" => item.last_opened_at.clone().unwrap_or_default(),
+        _ => item.modified_at.clone(),
+    };
+    serde_json::to_string(&ModelPageCursor {
+        sort: sort.into(),
+        primary,
+        secondary: if sort == "opened" {
+            item.modified_at.clone()
+        } else {
+            String::new()
+        },
+        name: item.display_name.to_lowercase(),
+        id: item.id.clone(),
+    })
+    .map_err(|error| error.to_string())
 }
 
 fn model_query_sql(query: &ModelQuery) -> CommandResult<String> {
@@ -1922,17 +2343,13 @@ fn model_query_sql(query: &ModelQuery) -> CommandResult<String> {
         if minimum < 0 {
             return Err("Minimum file count cannot be negative".into());
         }
-        conditions.push(format!(
-            "(SELECT COUNT(*) FROM model_assets qma WHERE qma.model_id = m.id) >= {minimum}"
-        ));
+        conditions.push(format!("m.asset_count >= {minimum}"));
     }
     if let Some(maximum) = query.max_asset_count {
         if maximum < 0 {
             return Err("Maximum file count cannot be negative".into());
         }
-        conditions.push(format!(
-            "(SELECT COUNT(*) FROM model_assets qma WHERE qma.model_id = m.id) <= {maximum}"
-        ));
+        conditions.push(format!("m.asset_count <= {maximum}"));
     }
     if query.duplicates.unwrap_or(false) || query.duplicate_kind.is_some() {
         let kind = query.duplicate_kind.as_deref().unwrap_or("any");
@@ -2020,6 +2437,13 @@ async fn count_smart_collection(
     rule: &SmartCollectionRule,
     pool: &sqlx::SqlitePool,
 ) -> CommandResult<i64> {
+    sqlx::query_scalar(&smart_collection_count_sql(rule)?)
+        .fetch_one(pool)
+        .await
+        .map_err(db_error)
+}
+
+fn smart_collection_count_sql(rule: &SmartCollectionRule) -> CommandResult<String> {
     let format = rule
         .format
         .clone()
@@ -2029,23 +2453,18 @@ async fn count_smart_collection(
     let availability = rule.availability.clone().unwrap_or_default();
     let tag = rule.tag_id.clone().unwrap_or_default();
     let rich = smart_rule_sql(rule)?;
-    let sql = format!("SELECT COUNT(*) FROM models m LEFT JOIN assets pa ON pa.id = m.primary_asset_id WHERE (? = '' OR EXISTS (SELECT 1 FROM model_assets fma JOIN assets fa ON fa.id = fma.asset_id WHERE fma.model_id = m.id AND CASE fa.extension WHEN 'stp' THEN 'step' ELSE fa.extension END = ?)) AND (? = '' OR (? = 'available' AND m.missing_since IS NULL) OR (? = 'offline' AND m.missing_since IS NOT NULL)) AND (? = '' OR EXISTS (SELECT 1 FROM model_tags mt WHERE mt.model_id = m.id AND mt.tag_id = ?)) AND ({rich})");
-    sqlx::query_scalar(&sql)
-        .bind(&format)
-        .bind(&format)
-        .bind(&availability)
-        .bind(&availability)
-        .bind(&availability)
-        .bind(&tag)
-        .bind(&tag)
-        .fetch_one(pool)
-        .await
-        .map_err(db_error)
+    let format = sql_string(&format);
+    let availability = sql_string(&availability);
+    let tag = sql_string(&tag);
+    Ok(format!("SELECT COUNT(*) FROM models m LEFT JOIN assets pa ON pa.id = m.primary_asset_id WHERE ({format} = '' OR EXISTS (SELECT 1 FROM model_assets fma JOIN assets fa ON fa.id = fma.asset_id WHERE fma.model_id = m.id AND CASE fa.extension WHEN 'stp' THEN 'step' ELSE fa.extension END = {format})) AND ({availability} = '' OR ({availability} = 'available' AND m.missing_since IS NULL) OR ({availability} = 'offline' AND m.missing_since IS NOT NULL)) AND ({tag} = '' OR EXISTS (SELECT 1 FROM model_tags mt WHERE mt.model_id = m.id AND mt.tag_id = {tag})) AND ({rich})"))
 }
 
 fn smart_rule_sql(rule: &SmartCollectionRule) -> CommandResult<String> {
-    if rule.version != 1 {
+    if ![1, 2].contains(&rule.version) {
         return Err("Unsupported smart collection rule version".into());
+    }
+    if rule.version < 2 && rule.rules.iter().any(|item| item.field == "custom") {
+        return Err("Custom-field rules require smart collection rule version 2".into());
     }
     if rule.rules.is_empty() {
         return Ok("1 = 1".into());
@@ -2121,12 +2540,13 @@ fn smart_rule_sql(rule: &SmartCollectionRule) -> CommandResult<String> {
                 }
             }
             "added" => date_rule_sql("m.added_at", &item.operator, string_value)?,
-            "modified" => date_rule_sql("COALESCE((SELECT MAX(project_asset.modified_at) FROM model_assets project_membership JOIN assets project_asset ON project_asset.id = project_membership.asset_id WHERE project_membership.model_id = m.id), m.updated_at)", &item.operator, string_value)?,
+            "modified" => date_rule_sql("COALESCE(m.asset_modified_at, m.updated_at)", &item.operator, string_value)?,
             "opened" => date_rule_sql("m.last_opened_at", &item.operator, string_value)?,
-            "fileCount" => numeric_rule_sql("(SELECT COUNT(*) FROM model_assets rma WHERE rma.model_id = m.id)", &item.operator, &item.value)?,
+            "fileCount" => numeric_rule_sql("m.asset_count", &item.operator, &item.value)?,
             "width" => numeric_rule_sql("CAST(json_extract(pa.metadata_json, '$.dimensionsMm[0]') AS REAL)", &item.operator, &item.value)?,
             "depth" => numeric_rule_sql("CAST(json_extract(pa.metadata_json, '$.dimensionsMm[1]') AS REAL)", &item.operator, &item.value)?,
             "height" => numeric_rule_sql("CAST(json_extract(pa.metadata_json, '$.dimensionsMm[2]') AS REAL)", &item.operator, &item.value)?,
+            "custom" => custom_field_rule_sql(item)?,
             _ => return Err(format!("Unknown smart collection field: {}", item.field)),
         };
         conditions.push(format!("({condition})"));
@@ -2139,6 +2559,66 @@ fn smart_rule_sql(rule: &SmartCollectionRule) -> CommandResult<String> {
         return Err("Smart collection match mode must be all or any".into());
     };
     Ok(conditions.join(joiner))
+}
+
+fn custom_field_rule_sql(rule: &QueryRule) -> CommandResult<String> {
+    let field_id = rule
+        .custom_field_id
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Custom-field rules need a field".to_string())?;
+    let field = sql_string(field_id);
+    let value_sql = "json_extract(rcv.value_json, '$')";
+    let comparison = if let Some(value) = rule.value.as_f64() {
+        if !value.is_finite() {
+            return Err("Custom number rules need a finite number".into());
+        }
+        let operator = match rule.operator.as_str() {
+            "is" => "=",
+            "greaterThan" => ">",
+            "lessThan" => "<",
+            "atLeast" => ">=",
+            "atMost" => "<=",
+            _ => return Err("Unknown custom number rule operator".into()),
+        };
+        format!("CAST({value_sql} AS REAL) {operator} {value}")
+    } else if let Some(value) = rule.value.as_bool() {
+        if rule.operator != "is" && rule.operator != "isNot" {
+            return Err("Unknown custom checkbox rule operator".into());
+        }
+        format!("CAST({value_sql} AS INTEGER) = {}", i64::from(value))
+    } else {
+        let value = rule
+            .value
+            .as_str()
+            .ok_or_else(|| "Custom-field rules need a scalar value".to_string())?;
+        let quoted = sql_string(value);
+        match rule.operator.as_str() {
+            "is" | "isNot" => format!("CAST({value_sql} AS TEXT) = {quoted}"),
+            "before" => {
+                NaiveDate::parse_from_str(value, "%Y-%m-%d")
+                    .map_err(|_| "Custom date rules need a valid calendar date".to_string())?;
+                format!("date(CAST({value_sql} AS TEXT)) < date({quoted})")
+            }
+            "after" => {
+                NaiveDate::parse_from_str(value, "%Y-%m-%d")
+                    .map_err(|_| "Custom date rules need a valid calendar date".to_string())?;
+                format!("date(CAST({value_sql} AS TEXT)) > date({quoted})")
+            }
+            "on" => {
+                NaiveDate::parse_from_str(value, "%Y-%m-%d")
+                    .map_err(|_| "Custom date rules need a valid calendar date".to_string())?;
+                format!("date(CAST({value_sql} AS TEXT)) = date({quoted})")
+            }
+            _ => return Err("Unknown custom text rule operator".into()),
+        }
+    };
+    let exists = format!("EXISTS (SELECT 1 FROM project_custom_values rcv WHERE rcv.model_id = m.id AND rcv.field_id = {field} AND {comparison})");
+    Ok(if rule.operator == "isNot" {
+        format!("NOT ({exists})")
+    } else {
+        exists
+    })
 }
 
 fn sql_string(value: &str) -> String {
@@ -2599,11 +3079,13 @@ mod tests {
                     field: "format".into(),
                     operator: "is".into(),
                     value: serde_json::json!("step"),
+                    custom_field_id: None,
                 },
                 QueryRule {
                     field: "fileCount".into(),
                     operator: "atLeast".into(),
                     value: serde_json::json!(3),
+                    custom_field_id: None,
                 },
             ],
             ..Default::default()
@@ -2611,28 +3093,44 @@ mod tests {
         let sql = smart_rule_sql(&rule).unwrap();
         assert!(sql.contains(" OR "));
         assert!(sql.contains("ELSE ra.extension END = 'step'"));
-        assert!(sql.contains("COUNT(*)"));
+        assert!(sql.contains("m.asset_count"));
 
         let unknown = SmartCollectionRule {
             rules: vec![QueryRule {
                 field: "rawSql".into(),
                 operator: "is".into(),
                 value: serde_json::json!("1 = 1"),
+                custom_field_id: None,
             }],
             ..Default::default()
         };
         assert!(smart_rule_sql(&unknown).is_err());
 
         let unsupported = SmartCollectionRule {
-            version: 2,
+            version: 3,
             rules: vec![QueryRule {
                 field: "favorite".into(),
                 operator: "is".into(),
                 value: serde_json::json!(true),
+                custom_field_id: None,
             }],
             ..Default::default()
         };
         assert!(smart_rule_sql(&unsupported).is_err());
+
+        let custom = SmartCollectionRule {
+            version: 2,
+            rules: vec![QueryRule {
+                field: "custom".into(),
+                operator: "is".into(),
+                value: serde_json::json!("Complete"),
+                custom_field_id: Some("field-status".into()),
+            }],
+            ..Default::default()
+        };
+        let custom_sql = smart_rule_sql(&custom).unwrap();
+        assert!(custom_sql.contains("project_custom_values"));
+        assert!(custom_sql.contains("field-status"));
     }
 
     #[test]
@@ -2689,6 +3187,28 @@ mod tests {
         .execute(&state.pool)
         .await
         .unwrap();
+        sqlx::query("INSERT INTO custom_field_definitions (id, name, field_type, options_json, created_at, updated_at) VALUES ('field', 'Finish', 'text', '[]', ?, ?)")
+            .bind(&timestamp).bind(&timestamp).execute(&state.pool).await.unwrap();
+        sqlx::query("INSERT INTO project_custom_values (model_id, field_id, value_json, updated_at) VALUES ('keeper', 'field', '\"matte\"', ?), ('source', 'field', '\"glossy\"', ?)")
+            .bind(&timestamp).bind(&timestamp).execute(&state.pool).await.unwrap();
+        sqlx::query("INSERT INTO project_photos (id, model_id, media_path, thumbnail_path, original_filename, mime_type, byte_size, width, height, caption, is_cover, created_at, updated_at) VALUES ('photo', 'source', 'project-photos/source/photo.jpg', 'project-photos/source/photo.thumb.png', 'photo.jpg', 'image/jpeg', 1, 1, 1, 'Finished', 1, ?, ?)")
+            .bind(&timestamp).bind(&timestamp).execute(&state.pool).await.unwrap();
+        sqlx::query("INSERT INTO project_bom_items (id, model_id, kind, linked_asset_id, name, quantity, unit, created_at, updated_at) VALUES ('bom', 'source', 'printed', 'asset-source', 'Printed body', 1, 'pcs', ?, ?)")
+            .bind(&timestamp).bind(&timestamp).execute(&state.pool).await.unwrap();
+        sqlx::query("INSERT INTO assembly_steps (id, model_id, title, instructions, created_at, updated_at) VALUES ('step', 'source', 'Attach body', 'Press fit', ?, ?)")
+            .bind(&timestamp).bind(&timestamp).execute(&state.pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO assembly_step_bom_items (step_id, bom_item_id) VALUES ('step', 'bom')",
+        )
+        .execute(&state.pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO assembly_step_photos (step_id, photo_id) VALUES ('step', 'photo')",
+        )
+        .execute(&state.pool)
+        .await
+        .unwrap();
 
         merge_projects_impl("keeper", &["source".into()], &state.pool)
             .await
@@ -2714,10 +3234,32 @@ mod tests {
         .fetch_one(&state.pool)
         .await
         .unwrap();
+        let custom_value_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM project_custom_values WHERE model_id = 'keeper'",
+        )
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+        let photo_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM project_photos WHERE model_id = 'keeper'")
+                .fetch_one(&state.pool)
+                .await
+                .unwrap();
+        let bom_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM project_bom_items WHERE model_id = 'keeper' AND linked_asset_id = 'asset-source'")
+            .fetch_one(&state.pool).await.unwrap();
+        let step_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM assembly_steps WHERE model_id = 'keeper'")
+                .fetch_one(&state.pool)
+                .await
+                .unwrap();
         assert_eq!(asset_count, 2);
         assert_eq!(source_count, 0);
         assert_eq!(row.get::<i64, _>("favorite"), 1);
         assert_eq!(row.get::<String, _>("bundle_mode"), "manual");
         assert_eq!(tag_count, 1);
+        assert_eq!(custom_value_count, 2);
+        assert_eq!(photo_count, 1);
+        assert_eq!(bom_count, 1);
+        assert_eq!(step_count, 1);
     }
 }

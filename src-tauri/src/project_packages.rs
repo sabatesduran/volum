@@ -929,7 +929,10 @@ fn validate_package(path: &Path) -> CommandResult<ProjectPackageManifest> {
     let mut archive_names = HashSet::new();
     for index in 0..archive.len() {
         let entry = archive.by_index(index).map_err(|error| error.to_string())?;
-        let name = entry.name().to_string();
+        let name = entry
+            .name()
+            .map_err(|error| error.to_string())?
+            .into_owned();
         if !safe_archive_path(&name) || !archive_names.insert(name.clone()) {
             return Err("The project package contains an unsafe or duplicate path".into());
         }
@@ -1645,11 +1648,12 @@ async fn import_field_definition(
         suffix += 1;
     }
     let id = Uuid::new_v4().to_string();
-    let order: f64 =
-        sqlx::query_scalar("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM custom_field_definitions")
-            .fetch_one(pool)
-            .await
-            .map_err(db_error)?;
+    let order: f64 = sqlx::query_scalar(
+        "SELECT CAST(COALESCE(MAX(sort_order), 0) + 1 AS REAL) FROM custom_field_definitions",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(db_error)?;
     sqlx::query("INSERT INTO custom_field_definitions (id, name, field_type, unit, options_json, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
         .bind(&id)
         .bind(name)

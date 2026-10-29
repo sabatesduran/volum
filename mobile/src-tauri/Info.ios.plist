@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>NSCameraUsageDescription</key>
+    <string>Volum scans pairing codes and captures workshop photos for your projects.</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>Volum lets you attach selected photos to projects in your private library.</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Volum connects to your desktop through your private Tailscale network.</string>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+      <key>NSAllowsArbitraryLoads</key>
+      <true/>
+    </dict>
+  </dict>
+</plist>

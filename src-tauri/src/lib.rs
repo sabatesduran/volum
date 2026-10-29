@@ -1,18 +1,25 @@
 mod backups;
 mod commands;
+mod companion;
 mod domain;
 mod geometry;
 mod indexing;
+mod menu_bar;
 mod parsers;
 mod previews;
 mod project_docs;
 mod project_packages;
 mod project_storage;
+mod remote;
 mod state;
 mod web_sources;
 
 use sqlx::Row;
 use state::AppState;
+use std::{
+    net::{IpAddr, SocketAddr},
+    path::PathBuf,
+};
 use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -28,11 +35,26 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
+            if let Err(error) = menu_bar::show_main_window(app) {
+                log::warn!("Could not show the existing Volum window: {error}");
             }
         }))
+        .on_window_event(|window, event| {
+            if window.label() != "main" {
+                return;
+            }
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let menu_bar = window
+                    .app_handle()
+                    .try_state::<menu_bar::MenuBarState>();
+                if menu_bar.is_some_and(|state| state.is_enabled()) {
+                    api.prevent_close();
+                    if let Err(error) = window.hide() {
+                        log::warn!("Could not hide Volum in the menu bar: {error}");
+                    }
+                }
+            }
+        })
         .setup(|app| {
             let data_dir = app
                 .path()
@@ -41,7 +63,32 @@ pub fn run() {
             backups::apply_pending_restore(&data_dir)?;
             let state = tauri::async_runtime::block_on(AppState::initialize(&data_dir))?;
             tauri::async_runtime::block_on(seed_defaults(&state))?;
+            let companion = companion::CompanionController::new(
+                &data_dir,
+                state.clone(),
+                Some(app.handle().clone()),
+            )?;
+            let remote = remote::RemoteController::new(&data_dir)?;
+            let remote_sync = remote.clone();
             app.manage(state);
+            app.manage(menu_bar::MenuBarState::default());
+            app.manage(companion.clone());
+            app.manage(remote);
+            let menu_bar_requested = {
+                let state = app.state::<AppState>();
+                tauri::async_runtime::block_on(menu_bar::load_enabled(&state))?
+            };
+            if menu_bar_requested {
+                if let Err(error) = menu_bar::enable_at_startup(app.handle()) {
+                    log::warn!("Could not enable the Volum menu bar: {error}");
+                    let state = app.state::<AppState>();
+                    tauri::async_runtime::block_on(menu_bar::persist_enabled(&state, false))?;
+                }
+            }
+            tauri::async_runtime::spawn(remote_sync.run_background_sync());
+            tauri::async_runtime::spawn(async move {
+                companion.start_if_enabled().await;
+            });
             let maintenance_handle = app.handle().clone();
             let maintenance_data_dir = data_dir.clone();
             tauri::async_runtime::spawn(async move {
@@ -77,7 +124,7 @@ pub fn run() {
                 {
                     for row in rows {
                         let id: String = row.get("id");
-                        let _ = indexing::start(id, &state, handle.clone()).await;
+                        let _ = indexing::start(id, &state, Some(handle.clone())).await;
                     }
                 }
             });
@@ -133,6 +180,7 @@ pub fn run() {
             commands::get_preferences,
             commands::list_slicer_apps,
             commands::save_preference,
+            menu_bar::set_menu_bar_enabled,
             commands::open_asset,
             commands::open_external_url,
             commands::reveal_asset,
@@ -183,9 +231,154 @@ pub fn run() {
             web_sources::save_web_source,
             web_sources::delete_web_source,
             web_sources::attach_web_source_file,
+            companion::get_companion_status,
+            companion::set_companion_enabled,
+            companion::set_companion_organization_writes,
+            companion::create_companion_pairing,
+            companion::revoke_companion_device,
+            remote::get_backend_connection,
+            remote::connect_remote_server,
+            remote::use_local_backend,
+            remote::use_remote_backend,
+            remote::forget_remote_server,
+            remote::remote_json_request,
+            remote::remote_binary_request,
+            remote::remote_upload_file,
+            remote::remote_upload_photo,
+            remote::configure_remote_mirror,
+            remote::sync_remote_mirror,
+            remote::open_remote_asset,
+            remote::reveal_remote_asset,
+            remote::list_mirrored_assets,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Volum");
+        .build(tauri::generate_context!())
+        .expect("error while building Volum")
+        .run(|app, event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                if let Err(error) = menu_bar::show_main_window(app) {
+                    log::warn!("Could not reopen Volum: {error}");
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
+        });
+}
+
+/// Runs Volum's canonical library service without a desktop window.
+///
+/// The headless process uses the same database, migrations, indexer, managed-library
+/// implementation, authentication, and API router as Desktop host mode.
+pub async fn run_headless() -> Result<(), String> {
+    let data_dir = std::env::var_os("VOLUM_CONFIG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/config"));
+    let library_dir = std::env::var_os("VOLUM_LIBRARY_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/library"));
+    let bind = std::env::var("VOLUM_BIND").unwrap_or_else(|_| "0.0.0.0:43821".into());
+    let bind: SocketAddr = bind.parse().map_err(|_| {
+        "VOLUM_BIND must be an IP address and port, for example 0.0.0.0:43821".to_string()
+    })?;
+    let public_url = std::env::var("VOLUM_PUBLIC_URL").unwrap_or_else(|_| {
+        let ip = match bind.ip() {
+            IpAddr::V4(ip) if ip.is_unspecified() => IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+            IpAddr::V6(ip) if ip.is_unspecified() => IpAddr::V6(std::net::Ipv6Addr::LOCALHOST),
+            ip => ip,
+        };
+        match ip {
+            IpAddr::V4(ip) => format!("http://{ip}:{}", bind.port()),
+            IpAddr::V6(ip) => format!("http://[{ip}]:{}", bind.port()),
+        }
+    });
+    let organization_writes = env_flag("VOLUM_ORGANIZATION_WRITES", true)?;
+
+    backups::apply_pending_restore(&data_dir)?;
+    let state = AppState::initialize(&data_dir).await?;
+    seed_defaults(&state).await?;
+    let has_managed_root: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM library_roots WHERE root_kind = 'managed' AND status != 'removed')",
+    )
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    if !has_managed_root {
+        project_storage::configure_managed_library_impl(
+            library_dir.to_string_lossy().to_string(),
+            &state,
+            None,
+        )
+        .await?;
+    }
+
+    let controller = companion::CompanionController::new(&data_dir, state.clone(), None)?;
+    controller
+        .start_headless(companion::HeadlessServerOptions {
+            bind,
+            public_url,
+            organization_writes,
+        })
+        .await?;
+
+    if let Err(error) = project_storage::import_managed_inbox_impl(&state).await {
+        log::warn!("Could not import the managed Inbox: {error}");
+    }
+    let roots = sqlx::query("SELECT id FROM library_roots WHERE status != 'removed'")
+        .fetch_all(&state.pool)
+        .await
+        .map_err(|error| error.to_string())?;
+    for row in roots {
+        let id: String = row.get("id");
+        if let Err(error) = indexing::start(id, &state, None).await {
+            log::warn!("Could not start a library watcher: {error}");
+        }
+    }
+
+    let status = controller.status().await;
+    let print_pairing = env_flag("VOLUM_PRINT_PAIRING", status.devices.is_empty())?;
+    println!(
+        "volumd listening at {}",
+        status.base_url.as_deref().unwrap_or("unknown URL")
+    );
+    if print_pairing {
+        let pairing = controller.create_pairing().await?;
+        println!("Pair a client within 5 minutes using this payload:");
+        println!("{}", pairing.qr_payload);
+    }
+    wait_for_shutdown_signal().await?;
+    controller.stop().await;
+    state.pool.close().await;
+    Ok(())
+}
+
+fn env_flag(name: &str, default: bool) -> Result<bool, String> {
+    let Some(value) = std::env::var_os(name) else {
+        return Ok(default);
+    };
+    match value.to_string_lossy().trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => Err(format!("{name} must be true or false")),
+    }
+}
+
+async fn wait_for_shutdown_signal() -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .map_err(|error| format!("Could not install the shutdown handler: {error}"))?;
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => result.map_err(|error| error.to_string()),
+            _ = terminate.recv() => Ok(()),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c()
+            .await
+            .map_err(|error| error.to_string())
+    }
 }
 
 async fn seed_defaults(state: &AppState) -> Result<(), String> {

@@ -473,3 +473,66 @@ export interface PreviewPayload {
   bytes: number[];
   sourceAssetId: string;
 }
+
+export interface CompanionDevice {
+  id: string;
+  name: string;
+  platform: string;
+  pairedAt: string;
+  lastSeenAt?: string;
+}
+
+export interface CompanionStatus {
+  enabled: boolean;
+  running: boolean;
+  serverId: string;
+  tailnetIp?: string;
+  dnsName?: string;
+  baseUrl?: string;
+  port: number;
+  devices: CompanionDevice[];
+  organizationWrites: boolean;
+  lastError?: string;
+}
+
+export interface CompanionPairingInfo {
+  serverId: string;
+  serverName: string;
+  baseUrl: string;
+  secret: string;
+  expiresAt: string;
+  qrPayload: string;
+}
+
+export interface BackendConnectionStatus {
+  mode: "local" | "remote";
+  configured: boolean;
+  online: boolean;
+  serverId?: string;
+  serverName?: string;
+  baseUrl?: string;
+  mirrorEnabled: boolean;
+  mirrorPath?: string;
+  lastSyncAt?: string;
+  lastError?: string;
+}
+
+export interface MirrorSyncReport {
+  downloaded: number;
+  uploaded: number;
+  removed: number;
+  conflicts: number;
+  unchanged: number;
+  totalAssets: number;
+  cursor: number;
+  completedAt: string;
+}
+
+export interface MirroredAsset {
+  id: string;
+  projectName: string;
+  filename: string;
+  byteSize: number;
+  modifiedAt: string;
+  mirrorPath: string;
+}

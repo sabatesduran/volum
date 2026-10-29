@@ -170,6 +170,7 @@ fn parse_archive(path: &Path) -> Result<Mesh, String> {
             let mut entry = archive.by_index(index).map_err(|error| error.to_string())?;
             if !entry
                 .name()
+                .map_err(|error| error.to_string())?
                 .to_ascii_lowercase()
                 .ends_with(&format!(".{preferred}"))
             {
@@ -196,7 +197,8 @@ fn validate_archive<R: Read + std::io::Seek>(archive: &mut ZipArchive<R>) -> Res
     let mut total = 0_u64;
     for index in 0..archive.len() {
         let entry = archive.by_index(index).map_err(|error| error.to_string())?;
-        let path = Path::new(entry.name());
+        let name = entry.name().map_err(|error| error.to_string())?;
+        let path = Path::new(name.as_ref());
         if path.is_absolute()
             || path
                 .components()
@@ -436,7 +438,7 @@ fn parse_3mf_archive<R: Read + Seek>(
             archive
                 .by_index(index)
                 .ok()
-                .map(|entry| entry.name().to_string())
+                .and_then(|entry| entry.name().ok().map(|name| name.into_owned()))
         })
         .collect();
     let model_paths = archive_paths
@@ -595,15 +597,13 @@ fn parse_bambu_model_settings<R: Read>(
     loop {
         match reader.read_event_into(&mut buffer) {
             Ok(Event::Start(event)) => match xml_local_name(event.name().as_ref()) {
-                b"object" => {
-                    current_object = xml_attribute(&event, b"id").and_then(|id| id.parse().ok())
+                "object" => {
+                    current_object = xml_attribute(&event, "id").and_then(|id| id.parse().ok())
                 }
-                b"part" => {
-                    current_part = xml_attribute(&event, b"id").and_then(|id| id.parse().ok())
-                }
-                b"plate" => current_plate = Some((None, HashSet::new())),
-                b"model_instance" => in_model_instance = true,
-                b"metadata" => apply_bambu_metadata(
+                "part" => current_part = xml_attribute(&event, "id").and_then(|id| id.parse().ok()),
+                "plate" => current_plate = Some((None, HashSet::new())),
+                "model_instance" => in_model_instance = true,
+                "metadata" => apply_bambu_metadata(
                     &event,
                     current_object,
                     current_part,
@@ -614,7 +614,7 @@ fn parse_bambu_model_settings<R: Read>(
                 _ => {}
             },
             Ok(Event::Empty(event)) => {
-                if xml_local_name(event.name().as_ref()) == b"metadata" {
+                if xml_local_name(event.name().as_ref()) == "metadata" {
                     apply_bambu_metadata(
                         &event,
                         current_object,
@@ -626,13 +626,13 @@ fn parse_bambu_model_settings<R: Read>(
                 }
             }
             Ok(Event::End(event)) => match xml_local_name(event.name().as_ref()) {
-                b"part" => current_part = None,
-                b"object" => {
+                "part" => current_part = None,
+                "object" => {
                     current_part = None;
                     current_object = None;
                 }
-                b"model_instance" => in_model_instance = false,
-                b"plate" => {
+                "model_instance" => in_model_instance = false,
+                "plate" => {
                     if let Some((Some(index), objects)) = current_plate.take() {
                         project.plate_objects.insert(index, objects);
                     }
@@ -656,10 +656,10 @@ fn apply_bambu_metadata(
     current_plate: Option<&mut (Option<u32>, HashSet<u32>)>,
     project: &mut ThreeMfProject,
 ) {
-    let Some(key) = xml_attribute(event, b"key") else {
+    let Some(key) = xml_attribute(event, "key") else {
         return;
     };
-    let Some(value) = xml_attribute(event, b"value") else {
+    let Some(value) = xml_attribute(event, "value") else {
         return;
     };
     if key == "extruder" {
@@ -689,8 +689,8 @@ fn parse_3mf_part<R: Read>(source: R) -> Result<ThreeMfPart, String> {
         match reader.read_event_into(&mut buffer) {
             Ok(Event::Start(event)) => {
                 let binding = event.name();
-                if xml_local_name(binding.as_ref()) == b"object" {
-                    if let Some(id) = xml_attribute(&event, b"id").and_then(|id| id.parse().ok()) {
+                if xml_local_name(binding.as_ref()) == "object" {
+                    if let Some(id) = xml_attribute(&event, "id").and_then(|id| id.parse().ok()) {
                         current = Some((id, ThreeMfObject::default()));
                     }
                 }
@@ -698,44 +698,43 @@ fn parse_3mf_part<R: Read>(source: R) -> Result<ThreeMfPart, String> {
             Ok(Event::Empty(event)) => {
                 let binding = event.name();
                 match xml_local_name(binding.as_ref()) {
-                    b"vertex" => {
+                    "vertex" => {
                         if let Some((_, object)) = current.as_mut() {
                             let point = Vec3::new(
-                                xml_number(&event, b"x").unwrap_or_default(),
-                                xml_number(&event, b"y").unwrap_or_default(),
-                                xml_number(&event, b"z").unwrap_or_default(),
+                                xml_number(&event, "x").unwrap_or_default(),
+                                xml_number(&event, "y").unwrap_or_default(),
+                                xml_number(&event, "z").unwrap_or_default(),
                             );
                             if point.finite() {
                                 object.mesh.vertices.push(point);
                             }
                         }
                     }
-                    b"triangle" => {
+                    "triangle" => {
                         if let Some((_, object)) = current.as_mut() {
                             if let (Some(v1), Some(v2), Some(v3)) = (
-                                xml_index(&event, b"v1"),
-                                xml_index(&event, b"v2"),
-                                xml_index(&event, b"v3"),
+                                xml_index(&event, "v1"),
+                                xml_index(&event, "v2"),
+                                xml_index(&event, "v3"),
                             ) {
                                 object.mesh.triangles.push([v1, v2, v3]);
                             }
                         }
                     }
-                    b"component" => {
+                    "component" => {
                         if let Some((_, object)) = current.as_mut() {
                             if let Some(instance) = parse_3mf_instance(&event) {
                                 object.components.push(instance);
                             }
                         }
                     }
-                    b"item" => {
+                    "item" => {
                         if let Some(instance) = parse_3mf_instance(&event) {
                             part.build.push(instance);
                         }
                     }
-                    b"object" => {
-                        if let Some(id) =
-                            xml_attribute(&event, b"id").and_then(|id| id.parse().ok())
+                    "object" => {
+                        if let Some(id) = xml_attribute(&event, "id").and_then(|id| id.parse().ok())
                         {
                             part.objects.insert(id, ThreeMfObject::default());
                         }
@@ -745,7 +744,7 @@ fn parse_3mf_part<R: Read>(source: R) -> Result<ThreeMfPart, String> {
             }
             Ok(Event::End(event)) => {
                 let binding = event.name();
-                if xml_local_name(binding.as_ref()) == b"object" {
+                if xml_local_name(binding.as_ref()) == "object" {
                     if let Some((id, object)) = current.take() {
                         part.objects.insert(id, object);
                     }
@@ -762,9 +761,9 @@ fn parse_3mf_part<R: Read>(source: R) -> Result<ThreeMfPart, String> {
 
 fn parse_3mf_instance(event: &quick_xml::events::BytesStart<'_>) -> Option<ThreeMfInstance> {
     Some(ThreeMfInstance {
-        object_id: xml_attribute(event, b"objectid")?.parse().ok()?,
-        path: xml_attribute(event, b"path").map(|path| normalize_3mf_path(&path)),
-        transform: Transform::parse(xml_attribute(event, b"transform")),
+        object_id: xml_attribute(event, "objectid")?.parse().ok()?,
+        path: xml_attribute(event, "path").map(|path| normalize_3mf_path(&path)),
+        transform: Transform::parse(xml_attribute(event, "transform")),
     })
 }
 
@@ -1090,22 +1089,22 @@ fn normalize_3mf_path(path: &str) -> String {
     path.trim_start_matches('/').replace('\\', "/")
 }
 
-fn xml_local_name(name: &[u8]) -> &[u8] {
-    name.rsplit(|value| *value == b':').next().unwrap_or(name)
+fn xml_local_name(name: &str) -> &str {
+    name.rsplit(':').next().unwrap_or(name)
 }
 
-fn xml_attribute(event: &quick_xml::events::BytesStart<'_>, name: &[u8]) -> Option<String> {
+fn xml_attribute(event: &quick_xml::events::BytesStart<'_>, name: &str) -> Option<String> {
     event.attributes().flatten().find_map(|attribute| {
         (xml_local_name(attribute.key.as_ref()) == name)
-            .then(|| String::from_utf8_lossy(attribute.value.as_ref()).into_owned())
+            .then(|| attribute.value.as_ref().to_string())
     })
 }
 
-fn xml_number(event: &quick_xml::events::BytesStart<'_>, name: &[u8]) -> Option<f32> {
+fn xml_number(event: &quick_xml::events::BytesStart<'_>, name: &str) -> Option<f32> {
     xml_attribute(event, name)?.parse().ok()
 }
 
-fn xml_index(event: &quick_xml::events::BytesStart<'_>, name: &[u8]) -> Option<usize> {
+fn xml_index(event: &quick_xml::events::BytesStart<'_>, name: &str) -> Option<usize> {
     xml_attribute(event, name)?.parse().ok()
 }
 

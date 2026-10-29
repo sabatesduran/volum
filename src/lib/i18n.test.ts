@@ -26,6 +26,16 @@ describe("language resolution", () => {
     expect(translate("Finding your 3D projects…", "es")).toBe("Buscando tus proyectos 3D…");
   });
 
+  it("localizes the optional menu bar setting", () => {
+    expect(translate("Menu bar", "ca")).toBe("Barra de menús");
+    expect(translate("Show Volum in the menu bar", "es")).toBe("Mostrar Volum en la barra de menús");
+  });
+
+  it("localizes project handoff", () => {
+    expect(translate("Open on phone", "ca")).toBe("Obre al telèfon");
+    expect(translate("Open on phone", "es")).toBe("Abrir en el teléfono");
+  });
+
   it("lets an explicit preference override the system language", () => {
     expect(resolveLanguagePreference("system", "ca-ES")).toBe("ca");
     expect(resolveLanguagePreference("system", "fr-FR")).toBe("en");

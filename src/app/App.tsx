@@ -1,11 +1,12 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Sidebar } from "../components/Sidebar";
 import { Topbar } from "../components/Topbar";
 import { Onboarding } from "../components/Onboarding";
 import { IndexStatus } from "../components/IndexStatus";
 import { LibraryView } from "../features/library/LibraryView";
-import { api, onBackendEvent } from "../lib/tauri/api";
+import { api, initializeBackend, onBackendEvent, remoteServerStatus } from "../lib/tauri/api";
+import { RemoteOfflineScreen } from "../features/settings/RemoteConnection";
 import { t } from "../lib/i18n";
 import { useAppStore } from "./store";
 import { useShallow } from "zustand/react/shallow";
@@ -27,9 +28,25 @@ export default function App() {
   const [webImportOpen, setWebImportOpen] = useState(false);
   const [projectImportOpen, setProjectImportOpen] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
-  const { data: roots, isLoading } = useQuery({ queryKey: ["roots"], queryFn: api.roots });
+  const { data: backend, isLoading: backendLoading } = useQuery({ queryKey: ["backend-connection"], queryFn: initializeBackend, retry: false });
+  const { data: remoteStatus, isError: remoteOffline } = useQuery({ queryKey: ["remote-status", backend?.serverId], queryFn: remoteServerStatus, enabled: backend?.mode === "remote" && backend.online, refetchInterval: 10_000, retry: 1 });
+  const remoteRevision = useRef<string | undefined>(undefined);
+  const { data: roots, isLoading } = useQuery({ queryKey: ["roots", backend?.mode, backend?.serverId], queryFn: api.roots, enabled: Boolean(backend && (backend.mode === "local" || backend.online)) });
   const { data: preferences } = useQuery({ queryKey: ["preferences"], queryFn: api.preferences });
   const [preferencesHydrated, setPreferencesHydrated] = useState(false);
+
+  useEffect(() => {
+    if (!remoteStatus?.libraryRevision) return;
+    if (remoteRevision.current && remoteRevision.current !== remoteStatus.libraryRevision) {
+      ["roots", "models", "folders", "collections", "tags", "materials", "saved-searches", "custom-fields", "web-sources", "duplicate-groups", "duplicate-stats"]
+        .forEach((key) => void queryClient.invalidateQueries({ queryKey: [key] }));
+      if (selectedModelId) {
+        void queryClient.invalidateQueries({ queryKey: ["model", selectedModelId] });
+        void queryClient.invalidateQueries({ queryKey: ["project-documentation", selectedModelId] });
+      }
+    }
+    remoteRevision.current = remoteStatus.libraryRevision;
+  }, [queryClient, remoteStatus?.libraryRevision, selectedModelId]);
 
   useEffect(() => {
     if (!preferences || preferencesHydrated) return;
@@ -106,7 +123,8 @@ export default function App() {
     };
   }, [queryClient, selectedModelId]);
 
-  if (isLoading) return <div className="app-boot"><div className="app-boot__mark">V</div></div>;
+  if (backendLoading || (backend?.mode === "local" && isLoading) || (backend?.mode === "remote" && backend.online && isLoading)) return <div className="app-boot"><div className="app-boot__mark">V</div></div>;
+  if (backend?.mode === "remote" && (!backend.online || remoteOffline)) return <RemoteOfflineScreen status={{ ...backend, online: false, lastError: backend.lastError ?? (remoteOffline ? "The server stopped responding." : undefined) }} onChange={(next) => { queryClient.setQueryData(["backend-connection"], next); void queryClient.invalidateQueries(); }} />;
   if (!roots?.length) return <Onboarding onComplete={() => queryClient.invalidateQueries({ queryKey: ["roots"] })} />;
 
   return (
@@ -116,7 +134,7 @@ export default function App() {
         {!selectedModelId && view !== "settings" && view !== "web" && <Topbar onNewProject={() => setNewProjectOpen(true)} onImport={() => setWebImportOpen(true)} onProjectImport={() => setProjectImportOpen(true)} onFilters={() => setFiltersOpen((value) => !value)} />}
         <Suspense fallback={<div className="detail-loading"><span>{t("Preparing project…")}</span></div>}>{selectedModelId ? <ModelDetailView modelId={selectedModelId} /> : view === "settings" ? <SettingsView /> : view === "web" ? <WebImportsView onImport={() => setWebImportOpen(true)} /> : <LibraryView roots={roots} onNewCollection={() => setNewCollection(true)} onNewProject={() => setNewProjectOpen(true)} />}</Suspense>
       </main>
-      {!selectedModelId && <IndexStatus roots={roots} />}
+      {!selectedModelId && backend?.mode !== "remote" && <IndexStatus roots={roots} />}
       <Suspense fallback={null}>
         {filtersOpen && !selectedModelId && <FilterPanel onClose={() => setFiltersOpen(false)} />}
         {newCollection && <NewCollectionDialog onClose={() => setNewCollection(false)} />}

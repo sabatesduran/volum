@@ -1,0 +1,30 @@
+services:
+  volumd:
+    build:
+      context: .
+    image: ghcr.io/sabatesduran/volum-server:latest
+    container_name: volumd
+    restart: unless-stopped
+    ports:
+      - "43821:43821"
+    environment:
+      VOLUM_BIND: "0.0.0.0:43821"
+      # Set this to the Tailscale IP or MagicDNS origin clients can reach.
+      # Example: http://volum-nas.example.ts.net:43821
+      VOLUM_PUBLIC_URL: "${VOLUM_PUBLIC_URL:?Set VOLUM_PUBLIC_URL to the Tailscale or HTTPS origin clients can reach}"
+      VOLUM_ORGANIZATION_WRITES: "${VOLUM_ORGANIZATION_WRITES:-true}"
+      VOLUM_PRINT_PAIRING: "${VOLUM_PRINT_PAIRING:-false}"
+    volumes:
+      - volum-config:/config
+      - volum-library:/library
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  volum-config:
+  volum-library:

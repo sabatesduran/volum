@@ -13,12 +13,13 @@ use std::{
 use tokio::sync::{Mutex, RwLock, Semaphore};
 use tokio_util::sync::CancellationToken;
 
+#[derive(Clone)]
 pub struct AppState {
     pub pool: SqlitePool,
     pub data_dir: PathBuf,
     pub scans: Arc<RwLock<HashMap<String, ScanStatus>>>,
     pub pauses: Arc<RwLock<HashMap<String, Arc<AtomicBool>>>>,
-    pub watchers: std::sync::Mutex<HashMap<String, RecommendedWatcher>>,
+    pub watchers: Arc<std::sync::Mutex<HashMap<String, RecommendedWatcher>>>,
     pub thumbnail_workers: Arc<Semaphore>,
     pub thumbnail_pending: Arc<Mutex<HashSet<String>>>,
     pub thumbnail_cancellations: Arc<Mutex<HashMap<String, CancellationToken>>>,
@@ -84,7 +85,7 @@ impl AppState {
             data_dir: data_dir.to_path_buf(),
             scans: Arc::new(RwLock::new(HashMap::new())),
             pauses: Arc::new(RwLock::new(HashMap::new())),
-            watchers: std::sync::Mutex::new(HashMap::new()),
+            watchers: Arc::new(std::sync::Mutex::new(HashMap::new())),
             thumbnail_workers: Arc::new(Semaphore::new(2)),
             thumbnail_pending: Arc::new(Mutex::new(HashSet::new())),
             thumbnail_cancellations: Arc::new(Mutex::new(HashMap::new())),
@@ -154,7 +155,7 @@ mod tests {
             .fetch_one(&state.pool)
             .await
             .unwrap();
-        assert_eq!(versions.last(), Some(&12));
+        assert_eq!(versions.last(), Some(&13));
         assert_eq!(trash_columns, 2);
     }
 }

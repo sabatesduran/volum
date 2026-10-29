@@ -12,6 +12,14 @@ Thank you for helping improve Volum.
 
 ## Development checks
 
+Install the repository's secret-scanning hook once before committing:
+
+```bash
+pre-commit install
+```
+
+The hook and CI use Gitleaks to reject credentials, private keys, and tokens. Never commit real secrets, local `.env` files, signing material, credential stores, or sensitive fixtures. Use explicit placeholders in examples. If a real secret is ever committed, revoke or rotate it immediately; deleting it in a later commit is not sufficient.
+
 ```bash
 npm ci
 npm run build

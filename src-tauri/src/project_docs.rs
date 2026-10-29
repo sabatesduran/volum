@@ -259,7 +259,7 @@ pub(crate) async fn store_project_photo(
         order
     } else {
         sqlx::query_scalar(
-            "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM project_photos WHERE model_id = ?",
+            "SELECT CAST(COALESCE(MAX(sort_order), 0) + 1 AS REAL) FROM project_photos WHERE model_id = ?",
         )
         .bind(model_id)
         .fetch_one(&state.pool)
@@ -305,6 +305,8 @@ pub(crate) async fn store_project_photo(
         let _ = std::fs::remove_file(state.data_dir.join("media").join(&thumbnail_path));
         return Err(db_error(error));
     }
+    touch_project(model_id, &state.pool).await?;
+    indexing::refresh_search(model_id, &state.pool).await?;
     photo_by_id(&photo_id, &state.pool).await
 }
 
@@ -312,6 +314,13 @@ pub(crate) async fn store_project_photo(
 pub async fn update_project_photo(
     input: ProjectPhotoUpdate,
     state: State<'_, AppState>,
+) -> CommandResult<ProjectPhoto> {
+    update_project_photo_impl(input, state.inner()).await
+}
+
+pub(crate) async fn update_project_photo_impl(
+    input: ProjectPhotoUpdate,
+    state: &AppState,
 ) -> CommandResult<ProjectPhoto> {
     let caption = input.caption.trim();
     if caption.chars().count() > 500 || !input.sort_order.is_finite() {
@@ -342,6 +351,7 @@ pub async fn update_project_photo(
         .await
         .map_err(db_error)?;
     transaction.commit().await.map_err(db_error)?;
+    touch_project(&model_id, &state.pool).await?;
     indexing::refresh_search(&model_id, &state.pool).await?;
     photo_by_id(&input.id, &state.pool).await
 }
@@ -352,21 +362,28 @@ pub async fn delete_project_photo(
     state: State<'_, AppState>,
 ) -> CommandResult<()> {
     let _guard = state.file_operation_lock.lock().await;
+    delete_project_photo_impl(&photo_id, state.inner()).await
+}
+
+pub(crate) async fn delete_project_photo_impl(
+    photo_id: &str,
+    state: &AppState,
+) -> CommandResult<()> {
     let row = sqlx::query(
         "SELECT model_id, media_path, thumbnail_path, is_cover FROM project_photos WHERE id = ?",
     )
-    .bind(&photo_id)
+    .bind(photo_id)
     .fetch_optional(&state.pool)
     .await
     .map_err(db_error)?
     .ok_or_else(|| "Project photo not found".to_string())?;
     let model_id: String = row.get("model_id");
     let media_path =
-        resolve_project_photo_path(&model_id, &row.get::<String, _>("media_path"), &state).await?;
+        resolve_project_photo_path(&model_id, &row.get::<String, _>("media_path"), state).await?;
     let thumbnail_path = safe_media_path(&state.data_dir, &row.get::<String, _>("thumbnail_path"))?;
     let was_cover = row.get::<i64, _>("is_cover") != 0;
     sqlx::query("DELETE FROM project_photos WHERE id = ?")
-        .bind(&photo_id)
+        .bind(photo_id)
         .execute(&state.pool)
         .await
         .map_err(db_error)?;
@@ -380,6 +397,7 @@ pub async fn delete_project_photo(
             .await
             .map_err(db_error)?;
     }
+    touch_project(&model_id, &state.pool).await?;
     indexing::refresh_search(&model_id, &state.pool).await
 }
 
@@ -389,6 +407,15 @@ pub async fn get_project_photo(
     thumbnail: bool,
     state: State<'_, AppState>,
 ) -> CommandResult<tauri::ipc::Response> {
+    let (bytes, _) = project_photo_bytes(&photo_id, thumbnail, state.inner()).await?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+pub(crate) async fn project_photo_bytes(
+    photo_id: &str,
+    thumbnail: bool,
+    state: &AppState,
+) -> CommandResult<(Vec<u8>, String)> {
     let row = sqlx::query(
         "SELECT model_id, media_path, thumbnail_path, mime_type FROM project_photos WHERE id = ?",
     )
@@ -405,12 +432,17 @@ pub async fn get_project_photo(
     let path = if thumbnail {
         safe_media_path(&state.data_dir, &relative)?
     } else {
-        resolve_project_photo_path(&row.get::<String, _>("model_id"), &relative, &state).await?
+        resolve_project_photo_path(&row.get::<String, _>("model_id"), &relative, state).await?
     };
     let bytes = tokio::fs::read(path)
         .await
         .map_err(|_| "Project photo is unavailable".to_string())?;
-    Ok(tauri::ipc::Response::new(bytes))
+    let mime_type = if thumbnail {
+        "image/png".to_string()
+    } else {
+        row.get("mime_type")
+    };
+    Ok((bytes, mime_type))
 }
 
 #[tauri::command]
@@ -434,6 +466,13 @@ pub async fn custom_field_definitions(
 pub async fn save_custom_field_definition(
     input: CustomFieldInput,
     state: State<'_, AppState>,
+) -> CommandResult<CustomFieldDefinition> {
+    save_custom_field_definition_impl(input, &state).await
+}
+
+pub(crate) async fn save_custom_field_definition_impl(
+    input: CustomFieldInput,
+    state: &AppState,
 ) -> CommandResult<CustomFieldDefinition> {
     validate_field_input(&input)?;
     let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
@@ -489,10 +528,12 @@ pub async fn save_custom_field_definition(
     let order = if let Some(row) = existing {
         row.get::<f64, _>("sort_order")
     } else {
-        sqlx::query_scalar("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM custom_field_definitions")
-            .fetch_one(&state.pool)
-            .await
-            .map_err(db_error)?
+        sqlx::query_scalar(
+            "SELECT CAST(COALESCE(MAX(sort_order), 0) + 1 AS REAL) FROM custom_field_definitions",
+        )
+        .fetch_one(&state.pool)
+        .await
+        .map_err(db_error)?
     };
     sqlx::query("INSERT INTO custom_field_definitions (id, name, field_type, unit, options_json, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name, field_type = excluded.field_type, unit = excluded.unit, options_json = excluded.options_json, updated_at = excluded.updated_at")
         .bind(&id)
@@ -528,9 +569,16 @@ pub async fn delete_custom_field_definition(
     field_id: String,
     state: State<'_, AppState>,
 ) -> CommandResult<()> {
+    delete_custom_field_definition_impl(&field_id, &state).await
+}
+
+pub(crate) async fn delete_custom_field_definition_impl(
+    field_id: &str,
+    state: &AppState,
+) -> CommandResult<()> {
     let model_ids: Vec<String> =
         sqlx::query_scalar("SELECT model_id FROM project_custom_values WHERE field_id = ?")
-            .bind(&field_id)
+            .bind(field_id)
             .fetch_all(&state.pool)
             .await
             .map_err(db_error)?;
@@ -549,6 +597,13 @@ pub async fn delete_custom_field_definition(
 pub async fn set_project_custom_value(
     input: ProjectCustomValueInput,
     state: State<'_, AppState>,
+) -> CommandResult<()> {
+    set_project_custom_value_impl(input, state.inner()).await
+}
+
+pub(crate) async fn set_project_custom_value_impl(
+    input: ProjectCustomValueInput,
+    state: &AppState,
 ) -> CommandResult<()> {
     ensure_project(&input.model_id, &state.pool).await?;
     let row =
@@ -580,6 +635,7 @@ pub async fn set_project_custom_value(
             .await
             .map_err(db_error)?;
     }
+    touch_project(&input.model_id, &state.pool).await?;
     indexing::refresh_search(&input.model_id, &state.pool).await
 }
 
@@ -587,6 +643,13 @@ pub async fn set_project_custom_value(
 pub async fn save_project_bom_item(
     input: ProjectBomItemInput,
     state: State<'_, AppState>,
+) -> CommandResult<ProjectBomItem> {
+    save_project_bom_item_impl(input, state.inner()).await
+}
+
+pub(crate) async fn save_project_bom_item_impl(
+    input: ProjectBomItemInput,
+    state: &AppState,
 ) -> CommandResult<ProjectBomItem> {
     validate_bom_input(&input, &state.pool).await?;
     let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
@@ -613,7 +676,7 @@ pub async fn save_project_bom_item(
         row.get("sort_order")
     } else {
         sqlx::query_scalar(
-            "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM project_bom_items WHERE model_id = ?",
+            "SELECT CAST(COALESCE(MAX(sort_order), 0) + 1 AS REAL) FROM project_bom_items WHERE model_id = ?",
         )
         .bind(&input.model_id)
         .fetch_one(&state.pool)
@@ -639,6 +702,7 @@ pub async fn save_project_bom_item(
         .execute(&state.pool)
         .await
         .map_err(db_error)?;
+    touch_project(&input.model_id, &state.pool).await?;
     indexing::refresh_search(&input.model_id, &state.pool).await?;
     bom_by_id(&id, &state.pool).await
 }
@@ -648,9 +712,16 @@ pub async fn delete_project_bom_item(
     item_id: String,
     state: State<'_, AppState>,
 ) -> CommandResult<()> {
+    delete_project_bom_item_impl(&item_id, state.inner()).await
+}
+
+pub(crate) async fn delete_project_bom_item_impl(
+    item_id: &str,
+    state: &AppState,
+) -> CommandResult<()> {
     let model_id: String =
         sqlx::query_scalar("SELECT model_id FROM project_bom_items WHERE id = ?")
-            .bind(&item_id)
+            .bind(item_id)
             .fetch_optional(&state.pool)
             .await
             .map_err(db_error)?
@@ -660,6 +731,7 @@ pub async fn delete_project_bom_item(
         .execute(&state.pool)
         .await
         .map_err(db_error)?;
+    touch_project(&model_id, &state.pool).await?;
     indexing::refresh_search(&model_id, &state.pool).await
 }
 
@@ -667,6 +739,13 @@ pub async fn delete_project_bom_item(
 pub async fn save_assembly_step(
     input: AssemblyStepInput,
     state: State<'_, AppState>,
+) -> CommandResult<AssemblyStep> {
+    save_assembly_step_impl(input, state.inner()).await
+}
+
+pub(crate) async fn save_assembly_step_impl(
+    input: AssemblyStepInput,
+    state: &AppState,
 ) -> CommandResult<AssemblyStep> {
     validate_step_input(&input, &state.pool).await?;
     let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
@@ -693,7 +772,7 @@ pub async fn save_assembly_step(
         row.get("sort_order")
     } else {
         sqlx::query_scalar(
-            "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM assembly_steps WHERE model_id = ?",
+            "SELECT CAST(COALESCE(MAX(sort_order), 0) + 1 AS REAL) FROM assembly_steps WHERE model_id = ?",
         )
         .bind(&input.model_id)
         .fetch_one(&state.pool)
@@ -746,6 +825,7 @@ pub async fn save_assembly_step(
         .map_err(db_error)?;
     }
     transaction.commit().await.map_err(db_error)?;
+    touch_project(&input.model_id, &state.pool).await?;
     indexing::refresh_search(&input.model_id, &state.pool).await?;
     step_by_id(&id, &state.pool).await
 }
@@ -755,8 +835,15 @@ pub async fn delete_assembly_step(
     step_id: String,
     state: State<'_, AppState>,
 ) -> CommandResult<()> {
+    delete_assembly_step_impl(&step_id, state.inner()).await
+}
+
+pub(crate) async fn delete_assembly_step_impl(
+    step_id: &str,
+    state: &AppState,
+) -> CommandResult<()> {
     let model_id: String = sqlx::query_scalar("SELECT model_id FROM assembly_steps WHERE id = ?")
-        .bind(&step_id)
+        .bind(step_id)
         .fetch_optional(&state.pool)
         .await
         .map_err(db_error)?
@@ -766,6 +853,7 @@ pub async fn delete_assembly_step(
         .execute(&state.pool)
         .await
         .map_err(db_error)?;
+    touch_project(&model_id, &state.pool).await?;
     indexing::refresh_search(&model_id, &state.pool).await
 }
 
@@ -888,7 +976,7 @@ async fn transfer_custom_values(
             }
             let new_id = Uuid::new_v4().to_string();
             let order: f64 = sqlx::query_scalar(
-                "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM custom_field_definitions",
+                "SELECT CAST(COALESCE(MAX(sort_order), 0) + 1 AS REAL) FROM custom_field_definitions",
             )
             .fetch_one(&mut **transaction)
             .await
@@ -1210,6 +1298,16 @@ async fn ensure_project(model_id: &str, pool: &SqlitePool) -> CommandResult<()> 
     } else {
         Ok(())
     }
+}
+
+async fn touch_project(model_id: &str, pool: &SqlitePool) -> CommandResult<()> {
+    sqlx::query("UPDATE models SET updated_at = ? WHERE id = ?")
+        .bind(now())
+        .bind(model_id)
+        .execute(pool)
+        .await
+        .map_err(db_error)?;
+    Ok(())
 }
 
 async fn photo_by_id(id: &str, pool: &SqlitePool) -> CommandResult<ProjectPhoto> {

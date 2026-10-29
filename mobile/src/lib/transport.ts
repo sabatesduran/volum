@@ -1,0 +1,254 @@
+import { Channel, invoke } from "@tauri-apps/api/core";
+import { appCacheDir, join } from "@tauri-apps/api/path";
+import { remove, writeFile } from "@tauri-apps/plugin-fs";
+import type { Credential, PairingPayload, ProjectDocumentation, UploadProgress, UploadResult } from "../types";
+
+interface NativeResponse {
+  status: number;
+  contentType?: string;
+  body: string;
+}
+
+interface ErrorEnvelope {
+  error?: { code?: string; message?: string; retryable?: boolean };
+}
+
+export class CompanionError extends Error {
+  constructor(message: string, readonly status = 0, readonly code = "request_failed") {
+    super(message);
+  }
+}
+
+const CONNECTION_ERROR_MESSAGES = new Set([
+  "Could not reach Volum Desktop through Tailscale.",
+  "Volum Desktop did not respond. Check that it is open and Companion Access is on.",
+  "The connection to Volum Desktop failed.",
+]);
+
+export function isConnectionError(reason: unknown) {
+  if (reason instanceof CompanionError && reason.code === "connection_failed") return true;
+  const message = reason instanceof Error ? reason.message : String(reason);
+  return CONNECTION_ERROR_MESSAGES.has(message);
+}
+
+export function retryCompanionQuery(failureCount: number, error: unknown) {
+  return !isConnectionError(error) && failureCount < 1;
+}
+
+type JsonMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+
+async function nativeJson<T>(baseUrl: string, path: string, token?: string, body?: unknown, method?: JsonMethod): Promise<T> {
+  const response = await invoke<NativeResponse>("companion_json_request", {
+    request: { baseUrl, path, token, body, method }
+  });
+  if (response.status < 200 || response.status >= 300) {
+    let envelope: ErrorEnvelope = {};
+    try { envelope = JSON.parse(response.body) as ErrorEnvelope; } catch { /* non-JSON errors are normalized below */ }
+    throw new CompanionError(envelope.error?.message ?? `Volum Desktop returned ${response.status}`, response.status, envelope.error?.code);
+  }
+  if (!response.body) return undefined as T;
+  try { return JSON.parse(response.body) as T; }
+  catch { throw new CompanionError("Volum Desktop returned an unreadable response", response.status, "invalid_response"); }
+}
+
+export async function pairWithDesktop(payload: PairingPayload): Promise<Credential> {
+  const platform = /android/i.test(navigator.userAgent) ? "Android" : /iphone|ipad/i.test(navigator.userAgent) ? "iOS" : "Companion";
+  const result = await nativeJson<{ serverId: string; deviceId: string; token: string; protocolVersion: number }>(
+    payload.baseUrl,
+    "/pair",
+    undefined,
+    { secret: payload.secret, deviceName: deviceName(), platform }
+  );
+  if (result.serverId !== payload.serverId || result.protocolVersion !== 1) throw new CompanionError("This Volum Desktop identity changed during pairing.");
+  return { serverId: result.serverId, serverName: payload.serverName, baseUrl: payload.baseUrl, deviceId: result.deviceId, token: result.token };
+}
+
+export function requestJson<T>(credential: Credential, path: string): Promise<T> {
+  return nativeJson<T>(credential.baseUrl, path, credential.token, undefined, "GET");
+}
+
+export function mutateJson<T>(credential: Credential, path: string, method: Exclude<JsonMethod, "GET">, body?: unknown): Promise<T> {
+  return nativeJson<T>(credential.baseUrl, path, credential.token, body, method);
+}
+
+export async function requestMedia(credential: Credential, path: string, mimeType = "image/png"): Promise<string> {
+  return URL.createObjectURL(await requestBlob(credential, path, mimeType));
+}
+
+export async function requestBlob(credential: Credential, path: string, mimeType = "application/octet-stream"): Promise<Blob> {
+  const bytes = await requestBinary(credential, path);
+  return new Blob([bytes], { type: mimeType });
+}
+
+export function requestBinary(credential: Credential, path: string): Promise<ArrayBuffer> {
+  return requestMediaResponse(credential, path).then((response) => {
+    if (response.status !== 200) throw new CompanionError("Volum Desktop returned an invalid media response.");
+    return response.bytes;
+  });
+}
+
+export interface MediaResponse {
+  status: 200 | 304;
+  etag?: string;
+  contentType?: string;
+  bytes: ArrayBuffer;
+}
+
+export async function requestMediaResponse(
+  credential: Credential,
+  path: string,
+  ifNoneMatch?: string,
+): Promise<MediaResponse> {
+  const envelope = await invoke<ArrayBuffer>("companion_media_request", {
+    request: {
+      baseUrl: credential.baseUrl,
+      path,
+      token: credential.token,
+      ifNoneMatch,
+    },
+  });
+  return parseMediaEnvelope(envelope);
+}
+
+export function parseMediaEnvelope(envelope: ArrayBuffer): MediaResponse {
+  const bytes = new Uint8Array(envelope);
+  if (bytes.byteLength < 10 || String.fromCharCode(...bytes.subarray(0, 4)) !== "VMC1") {
+    throw new CompanionError("Volum Desktop returned an unreadable media response.");
+  }
+  const view = new DataView(envelope);
+  const status = view.getUint16(4, true);
+  const etagLength = view.getUint16(6, true);
+  const contentTypeLength = view.getUint16(8, true);
+  const bodyOffset = 10 + etagLength + contentTypeLength;
+  if (
+    (status !== 200 && status !== 304)
+    || bodyOffset > bytes.byteLength
+    || (status === 304 && bodyOffset !== bytes.byteLength)
+  ) {
+    throw new CompanionError("Volum Desktop returned an unreadable media response.");
+  }
+  const decoder = new TextDecoder();
+  const etag = decoder.decode(bytes.subarray(10, 10 + etagLength)) || undefined;
+  const contentType = decoder.decode(bytes.subarray(10 + etagLength, bodyOffset)) || undefined;
+  return {
+    status,
+    etag,
+    contentType,
+    bytes: envelope.slice(bodyOffset),
+  };
+}
+
+export async function uploadProjectFile(
+  credential: Credential,
+  filePath: string,
+  filename: string,
+  destination: { projectId: string } | { projectName: string },
+  onProgress: (progress: UploadProgress) => void,
+  uploadId: string,
+): Promise<UploadResult> {
+  const progress = new Channel<UploadProgress>();
+  progress.onmessage = onProgress;
+  return invoke<UploadResult>("companion_upload_file", {
+    request: {
+      baseUrl: credential.baseUrl,
+      token: credential.token,
+      filePath,
+      filename,
+      uploadId,
+      ...destination
+    },
+    progress
+  });
+}
+
+export async function uploadProjectPhoto(
+  credential: Credential,
+  file: File,
+  projectId: string,
+  caption: string,
+  ifUnmodifiedSince: string,
+  onProgress: (progress: UploadProgress) => void,
+  uploadId: string,
+): Promise<ProjectDocumentation> {
+  if (file.size <= 0 || file.size > 25 * 1024 * 1024) throw new CompanionError("Project photos must be non-empty and at most 25 MB.");
+  const extension = photoExtension(file);
+  const originalBase = file.name.replace(/\.[^.]+$/, "").trim().slice(0, 140) || "workshop-photo";
+  const filename = `${originalBase}.${extension}`;
+  const temporaryPath = await join(await appCacheDir(), `volum-photo-${crypto.randomUUID()}.${extension}`);
+  await writeFile(temporaryPath, new Uint8Array(await file.arrayBuffer()));
+  const progress = new Channel<UploadProgress>();
+  progress.onmessage = onProgress;
+  try {
+    return await invoke<ProjectDocumentation>("companion_upload_photo", {
+      request: {
+        baseUrl: credential.baseUrl,
+        token: credential.token,
+        filePath: temporaryPath,
+        filename,
+        projectId,
+        caption: caption.trim(),
+        ifUnmodifiedSince,
+        uploadId,
+      },
+      progress
+    });
+  } finally {
+    await remove(temporaryPath).catch(() => undefined);
+  }
+}
+
+export function cancelUpload(uploadId: string): Promise<boolean> {
+  return invoke<boolean>("companion_cancel_upload", { uploadId });
+}
+
+export function normalizeServerUrl(value: string): string {
+  const input = value.trim();
+  if (!input) throw new CompanionError("Enter your Volum Desktop Tailnet address.");
+  let url: URL;
+  const hasScheme = /^https?:\/\//i.test(input);
+  const rawIpv6 = !hasScheme && !input.startsWith("[") && (input.match(/:/g)?.length ?? 0) > 1;
+  try { url = new URL(hasScheme ? input : rawIpv6 ? `http://[${input}]` : `http://${input}`); }
+  catch { throw new CompanionError("That Tailnet address is not valid."); }
+  if (url.username || url.password || url.search || url.hash || (url.pathname && url.pathname !== "/")) {
+    throw new CompanionError("Enter only the Volum Desktop Tailnet address.");
+  }
+  url.port = "43821";
+  return url.origin;
+}
+
+export function filenameFromFilePath(value: string): string {
+  const path = value.split(/[?#]/, 1)[0];
+  const last = path.split(/[\\/]/).pop() ?? "";
+  let decoded = last;
+  try { decoded = decodeURIComponent(last); } catch { /* keep the original segment */ }
+  if (decoded.includes(":")) decoded = decoded.slice(decoded.lastIndexOf(":") + 1);
+  return decoded.split(/[\\/]/).pop() ?? "";
+}
+
+export function parsePairingPayload(value: string): PairingPayload {
+  let payload: Partial<PairingPayload>;
+  try { payload = JSON.parse(value) as Partial<PairingPayload>; }
+  catch { throw new CompanionError("That is not a Volum pairing code."); }
+  if (payload.version !== 1 || payload.transport !== "tailscale-http" || !payload.serverId || !payload.serverName || !payload.baseUrl || !payload.secret || !payload.expiresAt) {
+    throw new CompanionError("That is not a compatible Volum pairing code.");
+  }
+  if (Date.parse(payload.expiresAt) <= Date.now()) throw new CompanionError("This pairing code has expired. Create a new one on Volum Desktop.");
+  return payload as PairingPayload;
+}
+
+function deviceName(): string {
+  if (/ipad/i.test(navigator.userAgent)) return "iPad";
+  if (/iphone/i.test(navigator.userAgent)) return "iPhone";
+  if (/android/i.test(navigator.userAgent)) return "Android phone";
+  return "Volum mobile";
+}
+
+function photoExtension(file: File) {
+  if (file.type === "image/png") return "png";
+  if (file.type === "image/webp") return "webp";
+  if (file.type === "image/jpeg") return "jpg";
+  const extension = file.name.split(".").pop()?.toLowerCase();
+  if (extension === "jpeg") return "jpg";
+  if (extension && ["jpg", "png", "webp"].includes(extension)) return extension;
+  throw new CompanionError("Choose a JPEG, PNG, or WebP photo.");
+}

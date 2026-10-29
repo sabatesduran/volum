@@ -227,7 +227,7 @@ pub async fn start_scan(
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> CommandResult<()> {
-    indexing::start(root_id, &state, app).await
+    indexing::start(root_id, &state, Some(app)).await
 }
 
 #[tauri::command]
@@ -247,6 +247,13 @@ pub async fn get_scan_status(
 pub async fn list_folders(
     root_id: Option<String>,
     state: State<'_, AppState>,
+) -> CommandResult<Vec<Folder>> {
+    list_folders_impl(root_id, state.inner()).await
+}
+
+pub(crate) async fn list_folders_impl(
+    root_id: Option<String>,
+    state: &AppState,
 ) -> CommandResult<Vec<Folder>> {
     let rows = sqlx::query("SELECT f.id, f.root_id, f.parent_id, f.relative_path, f.name, COUNT(m.id) direct_count FROM folders f LEFT JOIN models m ON m.folder_id = f.id AND m.missing_since IS NULL AND m.trashed_at IS NULL WHERE (? IS NULL OR f.root_id = ?) AND f.relative_path != '' AND f.relative_path NOT LIKE 'Trash/%' GROUP BY f.id ORDER BY lower(f.relative_path)")
         .bind(&root_id)
@@ -292,6 +299,13 @@ pub async fn list_folders(
 pub async fn list_models(
     query: ModelQuery,
     state: State<'_, AppState>,
+) -> CommandResult<Page<ModelSummary>> {
+    list_models_impl(query, state.inner()).await
+}
+
+pub(crate) async fn list_models_impl(
+    query: ModelQuery,
+    state: &AppState,
 ) -> CommandResult<Page<ModelSummary>> {
     let search = fts_query(query.search.as_deref().unwrap_or(""));
     let search_match = if search.is_empty() {
@@ -474,6 +488,13 @@ pub async fn list_models(
 
 #[tauri::command]
 pub async fn get_model(model_id: String, state: State<'_, AppState>) -> CommandResult<ModelDetail> {
+    get_model_impl(model_id, state.inner()).await
+}
+
+pub(crate) async fn get_model_impl(
+    model_id: String,
+    state: &AppState,
+) -> CommandResult<ModelDetail> {
     let row = sqlx::query("SELECT m.id, m.display_name, m.folder_id, f.name folder_name, f.relative_path, m.primary_asset_id, COALESCE(pa.extension, '') primary_extension, m.favorite, m.added_at, COALESCE(m.asset_modified_at, m.updated_at) modified_at, m.last_opened_at, m.missing_since, m.bundle_mode, m.storage_mode, m.asset_count, COALESCE(pa.metadata_json, '{}') metadata_json, m.notes, r.id root_id, r.display_name root_name, r.path root_path FROM models m JOIN folders f ON f.id = m.folder_id JOIN library_roots r ON r.id = f.root_id LEFT JOIN assets pa ON pa.id = m.primary_asset_id WHERE m.id = ?").bind(&model_id).fetch_optional(&state.pool).await.map_err(db_error)?.ok_or_else(|| "Project not found".to_string())?;
     let notes = row.get("notes");
     let root_id = row.get("root_id");
@@ -511,8 +532,8 @@ pub async fn get_model(model_id: String, state: State<'_, AppState>) -> CommandR
         .await
         .map_err(db_error)?;
     let tags = tag_rows.into_iter().map(tag_from_row).collect();
-    let estimate = get_estimate(&model_id, &state).await?;
-    let web_source = web_sources::source_for_model(&model_id, &state).await?;
+    let estimate = get_estimate(&model_id, state).await?;
+    let web_source = web_sources::source_for_model(&model_id, state).await?;
     Ok(ModelDetail {
         summary,
         notes,
@@ -584,6 +605,10 @@ pub async fn save_notes(
 
 #[tauri::command]
 pub async fn list_saved_searches(state: State<'_, AppState>) -> CommandResult<Vec<SavedSearch>> {
+    list_saved_searches_impl(state.inner()).await
+}
+
+pub(crate) async fn list_saved_searches_impl(state: &AppState) -> CommandResult<Vec<SavedSearch>> {
     let rows = sqlx::query("SELECT id, name, query_json, created_at, updated_at FROM saved_searches ORDER BY sort_order, lower(name)")
         .fetch_all(&state.pool)
         .await
@@ -605,6 +630,13 @@ pub async fn save_saved_search(
     input: SavedSearchInput,
     state: State<'_, AppState>,
 ) -> CommandResult<SavedSearch> {
+    save_saved_search_impl(input, &state).await
+}
+
+pub(crate) async fn save_saved_search_impl(
+    input: SavedSearchInput,
+    state: &AppState,
+) -> CommandResult<SavedSearch> {
     let name = input.name.trim();
     if name.is_empty() || name.chars().count() > 80 {
         return Err("Saved search names must contain 1–80 characters".into());
@@ -622,11 +654,12 @@ pub async fn save_saved_search(
             .await
             .map_err(db_error)?;
     let created_at = created_at.unwrap_or_else(|| timestamp.clone());
-    let order: f64 =
-        sqlx::query_scalar("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM saved_searches")
-            .fetch_one(&state.pool)
-            .await
-            .map_err(db_error)?;
+    let order: f64 = sqlx::query_scalar(
+        "SELECT CAST(COALESCE(MAX(sort_order), 0) + 1 AS REAL) FROM saved_searches",
+    )
+    .fetch_one(&state.pool)
+    .await
+    .map_err(db_error)?;
     sqlx::query("INSERT INTO saved_searches (id, name, query_json, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name, query_json = excluded.query_json, updated_at = excluded.updated_at")
         .bind(&id)
         .bind(name)
@@ -651,6 +684,13 @@ pub async fn delete_saved_search(
     search_id: String,
     state: State<'_, AppState>,
 ) -> CommandResult<()> {
+    delete_saved_search_impl(&search_id, &state).await
+}
+
+pub(crate) async fn delete_saved_search_impl(
+    search_id: &str,
+    state: &AppState,
+) -> CommandResult<()> {
     sqlx::query("DELETE FROM saved_searches WHERE id = ?")
         .bind(search_id)
         .execute(&state.pool)
@@ -661,6 +701,10 @@ pub async fn delete_saved_search(
 
 #[tauri::command]
 pub async fn list_collections(state: State<'_, AppState>) -> CommandResult<Vec<Collection>> {
+    list_collections_impl(state.inner()).await
+}
+
+pub(crate) async fn list_collections_impl(state: &AppState) -> CommandResult<Vec<Collection>> {
     let rows = sqlx::query("SELECT c.id, c.name, c.symbol, c.color, c.created_at, c.kind, c.rule_json, COUNT(ci.model_id) model_count FROM collections c LEFT JOIN collection_items ci ON ci.collection_id = c.id GROUP BY c.id ORDER BY c.sort_order, lower(c.name)").fetch_all(&state.pool).await.map_err(db_error)?;
     let mut collections = Vec::with_capacity(rows.len());
     let mut smart_count_queries = Vec::new();
@@ -718,17 +762,29 @@ pub async fn create_collection(
     input: CollectionInput,
     state: State<'_, AppState>,
 ) -> CommandResult<Collection> {
+    create_collection_impl(input, state.inner()).await
+}
+
+pub(crate) async fn create_collection_impl(
+    mut input: CollectionInput,
+    state: &AppState,
+) -> CommandResult<Collection> {
+    input.name = input.name.trim().to_string();
     validate_collection(&input)?;
     let id = Uuid::new_v4().to_string();
     let timestamp = now();
-    let order: f64 = sqlx::query_scalar("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM collections")
-        .fetch_one(&state.pool)
-        .await
-        .map_err(db_error)?;
+    let order: f64 = sqlx::query_scalar(
+        "SELECT CAST(COALESCE(MAX(sort_order), 0) + 1 AS REAL) FROM collections",
+    )
+    .fetch_one(&state.pool)
+    .await
+    .map_err(db_error)?;
     let kind = if input.smart { "smart" } else { "manual" };
     let rule_json = serde_json::to_string(&input.rule.clone().unwrap_or_default())
         .map_err(|error| error.to_string())?;
-    sqlx::query("INSERT INTO collections (id, name, symbol, color, sort_order, created_at, updated_at, kind, rule_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(&id).bind(&input.name).bind(&input.symbol).bind(&input.color).bind(order).bind(&timestamp).bind(&timestamp).bind(kind).bind(rule_json).execute(&state.pool).await.map_err(db_error)?;
+    sqlx::query("INSERT INTO collections (id, name, symbol, color, sort_order, created_at, updated_at, kind, rule_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(&id).bind(&input.name).bind(&input.symbol).bind(&input.color).bind(order).bind(&timestamp).bind(&timestamp).bind(kind).bind(rule_json).execute(&state.pool).await.map_err(|error| {
+        if error.to_string().contains("UNIQUE") { "A collection with that name already exists".into() } else { db_error(error) }
+    })?;
     let model_count = if input.smart {
         count_smart_collection(input.rule.as_ref().unwrap(), &state.pool).await?
     } else {
@@ -752,11 +808,20 @@ pub async fn update_collection(
     input: CollectionInput,
     state: State<'_, AppState>,
 ) -> CommandResult<Collection> {
+    update_collection_impl(&collection_id, input, state.inner()).await
+}
+
+pub(crate) async fn update_collection_impl(
+    collection_id: &str,
+    mut input: CollectionInput,
+    state: &AppState,
+) -> CommandResult<Collection> {
+    input.name = input.name.trim().to_string();
     validate_collection(&input)?;
     let kind = if input.smart { "smart" } else { "manual" };
     let rule_json = serde_json::to_string(&input.rule.clone().unwrap_or_default())
         .map_err(|error| error.to_string())?;
-    sqlx::query(
+    let result = sqlx::query(
         "UPDATE collections SET name = ?, symbol = ?, color = ?, kind = ?, rule_json = ?, updated_at = ? WHERE id = ?",
     )
     .bind(&input.name)
@@ -765,34 +830,36 @@ pub async fn update_collection(
     .bind(kind)
     .bind(rule_json)
     .bind(now())
-    .bind(&collection_id)
+    .bind(collection_id)
     .execute(&state.pool)
     .await
-    .map_err(db_error)?;
+    .map_err(|error| {
+        if error.to_string().contains("UNIQUE") { "A collection with that name already exists".into() } else { db_error(error) }
+    })?;
+    if result.rows_affected() == 0 {
+        return Err("Collection not found".into());
+    }
     let model_ids: Vec<String> =
         sqlx::query_scalar("SELECT model_id FROM collection_items WHERE collection_id = ?")
-            .bind(&collection_id)
+            .bind(collection_id)
             .fetch_all(&state.pool)
             .await
             .map_err(db_error)?;
+    let timestamp = now();
     for id in &model_ids {
+        sqlx::query("UPDATE models SET updated_at = ? WHERE id = ?")
+            .bind(&timestamp)
+            .bind(id)
+            .execute(&state.pool)
+            .await
+            .map_err(db_error)?;
         indexing::refresh_search(id, &state.pool).await?;
     }
-    let model_count = if input.smart {
-        count_smart_collection(input.rule.as_ref().unwrap(), &state.pool).await?
-    } else {
-        model_ids.len() as i64
-    };
-    Ok(Collection {
-        id: collection_id,
-        name: input.name,
-        symbol: input.symbol,
-        color: input.color,
-        model_count,
-        created_at: now(),
-        smart: input.smart,
-        rule: input.rule,
-    })
+    list_collections_impl(state)
+        .await?
+        .into_iter()
+        .find(|collection| collection.id == collection_id)
+        .ok_or_else(|| "Collection not found".into())
 }
 
 #[tauri::command]
@@ -800,18 +867,35 @@ pub async fn delete_collection(
     collection_id: String,
     state: State<'_, AppState>,
 ) -> CommandResult<()> {
+    delete_collection_impl(&collection_id, state.inner()).await
+}
+
+pub(crate) async fn delete_collection_impl(
+    collection_id: &str,
+    state: &AppState,
+) -> CommandResult<()> {
     let ids: Vec<String> =
         sqlx::query_scalar("SELECT model_id FROM collection_items WHERE collection_id = ?")
-            .bind(&collection_id)
+            .bind(collection_id)
             .fetch_all(&state.pool)
             .await
             .map_err(db_error)?;
-    sqlx::query("DELETE FROM collections WHERE id = ?")
-        .bind(&collection_id)
+    let result = sqlx::query("DELETE FROM collections WHERE id = ?")
+        .bind(collection_id)
         .execute(&state.pool)
         .await
         .map_err(db_error)?;
+    if result.rows_affected() == 0 {
+        return Err("Collection not found".into());
+    }
+    let timestamp = now();
     for id in ids {
+        sqlx::query("UPDATE models SET updated_at = ? WHERE id = ?")
+            .bind(&timestamp)
+            .bind(&id)
+            .execute(&state.pool)
+            .await
+            .map_err(db_error)?;
         indexing::refresh_search(&id, &state.pool).await?;
     }
     Ok(())
@@ -823,13 +907,7 @@ pub async fn add_models_to_collection(
     model_ids: Vec<String>,
     state: State<'_, AppState>,
 ) -> CommandResult<()> {
-    ensure_manual_collection(&collection_id, &state.pool).await?;
-    let timestamp = now();
-    for (index, model_id) in model_ids.iter().enumerate() {
-        sqlx::query("INSERT OR IGNORE INTO collection_items (collection_id, model_id, position, added_at) VALUES (?, ?, ?, ?)").bind(&collection_id).bind(model_id).bind(index as f64).bind(&timestamp).execute(&state.pool).await.map_err(db_error)?;
-        indexing::refresh_search(model_id, &state.pool).await?;
-    }
-    Ok(())
+    set_models_collection_impl(&collection_id, &model_ids, true, state.inner()).await
 }
 
 #[tauri::command]
@@ -838,14 +916,59 @@ pub async fn remove_models_from_collection(
     model_ids: Vec<String>,
     state: State<'_, AppState>,
 ) -> CommandResult<()> {
-    ensure_manual_collection(&collection_id, &state.pool).await?;
+    set_models_collection_impl(&collection_id, &model_ids, false, state.inner()).await
+}
+
+pub(crate) async fn set_models_collection_impl(
+    collection_id: &str,
+    model_ids: &[String],
+    selected: bool,
+    state: &AppState,
+) -> CommandResult<()> {
+    ensure_manual_collection(collection_id, &state.pool).await?;
+    let timestamp = now();
+    let mut changed = Vec::new();
+    let mut transaction = state.pool.begin().await.map_err(db_error)?;
     for model_id in model_ids {
-        sqlx::query("DELETE FROM collection_items WHERE collection_id = ? AND model_id = ?")
-            .bind(&collection_id)
-            .bind(&model_id)
-            .execute(&state.pool)
-            .await
-            .map_err(db_error)?;
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM models WHERE id = ? AND trashed_at IS NULL)",
+        )
+        .bind(model_id)
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(db_error)?;
+        if !exists {
+            return Err("Project not found".into());
+        }
+        let result = if selected {
+            sqlx::query("INSERT OR IGNORE INTO collection_items (collection_id, model_id, position, added_at) VALUES (?, ?, (SELECT CAST(COALESCE(MAX(position), -1) + 1 AS REAL) FROM collection_items WHERE collection_id = ?), ?)")
+                .bind(collection_id)
+                .bind(model_id)
+                .bind(collection_id)
+                .bind(&timestamp)
+                .execute(&mut *transaction)
+                .await
+                .map_err(db_error)?
+        } else {
+            sqlx::query("DELETE FROM collection_items WHERE collection_id = ? AND model_id = ?")
+                .bind(collection_id)
+                .bind(model_id)
+                .execute(&mut *transaction)
+                .await
+                .map_err(db_error)?
+        };
+        if result.rows_affected() > 0 {
+            sqlx::query("UPDATE models SET updated_at = ? WHERE id = ?")
+                .bind(&timestamp)
+                .bind(model_id)
+                .execute(&mut *transaction)
+                .await
+                .map_err(db_error)?;
+            changed.push(model_id.clone());
+        }
+    }
+    transaction.commit().await.map_err(db_error)?;
+    for model_id in changed {
         indexing::refresh_search(&model_id, &state.pool).await?;
     }
     Ok(())
@@ -853,6 +976,10 @@ pub async fn remove_models_from_collection(
 
 #[tauri::command]
 pub async fn list_tags(state: State<'_, AppState>) -> CommandResult<Vec<Tag>> {
+    list_tags_impl(state.inner()).await
+}
+
+pub(crate) async fn list_tags_impl(state: &AppState) -> CommandResult<Vec<Tag>> {
     let rows = sqlx::query("SELECT t.id, t.name, t.color, COUNT(mt.model_id) model_count FROM tags t LEFT JOIN model_tags mt ON mt.tag_id = t.id GROUP BY t.id ORDER BY lower(t.name)")
         .fetch_all(&state.pool).await.map_err(db_error)?;
     Ok(rows.into_iter().map(tag_from_row).collect())
@@ -860,6 +987,10 @@ pub async fn list_tags(state: State<'_, AppState>) -> CommandResult<Vec<Tag>> {
 
 #[tauri::command]
 pub async fn save_tag(input: TagInput, state: State<'_, AppState>) -> CommandResult<Tag> {
+    save_tag_impl(input, state.inner()).await
+}
+
+pub(crate) async fn save_tag_impl(input: TagInput, state: &AppState) -> CommandResult<Tag> {
     let name = input.name.trim();
     if name.is_empty() || name.chars().count() > 40 {
         return Err("Tag names must contain 1–40 characters".into());
@@ -868,33 +999,61 @@ pub async fn save_tag(input: TagInput, state: State<'_, AppState>) -> CommandRes
         return Err("Tag color must be a hex color".into());
     }
     let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    let model_ids: Vec<String> =
+        sqlx::query_scalar("SELECT model_id FROM model_tags WHERE tag_id = ?")
+            .bind(&id)
+            .fetch_all(&state.pool)
+            .await
+            .map_err(db_error)?;
     let timestamp = now();
     sqlx::query("INSERT INTO tags (id, name, color, created_at, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name, color = excluded.color, updated_at = excluded.updated_at")
         .bind(&id).bind(name).bind(&input.color).bind(&timestamp).bind(&timestamp).execute(&state.pool).await.map_err(|error| {
             if error.to_string().contains("UNIQUE") { "A tag with that name already exists".into() } else { db_error(error) }
         })?;
-    Ok(Tag {
-        id,
-        name: name.to_string(),
-        color: input.color,
-        model_count: 0,
-    })
+    for model_id in model_ids {
+        sqlx::query("UPDATE models SET updated_at = ? WHERE id = ?")
+            .bind(&timestamp)
+            .bind(&model_id)
+            .execute(&state.pool)
+            .await
+            .map_err(db_error)?;
+        indexing::refresh_search(&model_id, &state.pool).await?;
+    }
+    list_tags_impl(state)
+        .await?
+        .into_iter()
+        .find(|tag| tag.id == id)
+        .ok_or_else(|| "Tag not found".into())
 }
 
 #[tauri::command]
 pub async fn delete_tag(tag_id: String, state: State<'_, AppState>) -> CommandResult<()> {
+    delete_tag_impl(&tag_id, state.inner()).await
+}
+
+pub(crate) async fn delete_tag_impl(tag_id: &str, state: &AppState) -> CommandResult<()> {
     let model_ids: Vec<String> =
         sqlx::query_scalar("SELECT model_id FROM model_tags WHERE tag_id = ?")
-            .bind(&tag_id)
+            .bind(tag_id)
             .fetch_all(&state.pool)
             .await
             .map_err(db_error)?;
-    sqlx::query("DELETE FROM tags WHERE id = ?")
+    let result = sqlx::query("DELETE FROM tags WHERE id = ?")
         .bind(tag_id)
         .execute(&state.pool)
         .await
         .map_err(db_error)?;
+    if result.rows_affected() == 0 {
+        return Err("Tag not found".into());
+    }
+    let timestamp = now();
     for id in model_ids {
+        sqlx::query("UPDATE models SET updated_at = ? WHERE id = ?")
+            .bind(&timestamp)
+            .bind(&id)
+            .execute(&state.pool)
+            .await
+            .map_err(db_error)?;
         indexing::refresh_search(&id, &state.pool).await?;
     }
     Ok(())
@@ -966,15 +1125,22 @@ pub async fn list_related_models(
     model_id: String,
     state: State<'_, AppState>,
 ) -> CommandResult<Vec<RelatedModel>> {
+    list_related_models_impl(&model_id, state.inner()).await
+}
+
+pub(crate) async fn list_related_models_impl(
+    model_id: &str,
+    state: &AppState,
+) -> CommandResult<Vec<RelatedModel>> {
     let version_key: Option<String> =
         sqlx::query_scalar("SELECT NULLIF(version_key, '') FROM models WHERE id = ?")
-            .bind(&model_id)
+            .bind(model_id)
             .fetch_optional(&state.pool)
             .await
             .map_err(db_error)?
             .flatten();
     let rows = sqlx::query("SELECT DISTINCT other.id, other.display_name, f.relative_path, COALESCE(pa.extension, '') primary_extension, COALESCE((SELECT MAX(project_asset.modified_at) FROM model_assets project_membership JOIN assets project_asset ON project_asset.id = project_membership.asset_id WHERE project_membership.model_id = other.id), other.updated_at) modified_at, CASE WHEN EXISTS (SELECT 1 FROM model_assets mine JOIN assets mine_asset ON mine_asset.id = mine.asset_id JOIN model_assets theirs ON theirs.model_id = other.id JOIN assets their_asset ON their_asset.id = theirs.asset_id AND their_asset.content_hash = mine_asset.content_hash WHERE mine.model_id = ? AND mine_asset.content_hash IS NOT NULL) THEN 'duplicate' WHEN EXISTS (SELECT 1 FROM model_assets mine JOIN asset_geometry mine_geometry ON mine_geometry.asset_id = mine.asset_id JOIN model_assets theirs ON theirs.model_id = other.id JOIN asset_geometry their_geometry ON their_geometry.asset_id = theirs.asset_id AND their_geometry.geometry_hash = mine_geometry.geometry_hash WHERE mine.model_id = ?) THEN 'geometry' ELSE 'version' END relationship FROM models other JOIN folders f ON f.id = other.folder_id LEFT JOIN assets pa ON pa.id = other.primary_asset_id WHERE other.id != ? AND (EXISTS (SELECT 1 FROM model_assets mine JOIN assets mine_asset ON mine_asset.id = mine.asset_id JOIN model_assets theirs ON theirs.model_id = other.id JOIN assets their_asset ON their_asset.id = theirs.asset_id AND their_asset.content_hash = mine_asset.content_hash WHERE mine.model_id = ? AND mine_asset.content_hash IS NOT NULL) OR EXISTS (SELECT 1 FROM model_assets mine JOIN asset_geometry mine_geometry ON mine_geometry.asset_id = mine.asset_id JOIN model_assets theirs ON theirs.model_id = other.id JOIN asset_geometry their_geometry ON their_geometry.asset_id = theirs.asset_id AND their_geometry.geometry_hash = mine_geometry.geometry_hash WHERE mine.model_id = ?) OR (? != '' AND other.version_key = ?)) ORDER BY relationship, modified_at DESC LIMIT 50")
-        .bind(&model_id).bind(&model_id).bind(&model_id).bind(&model_id).bind(&model_id).bind(version_key.clone().unwrap_or_default()).bind(version_key.unwrap_or_default()).fetch_all(&state.pool).await.map_err(db_error)?;
+        .bind(model_id).bind(model_id).bind(model_id).bind(model_id).bind(model_id).bind(version_key.clone().unwrap_or_default()).bind(version_key.unwrap_or_default()).fetch_all(&state.pool).await.map_err(db_error)?;
     Ok(rows
         .into_iter()
         .map(|row| RelatedModel {
@@ -990,6 +1156,10 @@ pub async fn list_related_models(
 
 #[tauri::command]
 pub async fn get_duplicate_stats(state: State<'_, AppState>) -> CommandResult<DuplicateStats> {
+    get_duplicate_stats_impl(&state).await
+}
+
+pub(crate) async fn get_duplicate_stats_impl(state: &AppState) -> CommandResult<DuplicateStats> {
     let row = sqlx::query(&format!("WITH matches AS ({}) SELECT COUNT(*) groups, COALESCE(SUM(model_count), 0) models, COALESCE(SUM(model_count - 1), 0) redundant_copies FROM matches", duplicate_matches_sql()))
         .fetch_one(&state.pool)
         .await
@@ -1006,6 +1176,14 @@ pub async fn list_duplicate_groups(
     offset: i64,
     limit: i64,
     state: State<'_, AppState>,
+) -> CommandResult<Page<DuplicateGroup>> {
+    list_duplicate_groups_impl(offset, limit, &state).await
+}
+
+pub(crate) async fn list_duplicate_groups_impl(
+    offset: i64,
+    limit: i64,
+    state: &AppState,
 ) -> CommandResult<Page<DuplicateGroup>> {
     let offset = offset.max(0);
     let limit = limit.clamp(1, 100);
@@ -1504,6 +1682,10 @@ async fn duplicate_models_for_values(
 
 #[tauri::command]
 pub async fn list_materials(state: State<'_, AppState>) -> CommandResult<Vec<Material>> {
+    list_materials_impl(state.inner()).await
+}
+
+pub(crate) async fn list_materials_impl(state: &AppState) -> CommandResult<Vec<Material>> {
     let rows = sqlx::query("SELECT id, name, material_type, color_name, color_hex, spool_price_minor, currency, spool_weight_g, density, updated_at FROM materials ORDER BY lower(name)").fetch_all(&state.pool).await.map_err(db_error)?;
     Ok(rows.into_iter().map(material_from_row).collect())
 }
@@ -1512,6 +1694,13 @@ pub async fn list_materials(state: State<'_, AppState>) -> CommandResult<Vec<Mat
 pub async fn save_material(
     input: MaterialInput,
     state: State<'_, AppState>,
+) -> CommandResult<Material> {
+    save_material_impl(input, &state).await
+}
+
+pub(crate) async fn save_material_impl(
+    input: MaterialInput,
+    state: &AppState,
 ) -> CommandResult<Material> {
     if input.name.trim().is_empty() || input.spool_weight_g <= 0.0 || input.spool_price_minor < 0 {
         return Err("Enter a name, positive spool weight, and valid price".into());
@@ -1554,6 +1743,13 @@ pub fn calculate_cost(input: CostCalculationInput) -> CommandResult<CostCalculat
 pub async fn save_cost_estimate(
     input: CostEstimateInput,
     state: State<'_, AppState>,
+) -> CommandResult<()> {
+    save_cost_estimate_impl(input, state.inner()).await
+}
+
+pub(crate) async fn save_cost_estimate_impl(
+    input: CostEstimateInput,
+    state: &AppState,
 ) -> CommandResult<()> {
     if input.plastic_g < 0.0 || input.quantity < 1 {
         return Err("Plastic usage and quantity must be positive".into());
@@ -1599,17 +1795,23 @@ pub async fn get_3mf_plate_thumbnail(
     plate_index: u32,
     state: State<'_, AppState>,
 ) -> CommandResult<tauri::ipc::Response> {
-    let (path, extension) = asset_path(&asset_id, &state).await?;
+    let bytes = plate_thumbnail_bytes(&asset_id, plate_index, state.inner()).await?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+pub(crate) async fn plate_thumbnail_bytes(
+    asset_id: &str,
+    plate_index: u32,
+    state: &AppState,
+) -> CommandResult<Vec<u8>> {
+    let (path, extension) = asset_path(asset_id, state).await?;
     if extension != "3mf" {
         return Err("Plate thumbnails are only available for 3MF files".into());
     }
-    let bytes = tokio::task::spawn_blocking(move || {
-        parsers::embedded_3mf_plate_thumbnail(&path, plate_index)
-    })
-    .await
-    .map_err(|error| error.to_string())??
-    .unwrap_or_default();
-    Ok(tauri::ipc::Response::new(bytes))
+    tokio::task::spawn_blocking(move || parsers::embedded_3mf_plate_thumbnail(&path, plate_index))
+        .await
+        .map_err(|error| error.to_string())??
+        .ok_or_else(|| "Plate thumbnail is not available".to_string())
 }
 
 #[tauri::command]
@@ -1618,13 +1820,25 @@ pub async fn get_viewer_mesh(
     plate_index: Option<u32>,
     state: State<'_, AppState>,
 ) -> CommandResult<tauri::ipc::Response> {
-    let (path, extension) = asset_path(&asset_id, &state).await?;
-    let fingerprint = current_thumbnail_revision(&asset_id, &state.pool).await?;
+    let bytes = viewer_mesh_bytes(&asset_id, plate_index, state.inner()).await?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+pub(crate) async fn viewer_mesh_bytes(
+    asset_id: &str,
+    plate_index: Option<u32>,
+    state: &AppState,
+) -> CommandResult<Vec<u8>> {
+    let started = std::time::Instant::now();
+    log::info!("Viewer mesh requested: asset={asset_id} plate={plate_index:?}");
+    let (path, extension) = asset_path(asset_id, state).await?;
+    log::info!("Viewer mesh asset resolved: asset={asset_id}");
+    let fingerprint = current_thumbnail_revision(asset_id, &state.pool).await?;
     let plate_key = plate_index
         .map(|index| index.to_string())
         .unwrap_or_else(|| "all".into());
     if let Some(row) = sqlx::query("SELECT id, cache_path FROM viewer_meshes WHERE asset_id = ? AND fingerprint = ? AND plate_key = ? AND renderer_version = 'viewer-2'")
-        .bind(&asset_id)
+        .bind(asset_id)
         .bind(&fingerprint)
         .bind(&plate_key)
         .fetch_optional(&state.pool)
@@ -1637,15 +1851,32 @@ pub async fn get_viewer_mesh(
                 .bind(row.get::<String, _>("id"))
                 .execute(&state.pool)
                 .await;
-            return Ok(tauri::ipc::Response::new(bytes));
+            log::info!(
+                "Viewer mesh cache hit: asset={asset_id} bytes={} elapsed_ms={}",
+                bytes.len(),
+                started.elapsed().as_millis()
+            );
+            return Ok(bytes);
         }
     }
-    let bytes =
-        tokio::task::spawn_blocking(move || previews::viewer_mesh(&path, &extension, plate_index))
-            .await
-            .map_err(|error| error.to_string())??;
+    log::info!("Viewer mesh cache miss: asset={asset_id}");
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    std::thread::Builder::new()
+        .name("volum-viewer-mesh".into())
+        .spawn(move || {
+            let _ = sender.send(previews::viewer_mesh(&path, &extension, plate_index));
+        })
+        .map_err(|error| format!("Could not start the viewer mesh worker: {error}"))?;
+    let bytes = receiver
+        .await
+        .map_err(|_| "The viewer mesh worker stopped unexpectedly".to_string())??;
+    log::info!(
+        "Viewer mesh generated: asset={asset_id} bytes={} elapsed_ms={}",
+        bytes.len(),
+        started.elapsed().as_millis()
+    );
     persist_viewer_mesh(
-        &asset_id,
+        asset_id,
         &fingerprint,
         &plate_key,
         &bytes,
@@ -1653,7 +1884,11 @@ pub async fn get_viewer_mesh(
         &state.data_dir,
     )
     .await?;
-    Ok(tauri::ipc::Response::new(bytes))
+    log::info!(
+        "Viewer mesh cached: asset={asset_id} elapsed_ms={}",
+        started.elapsed().as_millis()
+    );
+    Ok(bytes)
 }
 
 #[tauri::command]
@@ -1980,10 +2215,7 @@ pub async fn export_diagnostics(
     write_json_atomic(&destination, &document)
 }
 
-async fn get_estimate(
-    model_id: &str,
-    state: &State<'_, AppState>,
-) -> CommandResult<Option<CostEstimate>> {
+async fn get_estimate(model_id: &str, state: &AppState) -> CommandResult<Option<CostEstimate>> {
     let row = sqlx::query("SELECT e.id, e.model_id, e.asset_id, e.material_id, e.plastic_g, e.quantity, e.source, m.spool_price_minor, m.spool_weight_g FROM cost_estimates e LEFT JOIN materials m ON m.id = e.material_id WHERE e.model_id = ? ORDER BY e.updated_at DESC LIMIT 1").bind(model_id).fetch_optional(&state.pool).await.map_err(db_error)?;
     Ok(row.map(|row| {
         let each = match (
@@ -2009,7 +2241,7 @@ async fn get_estimate(
     }))
 }
 
-async fn read_cached_thumbnail(
+pub(crate) async fn read_cached_thumbnail(
     asset_id: &str,
     pool: &sqlx::SqlitePool,
 ) -> CommandResult<Option<Vec<u8>>> {
@@ -2041,6 +2273,48 @@ async fn read_cached_thumbnail(
         }
         Err(_) => Ok(None),
     }
+}
+
+pub(crate) async fn thumbnail_bytes_impl(
+    asset_id: &str,
+    state: &AppState,
+) -> CommandResult<Option<Vec<u8>>> {
+    if let Some(bytes) = read_cached_thumbnail(asset_id, &state.pool).await? {
+        return Ok(Some(bytes));
+    }
+    let (path, extension) = asset_path(asset_id, state).await?;
+    if !matches!(extension.as_str(), "stl" | "obj" | "3mf" | "step" | "stp") {
+        return Ok(None);
+    }
+    let _worker = state
+        .thumbnail_workers
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| "Thumbnail worker queue is unavailable".to_string())?;
+    if let Some(bytes) = read_cached_thumbnail(asset_id, &state.pool).await? {
+        return Ok(Some(bytes));
+    }
+    let revision = current_thumbnail_revision(asset_id, &state.pool).await?;
+    let bytes = tokio::task::spawn_blocking(move || -> CommandResult<Vec<u8>> {
+        if extension == "3mf" {
+            if let Some(bytes) = parsers::embedded_3mf_thumbnail(&path)? {
+                return Ok(bytes);
+            }
+        }
+        previews::render_thumbnail(&path, &extension)
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    if current_thumbnail_revision(asset_id, &state.pool)
+        .await
+        .ok()
+        .as_deref()
+        == Some(revision.as_str())
+    {
+        persist_thumbnail(asset_id, &revision, &bytes, &state.pool, &state.data_dir).await?;
+    }
+    Ok(Some(bytes))
 }
 
 async fn current_thumbnail_revision(
@@ -2186,9 +2460,9 @@ async fn cleanup_viewer_mesh_cache(pool: &sqlx::SqlitePool, max_bytes: i64) -> C
     Ok(())
 }
 
-async fn asset_path(
+pub(crate) async fn asset_path(
     asset_id: &str,
-    state: &State<'_, AppState>,
+    state: &AppState,
 ) -> CommandResult<(PathBuf, String)> {
     let row = sqlx::query("SELECT r.path root_path, a.relative_path, a.extension FROM assets a JOIN library_roots r ON r.id = a.root_id WHERE a.id = ?").bind(asset_id).fetch_optional(&state.pool).await.map_err(db_error)?.ok_or_else(|| "Asset not found".to_string())?;
     let root = PathBuf::from(row.get::<String, _>("root_path"));
@@ -2951,7 +3225,7 @@ fn normalize_application_name(name: &str) -> String {
         .collect()
 }
 
-fn open_with(path: &Path, application: &str) -> CommandResult<()> {
+pub(crate) fn open_with(path: &Path, application: &str) -> CommandResult<()> {
     let app = Path::new(application);
     if !app.exists() {
         return Err("Configured application is unavailable".into());
@@ -2982,7 +3256,7 @@ fn open_with(path: &Path, application: &str) -> CommandResult<()> {
         })
 }
 
-fn reveal(path: &Path) -> CommandResult<()> {
+pub(crate) fn reveal(path: &Path) -> CommandResult<()> {
     #[cfg(target_os = "macos")]
     let result = std::process::Command::new("open")
         .arg("-R")

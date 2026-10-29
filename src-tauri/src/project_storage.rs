@@ -26,6 +26,7 @@ const MARKER_FILENAME: &str = "project.json";
 const MAX_MARKER_BYTES: u64 = 1024 * 1024;
 const MAX_PROJECT_FILES: usize = 2_000;
 const MAX_PROJECT_NAME_CHARS: usize = 160;
+pub(crate) const PROJECT_REVISION_CONFLICT: &str = "Project changed on another device";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -101,6 +102,13 @@ pub struct InboxImportResult {
     pub project_ids: Vec<String>,
     pub skipped: usize,
     pub errors: Vec<String>,
+}
+
+#[derive(Debug)]
+pub(crate) struct CompanionUploadImport {
+    pub project_id: String,
+    pub asset_id: String,
+    pub root_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -205,6 +213,14 @@ pub async fn configure_managed_library(
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> CommandResult<LibraryRoot> {
+    configure_managed_library_impl(path, &state, Some(app)).await
+}
+
+pub(crate) async fn configure_managed_library_impl(
+    path: String,
+    state: &AppState,
+    app: Option<AppHandle>,
+) -> CommandResult<LibraryRoot> {
     let _guard = state.file_operation_lock.lock().await;
     let selected = PathBuf::from(path);
     std::fs::create_dir_all(&selected)
@@ -285,7 +301,7 @@ pub async fn configure_managed_library(
         .await
         .map_err(db_error)?;
     let root = root_by_id(&id, &state.pool).await?;
-    if let Err(error) = indexing::start(id, &state, app).await {
+    if let Err(error) = indexing::start(id, state, app).await {
         log::warn!("Could not start the managed library watcher: {error}");
     }
     Ok(root)
@@ -504,6 +520,71 @@ pub async fn add_files_to_project(
     Ok(ids)
 }
 
+pub(crate) async fn import_companion_upload(
+    project_id: Option<&str>,
+    project_name: Option<&str>,
+    upload_path: &Path,
+    state: &AppState,
+) -> CommandResult<CompanionUploadImport> {
+    validate_source_file(upload_path)?;
+    let _guard = state.file_operation_lock.lock().await;
+    let upload_path = upload_path.to_string_lossy().to_string();
+    let (project_id, root_id, asset_id) = if let Some(project_id) = project_id {
+        if Uuid::parse_str(project_id).is_err() {
+            return Err("Project identity is invalid".into());
+        }
+        let row = sqlx::query("SELECT m.storage_mode, m.trashed_at, f.root_id FROM models m JOIN folders f ON f.id = m.folder_id WHERE m.id = ?")
+            .bind(project_id)
+            .fetch_optional(&state.pool)
+            .await
+            .map_err(db_error)?
+            .ok_or_else(|| "Project not found".to_string())?;
+        if row.get::<Option<String>, _>("trashed_at").is_some() {
+            return Err("Files cannot be uploaded to a project in Trash".into());
+        }
+        if row.get::<String, _>("storage_mode") != "managed" {
+            return Err("Files can only be uploaded to a managed project".into());
+        }
+        let asset_ids = import_into_project(
+            project_id,
+            std::slice::from_ref(&upload_path),
+            &[],
+            "move",
+            false,
+            state,
+        )
+        .await?;
+        let asset_id = asset_ids
+            .into_iter()
+            .next()
+            .ok_or_else(|| "The uploaded file was not imported".to_string())?;
+        (project_id.to_string(), row.get("root_id"), asset_id)
+    } else {
+        let project_name = project_name.ok_or_else(|| "Enter a project name".to_string())?;
+        validate_project_name(project_name)?;
+        let input = CreateManagedProjectInput {
+            name: project_name.to_string(),
+            file_paths: vec![upload_path],
+            asset_ids: Vec::new(),
+            transfer_mode: "move".into(),
+        };
+        let (project_id, root_id) = create_managed_project_internal(&input, state).await?;
+        let asset_id: String = sqlx::query_scalar(
+            "SELECT asset_id FROM model_assets WHERE model_id = ? ORDER BY sort_order LIMIT 1",
+        )
+        .bind(&project_id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(db_error)?;
+        (project_id, root_id, asset_id)
+    };
+    Ok(CompanionUploadImport {
+        project_id,
+        asset_id,
+        root_id,
+    })
+}
+
 #[tauri::command]
 pub async fn rename_project(
     project_id: String,
@@ -511,26 +592,51 @@ pub async fn rename_project(
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> CommandResult<()> {
-    validate_project_name(&name)?;
+    rename_project_impl(&project_id, &name, None, state.inner(), Some(&app)).await
+}
+
+pub(crate) async fn rename_project_if_revision(
+    project_id: &str,
+    name: &str,
+    expected_revision: &str,
+    state: &AppState,
+    app: Option<&AppHandle>,
+) -> CommandResult<()> {
+    rename_project_impl(project_id, name, Some(expected_revision), state, app).await
+}
+
+async fn rename_project_impl(
+    project_id: &str,
+    name: &str,
+    expected_revision: Option<&str>,
+    state: &AppState,
+    app: Option<&AppHandle>,
+) -> CommandResult<()> {
+    validate_project_name(name)?;
     let _guard = state.file_operation_lock.lock().await;
-    let row = sqlx::query("SELECT m.storage_mode, m.folder_id, f.relative_path, f.root_id, r.path root_path FROM models m JOIN folders f ON f.id = m.folder_id JOIN library_roots r ON r.id = f.root_id WHERE m.id = ?")
-        .bind(&project_id)
+    let row = sqlx::query("SELECT m.storage_mode, m.folder_id, m.updated_at, f.relative_path, f.root_id, r.path root_path FROM models m JOIN folders f ON f.id = m.folder_id JOIN library_roots r ON r.id = f.root_id WHERE m.id = ? AND m.trashed_at IS NULL")
+        .bind(project_id)
         .fetch_optional(&state.pool)
         .await
         .map_err(db_error)?
         .ok_or_else(|| "Project not found".to_string())?;
+    if expected_revision.is_some_and(|expected| expected != row.get::<String, _>("updated_at")) {
+        return Err(PROJECT_REVISION_CONFLICT.into());
+    }
     let storage_mode: String = row.get("storage_mode");
     let root_id: String = row.get("root_id");
     if storage_mode != "managed" {
         sqlx::query("UPDATE models SET display_name = ?, grouping_key = 'manual:' || id, bundle_mode = 'manual', updated_at = ? WHERE id = ?")
             .bind(name.trim())
             .bind(now())
-            .bind(&project_id)
+            .bind(project_id)
             .execute(&state.pool)
             .await
             .map_err(db_error)?;
-        indexing::refresh_search(&project_id, &state.pool).await?;
-        let _ = app.emit("models-changed", &root_id);
+        indexing::refresh_search(project_id, &state.pool).await?;
+        if let Some(app) = app {
+            let _ = app.emit("models-changed", &root_id);
+        }
         return Ok(());
     }
     let old_relative: String = row.get("relative_path");
@@ -549,7 +655,7 @@ pub async fn rename_project(
     let job_id = begin_path_operation(
         "rename-project",
         &PathOperationPayload {
-            entity_id: project_id.clone(),
+            entity_id: project_id.to_string(),
             source: old_path.to_string_lossy().to_string(),
             destination: new_path.to_string_lossy().to_string(),
             old_relative: old_relative.clone(),
@@ -568,7 +674,7 @@ pub async fn rename_project(
         return Err(error);
     }
     let result = rename_project_records(
-        &project_id,
+        project_id,
         row.get::<String, _>("folder_id"),
         &old_relative,
         &new_relative,
@@ -582,13 +688,15 @@ pub async fn rename_project(
         return Err(error);
     }
     let _ = set_operation_state(&job_id, "complete", None, &state.pool).await;
-    if let Err(error) = write_project_marker(&project_id, &state.pool).await {
+    if let Err(error) = write_project_marker(project_id, &state.pool).await {
         log::warn!("Could not refresh sidecar after renaming project {project_id}: {error}");
     }
-    if let Err(error) = indexing::refresh_search(&project_id, &state.pool).await {
+    if let Err(error) = indexing::refresh_search(project_id, &state.pool).await {
         log::warn!("Could not refresh search after renaming project {project_id}: {error}");
     }
-    let _ = app.emit("models-changed", &root_id);
+    if let Some(app) = app {
+        let _ = app.emit("models-changed", &root_id);
+    }
     Ok(())
 }
 
@@ -839,9 +947,17 @@ pub async fn trash_project(
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> CommandResult<()> {
+    trash_project_impl(&project_id, &state, Some(&app)).await
+}
+
+pub(crate) async fn trash_project_impl(
+    project_id: &str,
+    state: &AppState,
+    app: Option<&AppHandle>,
+) -> CommandResult<()> {
     let _guard = state.file_operation_lock.lock().await;
     let row = sqlx::query("SELECT m.storage_mode, m.trashed_at, m.folder_id, f.relative_path, f.root_id, r.path root_path FROM models m JOIN folders f ON f.id = m.folder_id JOIN library_roots r ON r.id = f.root_id WHERE m.id = ?")
-        .bind(&project_id)
+        .bind(project_id)
         .fetch_optional(&state.pool)
         .await
         .map_err(db_error)?
@@ -864,7 +980,7 @@ pub async fn trash_project(
         let job_id = begin_path_operation(
             "trash-project",
             &PathOperationPayload {
-                entity_id: project_id.clone(),
+                entity_id: project_id.to_string(),
                 source: old_path.to_string_lossy().to_string(),
                 destination: new_path.to_string_lossy().to_string(),
                 old_relative: old_relative.clone(),
@@ -884,7 +1000,7 @@ pub async fn trash_project(
             return Err(error);
         }
         if let Err(error) = update_project_folder_paths(
-            &project_id,
+            project_id,
             &row.get::<String, _>("folder_id"),
             &old_relative,
             &new_relative,
@@ -903,12 +1019,14 @@ pub async fn trash_project(
         sqlx::query("UPDATE models SET trashed_at = ?, updated_at = ? WHERE id = ?")
             .bind(now())
             .bind(now())
-            .bind(&project_id)
+            .bind(project_id)
             .execute(&state.pool)
             .await
             .map_err(db_error)?;
     }
-    let _ = app.emit("models-changed", &root_id);
+    if let Some(app) = app {
+        let _ = app.emit("models-changed", &root_id);
+    }
     Ok(())
 }
 
@@ -918,9 +1036,17 @@ pub async fn restore_project_from_trash(
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> CommandResult<()> {
+    restore_project_from_trash_impl(&project_id, &state, Some(&app)).await
+}
+
+pub(crate) async fn restore_project_from_trash_impl(
+    project_id: &str,
+    state: &AppState,
+    app: Option<&AppHandle>,
+) -> CommandResult<()> {
     let _guard = state.file_operation_lock.lock().await;
     let row = sqlx::query("SELECT m.display_name, m.storage_mode, m.trashed_at, m.trash_original_relative_path, m.folder_id, f.relative_path, f.root_id, r.path root_path FROM models m JOIN folders f ON f.id = m.folder_id JOIN library_roots r ON r.id = f.root_id WHERE m.id = ?")
-        .bind(&project_id)
+        .bind(project_id)
         .fetch_optional(&state.pool)
         .await
         .map_err(db_error)?
@@ -948,7 +1074,7 @@ pub async fn restore_project_from_trash(
         let job_id = begin_path_operation(
             "restore-project",
             &PathOperationPayload {
-                entity_id: project_id.clone(),
+                entity_id: project_id.to_string(),
                 source: old_path.to_string_lossy().to_string(),
                 destination: new_path.to_string_lossy().to_string(),
                 old_relative: old_relative.clone(),
@@ -968,7 +1094,7 @@ pub async fn restore_project_from_trash(
             return Err(error);
         }
         if let Err(error) = update_project_folder_paths(
-            &project_id,
+            project_id,
             &row.get::<String, _>("folder_id"),
             &old_relative,
             &new_relative,
@@ -983,21 +1109,23 @@ pub async fn restore_project_from_trash(
             return Err(error);
         }
         let _ = set_operation_state(&job_id, "complete", None, &state.pool).await;
-        if let Err(error) = write_project_marker(&project_id, &state.pool).await {
+        if let Err(error) = write_project_marker(project_id, &state.pool).await {
             log::warn!("Could not refresh sidecar after restoring project {project_id}: {error}");
         }
     } else {
         sqlx::query("UPDATE models SET trashed_at = NULL, trash_original_relative_path = NULL, updated_at = ? WHERE id = ?")
             .bind(now())
-            .bind(&project_id)
+            .bind(project_id)
             .execute(&state.pool)
             .await
             .map_err(db_error)?;
     }
-    if let Err(error) = indexing::refresh_search(&project_id, &state.pool).await {
+    if let Err(error) = indexing::refresh_search(project_id, &state.pool).await {
         log::warn!("Could not refresh search after restoring project {project_id}: {error}");
     }
-    let _ = app.emit("models-changed", &root_id);
+    if let Some(app) = app {
+        let _ = app.emit("models-changed", &root_id);
+    }
     Ok(())
 }
 
@@ -1007,9 +1135,17 @@ pub async fn delete_project_permanently(
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> CommandResult<()> {
+    delete_project_permanently_impl(&project_id, &state, Some(&app)).await
+}
+
+pub(crate) async fn delete_project_permanently_impl(
+    project_id: &str,
+    state: &AppState,
+    app: Option<&AppHandle>,
+) -> CommandResult<()> {
     let _guard = state.file_operation_lock.lock().await;
     let row = sqlx::query("SELECT m.storage_mode, m.trashed_at, f.relative_path, f.root_id, r.path root_path FROM models m JOIN folders f ON f.id = m.folder_id JOIN library_roots r ON r.id = f.root_id WHERE m.id = ?")
-        .bind(&project_id)
+        .bind(project_id)
         .fetch_optional(&state.pool)
         .await
         .map_err(db_error)?
@@ -1030,7 +1166,7 @@ pub async fn delete_project_permanently(
         let job_id = begin_path_operation(
             "delete-project",
             &PathOperationPayload {
-                entity_id: project_id.clone(),
+                entity_id: project_id.to_string(),
                 source: project_path.to_string_lossy().to_string(),
                 destination: staging.to_string_lossy().to_string(),
                 old_relative: relative_path.clone(),
@@ -1060,19 +1196,19 @@ pub async fn delete_project_permanently(
     }
     let photo_rows =
         sqlx::query("SELECT media_path, thumbnail_path FROM project_photos WHERE model_id = ?")
-            .bind(&project_id)
+            .bind(project_id)
             .fetch_all(&state.pool)
             .await
             .map_err(db_error)?;
     let asset_ids: Vec<String> =
         sqlx::query_scalar("SELECT asset_id FROM model_assets WHERE model_id = ?")
-            .bind(&project_id)
+            .bind(project_id)
             .fetch_all(&state.pool)
             .await
             .map_err(db_error)?;
     let mut transaction = state.pool.begin().await.map_err(db_error)?;
     sqlx::query("DELETE FROM models WHERE id = ?")
-        .bind(&project_id)
+        .bind(project_id)
         .execute(&mut *transaction)
         .await
         .map_err(db_error)?;
@@ -1121,7 +1257,9 @@ pub async fn delete_project_permanently(
             }
         }
     }
-    let _ = app.emit("models-changed", &root_id);
+    if let Some(app) = app {
+        let _ = app.emit("models-changed", &root_id);
+    }
     Ok(())
 }
 
@@ -2692,7 +2830,7 @@ fn replace_file_atomically(temporary: &Path, destination: &Path) -> CommandResul
     Ok(())
 }
 
-fn validate_project_name(name: &str) -> CommandResult<()> {
+pub(crate) fn validate_project_name(name: &str) -> CommandResult<()> {
     let trimmed = name.trim();
     if trimmed.is_empty() || trimmed.chars().count() > MAX_PROJECT_NAME_CHARS {
         return Err(format!(
@@ -3766,6 +3904,47 @@ mod tests {
         .unwrap();
         assert_eq!(asset_count, 1);
         assert_eq!(job_state, "complete");
+    }
+
+    #[tokio::test]
+    async fn imports_a_companion_upload_without_exposing_its_staging_path() {
+        let data = tempfile::tempdir().unwrap();
+        let library = tempfile::tempdir().unwrap();
+        let upload_directory = tempfile::tempdir().unwrap();
+        let upload = upload_directory.path().join("phone-bracket.stl");
+        std::fs::write(&upload, "solid phone-bracket\nendsolid").unwrap();
+        let state = AppState::initialize(data.path()).await.unwrap();
+        ensure_layout(library.path()).unwrap();
+        let root_id = Uuid::new_v4().to_string();
+        let timestamp = now();
+        sqlx::query("INSERT INTO library_roots (id, path, display_name, status, root_kind, created_at, updated_at) VALUES (?, ?, 'Managed', 'online', 'managed', ?, ?)")
+            .bind(&root_id)
+            .bind(library.path().to_string_lossy().to_string())
+            .bind(&timestamp)
+            .bind(&timestamp)
+            .execute(&state.pool)
+            .await
+            .unwrap();
+
+        let imported = import_companion_upload(None, Some("Phone bracket"), &upload, &state)
+            .await
+            .unwrap();
+
+        assert_eq!(imported.root_id, root_id);
+        assert!(!upload.exists());
+        assert!(library
+            .path()
+            .join("Projects/Phone bracket/phone-bracket.stl")
+            .is_file());
+        let stored: (String, String) = sqlx::query_as(
+            "SELECT m.display_name, a.filename FROM models m JOIN model_assets ma ON ma.model_id = m.id JOIN assets a ON a.id = ma.asset_id WHERE m.id = ? AND a.id = ?",
+        )
+        .bind(&imported.project_id)
+        .bind(&imported.asset_id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+        assert_eq!(stored, ("Phone bracket".into(), "phone-bracket.stl".into()));
     }
 
     #[tokio::test]

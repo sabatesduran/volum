@@ -33,6 +33,10 @@ pub async fn preview_web_source(url: String) -> CommandResult<WebSourcePreview> 
 
 #[tauri::command]
 pub async fn list_web_sources(state: State<'_, AppState>) -> CommandResult<Vec<WebSource>> {
+    list_web_sources_impl(&state).await
+}
+
+pub(crate) async fn list_web_sources_impl(state: &AppState) -> CommandResult<Vec<WebSource>> {
     let rows = sqlx::query(&format!("{WEB_SOURCE_SELECT} ORDER BY ws.updated_at DESC"))
         .fetch_all(&state.pool)
         .await
@@ -282,7 +286,7 @@ pub async fn attach_web_source_file(
         .await
         .map_err(db_error)?;
     let _ = app.emit("web-sources-changed", &source_id);
-    indexing::start(root_id, &state, app).await?;
+    indexing::start(root_id, &state, Some(app)).await?;
     get_web_source(&source_id, &state.pool).await
 }
 

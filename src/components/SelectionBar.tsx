@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Check, Heart, Layers3, Merge, Tags, X } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAppStore } from "../app/store";
-import { api } from "../lib/tauri/api";
+import { api, backendMode } from "../lib/tauri/api";
 import { t } from "../lib/i18n";
 import { useShallow } from "zustand/react/shallow";
 
@@ -13,6 +13,7 @@ export function SelectionBar() {
   const { data: tags = [] } = useQuery({ queryKey: ["tags"], queryFn: api.tags });
   const [collectionId, setCollectionId] = useState("");
   const [tagId, setTagId] = useState("");
+  const remote = backendMode() === "remote";
   if (!selectedModelIds.length) return null;
   const add = async (id: string) => {
     if (!id) return;
@@ -41,7 +42,7 @@ export function SelectionBar() {
     <div className="selection-bar">
       <span className="selection-bar__count"><Check size={14} />{t("{count} selected", { count: selectedModelIds.length })}</span>
       <button onClick={favorite}><Heart size={15} /> {t("Favorite")}</button>
-      {selectedModelIds.length > 1 && <button onClick={() => void bundle()}><Merge size={15} /> {t("Bundle as project")}</button>}
+      {!remote && selectedModelIds.length > 1 && <button onClick={() => void bundle()}><Merge size={15} /> {t("Bundle as project")}</button>}
       <label><Layers3 size={15} /><select value={collectionId} onChange={(event) => { setCollectionId(event.target.value); add(event.target.value); }}><option value="">{t("Add to collection…")}</option>{collections.filter((collection) => !collection.smart).map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select></label>
       {tags.length > 0 && <label><Tags size={15} /><select value={tagId} onChange={(event) => { setTagId(event.target.value); addTag(event.target.value); }}><option value="">{t("Add tag…")}</option>{tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}</select></label>}
       <button className="selection-bar__close" onClick={clearModelSelection} aria-label={t("Clear selection")}><X size={16} /></button>

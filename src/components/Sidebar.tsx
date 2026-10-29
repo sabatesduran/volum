@@ -3,7 +3,7 @@ import {
   Wrench, Gift, Sparkles, Box, Search, Trash2, type LucideIcon
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "../lib/tauri/api";
+import { api, backendMode } from "../lib/tauri/api";
 import { useAppStore } from "../app/store";
 import { Brand } from "./Brand";
 import type { ViewId } from "../types";
@@ -43,7 +43,7 @@ export function Sidebar({ onNewCollection }: { onNewCollection: () => void }) {
       <div className="sidebar__brand"><Brand compact={sidebarCollapsed} /></div>
       <nav className="sidebar__nav" aria-label={t("Main navigation")}>
         <div className="sidebar__group">
-          {mainItems.map(([id, label, Icon]) => <div key={id}>{item(id, label, Icon, id === "duplicates" ? duplicateStats?.groups : id === "web" ? webSources.length : undefined)}</div>)}
+          {mainItems.filter(([id]) => id !== "web" || backendMode() !== "remote").map(([id, label, Icon]) => <div key={id}>{item(id, label, Icon, id === "duplicates" ? duplicateStats?.groups : id === "web" ? webSources.length : undefined)}</div>)}
         </div>
         <div className="sidebar__group">
           {item("folders", "Folders", FolderTree)}

@@ -182,7 +182,12 @@ fn parse_3mf(path: &Path) -> Result<AssetMetadata, String> {
     let mut warning = None;
     for index in 0..archive.len() {
         let entry = archive.by_index(index).map_err(|error| error.to_string())?;
-        if entry.name().to_ascii_lowercase().ends_with(".model") {
+        if entry
+            .name()
+            .map_err(|error| error.to_string())?
+            .to_ascii_lowercase()
+            .ends_with(".model")
+        {
             if entry.size() > MAX_MODEL_XML_BYTES {
                 warning =
                     Some("3MF model document is too large for indexed geometry metadata".into());
@@ -208,26 +213,24 @@ fn parse_3mf(path: &Path) -> Result<AssetMetadata, String> {
             match reader.read_event() {
                 Ok(Event::Start(event)) | Ok(Event::Empty(event)) => {
                     let name = event.name();
-                    if name.as_ref().ends_with(b"object") {
+                    if name.as_ref().ends_with("object") {
                         object_count += 1;
                     }
-                    if name.as_ref().ends_with(b"triangle") {
+                    if name.as_ref().ends_with("triangle") {
                         triangle_count += 1;
                     }
-                    if name.as_ref().ends_with(b"vertex") {
+                    if name.as_ref().ends_with("vertex") {
                         for attribute in event.attributes().flatten() {
-                            let axis = match attribute.key.as_ref().last().copied() {
+                            let axis = match attribute.key.as_ref().as_bytes().last().copied() {
                                 Some(b'x') => Some(0),
                                 Some(b'y') => Some(1),
                                 Some(b'z') => Some(2),
                                 _ => None,
                             };
                             if let Some(axis) = axis {
-                                if let Ok(text) = std::str::from_utf8(attribute.value.as_ref()) {
-                                    if let Ok(value) = text.parse::<f64>() {
-                                        min[axis] = min[axis].min(value);
-                                        max[axis] = max[axis].max(value);
-                                    }
+                                if let Ok(value) = attribute.value.as_ref().parse::<f64>() {
+                                    min[axis] = min[axis].min(value);
+                                    max[axis] = max[axis].max(value);
                                 }
                             }
                         }
@@ -264,7 +267,10 @@ fn extract_3mf_details<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Option<Th
         let Ok(mut entry) = archive.by_index(index) else {
             continue;
         };
-        let name = entry.name().replace('\\', "/");
+        let Ok(name) = entry.name() else {
+            continue;
+        };
+        let name = name.replace('\\', "/");
         let lower = name.to_ascii_lowercase();
         if lower.ends_with("metadata/project_settings.config") && entry.size() <= 10 * 1024 * 1024 {
             let mut source = String::new();
@@ -406,7 +412,9 @@ fn merge_model_settings(source: &str, plates: &mut BTreeMap<u32, ThreeMfPlate>) 
                 }
             }
             Ok(Event::End(event)) => {
-                let name = String::from_utf8_lossy(event.name().as_ref())
+                let name = event
+                    .name()
+                    .as_ref()
                     .rsplit(':')
                     .next()
                     .unwrap_or_default()
@@ -505,7 +513,9 @@ fn merge_slice_info(
                 apply_slice_element(&event, in_header, details, current.as_mut())
             }
             Ok(Event::End(event)) => {
-                let name = String::from_utf8_lossy(event.name().as_ref())
+                let name = event
+                    .name()
+                    .as_ref()
                     .rsplit(':')
                     .next()
                     .unwrap_or_default()
@@ -631,7 +641,9 @@ fn merge_plate(stored: &mut ThreeMfPlate, parsed: ThreeMfPlate) {
 }
 
 fn local_xml_name(event: &BytesStart<'_>) -> String {
-    String::from_utf8_lossy(event.name().as_ref())
+    event
+        .name()
+        .as_ref()
         .rsplit(':')
         .next()
         .unwrap_or_default()
@@ -643,13 +655,8 @@ fn xml_attributes(event: &BytesStart<'_>) -> std::collections::HashMap<String, S
         .attributes()
         .flatten()
         .filter_map(|attribute| {
-            let key = String::from_utf8_lossy(attribute.key.as_ref())
-                .rsplit(':')
-                .next()?
-                .to_string();
-            let value = std::str::from_utf8(attribute.value.as_ref())
-                .ok()?
-                .to_string();
+            let key = attribute.key.as_ref().rsplit(':').next()?.to_string();
+            let value = attribute.value.as_ref().to_string();
             Some((key, value))
         })
         .collect()
@@ -698,7 +705,10 @@ fn extract_3mf_filament_grams<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Op
         let Ok(mut entry) = archive.by_index(index) else {
             continue;
         };
-        let name = entry.name().to_ascii_lowercase();
+        let Ok(name) = entry.name() else {
+            continue;
+        };
+        let name = name.to_ascii_lowercase();
         if !name.ends_with("slice_info.config") || entry.size() > 5 * 1024 * 1024 {
             continue;
         }
@@ -750,7 +760,10 @@ pub fn embedded_3mf_thumbnail(path: &Path) -> Result<Option<Vec<u8>>, String> {
     let mut candidate: Option<(usize, u8)> = None;
     for index in 0..archive.len() {
         let entry = archive.by_index(index).map_err(|error| error.to_string())?;
-        let name = entry.name().to_ascii_lowercase();
+        let name = entry
+            .name()
+            .map_err(|error| error.to_string())?
+            .to_ascii_lowercase();
         if entry.size() > MAX_EMBEDDED_THUMBNAIL_BYTES || !name.ends_with(".png") {
             continue;
         }
@@ -811,6 +824,7 @@ pub fn embedded_3mf_plate_thumbnail(
         let entry = archive.by_index(index).map_err(|error| error.to_string())?;
         let filename = entry
             .name()
+            .map_err(|error| error.to_string())?
             .replace('\\', "/")
             .rsplit('/')
             .next()
@@ -852,7 +866,7 @@ fn inspect_zip(path: &Path) -> Result<AssetMetadata, String> {
             archive
                 .by_index(index)
                 .ok()
-                .map(|entry| entry.name().to_ascii_lowercase())
+                .and_then(|entry| entry.name().ok().map(|name| name.to_ascii_lowercase()))
         })
         .filter(|name| {
             [".stl", ".3mf", ".obj", ".step", ".stp"]
@@ -878,7 +892,8 @@ fn validate_archive<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<(), S
     let mut total = 0_u64;
     for index in 0..archive.len() {
         let entry = archive.by_index(index).map_err(|error| error.to_string())?;
-        let path = Path::new(entry.name());
+        let name = entry.name().map_err(|error| error.to_string())?;
+        let path = Path::new(name.as_ref());
         if path.is_absolute()
             || path
                 .components()
@@ -909,6 +924,7 @@ pub fn preview_payload(
                 let entry = archive.by_index(index).map_err(|error| error.to_string())?;
                 if entry
                     .name()
+                    .map_err(|error| error.to_string())?
                     .to_ascii_lowercase()
                     .ends_with(&format!(".{preferred}"))
                     && entry.size() <= MAX_PREVIEW_BYTES

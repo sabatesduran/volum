@@ -2,6 +2,7 @@ import type {
   BackupDestination,
   BackupRun,
   Collection,
+  CompanionStatus,
   CustomFieldDefinition,
   DuplicateGroup,
   Folder,
@@ -81,6 +82,14 @@ let preferences: Record<string, string> = {};
 let backupDestinations: BackupDestination[] = [];
 let backupRuns: BackupRun[] = [];
 let savedSearches: SavedSearch[] = [];
+let companionStatus: CompanionStatus = {
+  enabled: false,
+  running: false,
+  serverId: "demo-companion-server",
+  port: 43821,
+  organizationWrites: false,
+  devices: []
+};
 let customFields: CustomFieldDefinition[] = [
   { id: "field-status", name: "Build status", fieldType: "select", options: ["Idea", "Printing", "Complete"], sortOrder: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
   { id: "field-hours", name: "Assembly time", fieldType: "number", unit: "h", options: [], sortOrder: 2, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
@@ -104,6 +113,30 @@ let managedRoot: LibraryRoot | undefined = {
 export async function mockInvoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
   await new Promise((resolve) => setTimeout(resolve, command === "list_models" ? 80 : 25));
   switch (command) {
+    case "get_backend_connection": return { mode: "local", configured: false, online: true, mirrorEnabled: false } as T;
+    case "get_companion_status": return companionStatus as T;
+    case "set_companion_enabled": {
+      const enabled = Boolean(args.enabled);
+      companionStatus = {
+        ...companionStatus,
+        enabled,
+        running: enabled,
+        tailnetIp: enabled ? "100.64.0.10" : undefined,
+        dnsName: enabled ? "volum-desktop.example.ts.net" : undefined,
+        baseUrl: enabled ? "http://100.64.0.10:43821" : undefined
+      };
+      return companionStatus as T;
+    }
+    case "set_companion_organization_writes": {
+      companionStatus = { ...companionStatus, organizationWrites: Boolean(args.enabled) };
+      return companionStatus as T;
+    }
+    case "create_companion_pairing": {
+      const expiresAt = new Date(Date.now() + 300_000).toISOString();
+      const payload = { version: 1, serverId: companionStatus.serverId, serverName: "volum-desktop", baseUrl: companionStatus.baseUrl, secret: "demo-pairing-secret", expiresAt, transport: "tailscale-http" };
+      return { serverId: companionStatus.serverId, serverName: "volum-desktop", baseUrl: companionStatus.baseUrl, secret: payload.secret, expiresAt, qrPayload: JSON.stringify(payload) } as T;
+    }
+    case "revoke_companion_device": companionStatus = { ...companionStatus, devices: companionStatus.devices.filter((device) => device.id !== args.deviceId) }; return companionStatus as T;
     case "list_roots": return [...(managedRoot ? [managedRoot] : []), demoRoot] as T;
     case "add_library_root": return demoRoot as T;
     case "remove_library_root": return undefined as T;
@@ -303,6 +336,11 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
     case "get_cached_thumbnail": return new ArrayBuffer(0) as T;
     case "get_viewer_mesh": return new ArrayBuffer(0) as T;
     case "save_preference": preferences = { ...preferences, [String(args.key)]: String(args.value) }; return undefined as T;
+    case "set_menu_bar_enabled": {
+      const enabled = Boolean(args.enabled);
+      preferences = { ...preferences, menu_bar_enabled: String(enabled) };
+      return enabled as T;
+    }
     case "list_backup_destinations": return backupDestinations as T;
     case "save_backup_destination": {
       const input = args.input as Omit<BackupDestination, "id" | "credentialSaved" | "createdAt" | "updatedAt"> & { id?: string; password?: string };

@@ -62,7 +62,11 @@ struct IndexOutcome {
     affected_model_ids: Vec<String>,
 }
 
-pub async fn start(root_id: String, state: &AppState, app: AppHandle) -> Result<(), String> {
+pub async fn start(
+    root_id: String,
+    state: &AppState,
+    app: Option<AppHandle>,
+) -> Result<(), String> {
     if state
         .scans
         .read()
@@ -131,7 +135,7 @@ async fn launch_scan(
     root_path: PathBuf,
     root_kind: String,
     context: ScanContext,
-    app: AppHandle,
+    app: Option<AppHandle>,
 ) {
     let status = ScanStatus {
         root_id: root_id.clone(),
@@ -147,8 +151,10 @@ async fn launch_scan(
         .write()
         .await
         .insert(root_id.clone(), status.clone());
-    let _ = app.emit("scan-progress", &status);
-    tauri::async_runtime::spawn(async move {
+    if let Some(app) = &app {
+        let _ = app.emit("scan-progress", &status);
+    }
+    tokio::spawn(async move {
         if let Err(error) = scan_root(&root_id, &root_path, &root_kind, &context, &app).await {
             let mut scans = context.scans.write().await;
             let status = scans
@@ -163,8 +169,10 @@ async fn launch_scan(
             .bind(&root_id)
             .execute(&context.pool)
             .await;
-            let _ = app.emit("scan-progress", status.clone());
-            let _ = app.emit("root-status-changed", &root_id);
+            if let Some(app) = &app {
+                let _ = app.emit("scan-progress", status.clone());
+                let _ = app.emit("root-status-changed", &root_id);
+            }
         }
     });
 }
@@ -175,7 +183,7 @@ fn ensure_watcher(
     root_kind: &str,
     state: &AppState,
     context: ScanContext,
-    app: AppHandle,
+    app: Option<AppHandle>,
 ) -> Result<(), String> {
     let mut watchers = state
         .watchers
@@ -188,6 +196,7 @@ fn ensure_watcher(
     let watched_path = root_path.to_path_buf();
     let watched_kind = root_kind.to_string();
     let pending = Arc::new(AtomicBool::new(false));
+    let runtime = tokio::runtime::Handle::current();
     let mut watcher =
         notify::recommended_watcher(move |result: Result<notify::Event, notify::Error>| {
             let Ok(event) = result else {
@@ -202,7 +211,7 @@ fn ensure_watcher(
             let pending = pending.clone();
             let context = context.clone();
             let app = app.clone();
-            tauri::async_runtime::spawn(async move {
+            runtime.spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(850)).await;
                 pending.store(false, Ordering::SeqCst);
                 if !context
@@ -237,7 +246,7 @@ async fn scan_root(
     root_path: &Path,
     root_kind: &str,
     context: &ScanContext,
-    app: &AppHandle,
+    app: &Option<AppHandle>,
 ) -> Result<(), String> {
     let scan_started = Instant::now();
     let _file_guard = context.file_operation_lock.lock().await;
@@ -254,8 +263,10 @@ async fn scan_root(
             .or_insert_with(|| ScanStatus::idle(root_id));
         status.state = "error".into();
         status.message = Some("Library folder is unavailable".into());
-        let _ = app.emit("scan-progress", status.clone());
-        let _ = app.emit("root-status-changed", root_id);
+        if let Some(app) = app {
+            let _ = app.emit("scan-progress", status.clone());
+            let _ = app.emit("root-status-changed", root_id);
+        }
         return Ok(());
     }
     sqlx::query("UPDATE library_roots SET status = 'scanning', updated_at = ? WHERE id = ?")
@@ -295,7 +306,9 @@ async fn scan_root(
         status.errors = 0;
         status.current_path = None;
         status.message = None;
-        let _ = app.emit("scan-progress", status.clone());
+        if let Some(app) = app {
+            let _ = app.emit("scan-progress", status.clone());
+        }
     }
     let pause = context
         .pauses
@@ -378,7 +391,9 @@ async fn scan_root(
             status.state = "paused".into();
             status.processed = index as u64;
             status.errors = scan_errors;
-            let _ = app.emit("scan-progress", status.clone());
+            if let Some(app) = app {
+                let _ = app.emit("scan-progress", status.clone());
+            }
             sqlx::query("UPDATE library_roots SET status = 'paused', updated_at = ? WHERE id = ?")
                 .bind(now())
                 .bind(root_id)
@@ -460,10 +475,14 @@ async fn scan_root(
                 status.current_path = Some(current_path);
                 status.clone()
             };
-            let _ = app.emit("scan-progress", snapshot);
+            if let Some(app) = app {
+                let _ = app.emit("scan-progress", snapshot);
+            }
         }
         if changed_since_emit >= 64 && last_models_emit.elapsed() >= Duration::from_millis(500) {
-            let _ = app.emit("models-changed", root_id);
+            if let Some(app) = app {
+                let _ = app.emit("models-changed", root_id);
+            }
             changed_since_emit = 0;
             last_models_emit = Instant::now();
         }
@@ -507,11 +526,13 @@ async fn scan_root(
         .or_insert_with(|| ScanStatus::idle(root_id));
     status.state = "complete".into();
     status.current_path = None;
-    let _ = app.emit("scan-progress", status.clone());
-    if !changed_models.is_empty() || changed_since_emit > 0 {
-        let _ = app.emit("models-changed", root_id);
+    if let Some(app) = app {
+        let _ = app.emit("scan-progress", status.clone());
+        if !changed_models.is_empty() || changed_since_emit > 0 {
+            let _ = app.emit("models-changed", root_id);
+        }
+        let _ = app.emit("root-status-changed", root_id);
     }
-    let _ = app.emit("root-status-changed", root_id);
     log::info!(
         "Library scan finished: root={root_id} discovered={discovered_count} unchanged={unchanged_files} changed={} errors={scan_errors} elapsed_ms={}",
         changed_assets.len(),

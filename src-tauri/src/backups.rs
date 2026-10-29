@@ -1292,7 +1292,10 @@ fn validate_and_extract_backup(
     let mut seen = BTreeSet::new();
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index).map_err(|error| error.to_string())?;
-        let name = entry.name().to_string();
+        let name = entry
+            .name()
+            .map_err(|error| error.to_string())?
+            .into_owned();
         if !seen.insert(name.clone()) {
             return Err(format!("Duplicate file in backup: {name}"));
         }
@@ -2116,7 +2119,7 @@ mod tests {
         let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
         for index in 0..source.len() {
             let mut entry = source.by_index(index).unwrap();
-            let name = entry.name().to_string();
+            let name = entry.name().unwrap().into_owned();
             let mut bytes = Vec::new();
             entry.read_to_end(&mut bytes).unwrap();
             writer.start_file(&name, options).unwrap();

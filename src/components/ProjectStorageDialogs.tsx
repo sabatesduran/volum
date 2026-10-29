@@ -4,13 +4,14 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { Check, Copy, FolderInput, FolderOpen, HardDrive, Link2, LoaderCircle, Plus } from "lucide-react";
 import { formatBytes } from "../lib/format";
 import { t } from "../lib/i18n";
-import { api, isTauri } from "../lib/tauri/api";
+import { api, backendMode, isTauri } from "../lib/tauri/api";
 import type { ModelDetail } from "../types";
 import { Dialog } from "./Dialog";
 
 export function AddProjectFilesDialog({ model, onClose, onComplete }: { model: ModelDetail; onClose: () => void; onComplete: () => Promise<void> }) {
+  const remote = backendMode() === "remote";
   const [paths, setPaths] = useState<string[]>([]);
-  const [mode, setMode] = useState<"move" | "copy" | "link">(model.storageMode === "managed" ? "move" : "link");
+  const [mode, setMode] = useState<"move" | "copy" | "link">(remote ? "copy" : model.storageMode === "managed" ? "move" : "link");
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
   const choose = async () => {
@@ -27,7 +28,9 @@ export function AddProjectFilesDialog({ model, onClose, onComplete }: { model: M
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setWorking(false); }
   };
-  const choices = model.storageMode === "managed"
+  const choices = remote
+    ? [["copy", Copy, "Upload into project", "The server receives a managed copy"]] as const
+    : model.storageMode === "managed"
     ? [["move", FolderInput, "Move into project", "Recommended · Volum becomes the source of truth"], ["copy", Copy, "Copy into project", "Keep an original outside Volum"]] as const
     : [["link", Link2, "Keep linked", "Add the files without moving them"]] as const;
   return <Dialog title={t("Add project files")} subtitle={t(model.storageMode === "managed" ? "Files are placed inside this project’s managed folder." : "This linked project keeps its files in external folders.")} onClose={onClose}>

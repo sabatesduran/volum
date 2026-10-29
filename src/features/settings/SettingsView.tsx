@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Download, FolderOpen, FolderPlus, HardDrive, Moon, MoreHorizontal, Package, Plus, RefreshCw, Star, Sun, Trash2 } from "lucide-react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "../../app/store";
-import { api, isTauri } from "../../lib/tauri/api";
+import { api, initializeBackend, isTauri } from "../../lib/tauri/api";
 import { formatDate } from "../../lib/format";
 import { emptySlicerConfig, parseSlicerConfig, stringifySlicerConfig } from "../../lib/slicers";
 import { SlicerIcon } from "../../components/SlicerIcon";
@@ -13,6 +13,8 @@ import type { LanguagePreference, SlicerConfig, Theme } from "../../types";
 import { intlLocale, plural, t } from "../../lib/i18n";
 import { UpdateSettings } from "../updates/UpdateSettings";
 import { BackupSettings } from "../backups/BackupSettings";
+import { CompanionSettings } from "./CompanionSettings";
+import { RemoteConnection } from "./RemoteConnection";
 
 function hexToRgb(hex: string): [number, number, number] {
   const value = Number.parseInt(hex.replace("#", ""), 16);
@@ -34,6 +36,18 @@ export function SettingsView() {
   const { data: managed } = useQuery({ queryKey: ["managed-library"], queryFn: api.managedLibrary });
   const { data: materials = [] } = useQuery({ queryKey: ["materials"], queryFn: api.materials });
   const { data: preferences = {} } = useQuery({ queryKey: ["preferences"], queryFn: api.preferences });
+  const [menuBarError, setMenuBarError] = useState("");
+  const menuBarEnabled = preferences.menu_bar_enabled === "true";
+  const menuBarToggle = useMutation({
+    mutationFn: api.setMenuBarEnabled,
+    onSuccess: (enabled) => {
+      setMenuBarError("");
+      queryClient.setQueryData<Record<string, string>>(["preferences"], (current = {}) => ({ ...current, menu_bar_enabled: String(enabled) }));
+    },
+    onError: (reason) => setMenuBarError(reason instanceof Error ? reason.message : String(reason))
+  });
+  const { data: connection } = useQuery({ queryKey: ["backend-connection"], queryFn: initializeBackend });
+  const isRemote = connection?.mode === "remote";
   const storedSlicerConfig = useMemo(() => parseSlicerConfig(preferences), [preferences]);
   const [slicerConfig, setSlicerConfig] = useState<SlicerConfig>(emptySlicerConfig);
   useEffect(() => setSlicerConfig(storedSlicerConfig), [storedSlicerConfig]);
@@ -46,7 +60,14 @@ export function SettingsView() {
   const [materialName, setMaterialName] = useState("");
   const [price, setPrice] = useState("15.99");
   const [materialColor, setMaterialColor] = useState("#e9e2d3");
-  const [activeSection, setActiveSection] = useState("libraries");
+  const [activeSection, setActiveSection] = useState(() => window.location.hash.slice(1) || "libraries");
+  useEffect(() => {
+    if (isRemote && ["libraries", "web-imports", "companion", "backups"].includes(activeSection)) setActiveSection("connection");
+  }, [activeSection, isRemote]);
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => document.getElementById(activeSection)?.scrollIntoView({ block: "start" }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeSection]);
   const [slicerPickerOpen, setSlicerPickerOpen] = useState(false);
   const [webImportFolderError, setWebImportFolderError] = useState("");
   const [managedLibraryError, setManagedLibraryError] = useState("");
@@ -160,22 +181,40 @@ export function SettingsView() {
     <section className="content-view settings-view">
       <header className="view-header"><div><div className="eyebrow">{t("Volum preferences")}</div><h1>{t("Settings")}</h1><p>{t("Libraries, web imports, backups, materials, appearance, indexing, and about.")}</p></div></header>
       <div className="settings-layout">
-        <nav className="settings-nav">{[["libraries", "Libraries"], ["web-imports", "Web imports"], ["appearance", "Appearance"], ["materials", "Materials"], ["applications", "Applications"], ["privacy", "Privacy & data"], ["backups", "Backups"], ["updates", "Updates"], ["about", "About"]].map(([id, label]) => <a key={id} href={`#${id}`} className={activeSection === id ? "is-active" : ""} onClick={() => setActiveSection(id)}>{t(label)}</a>)}</nav>
+        <nav className="settings-nav">{[["connection", "Connection"], ...(!isRemote ? [["libraries", "Libraries"], ["web-imports", "Web imports"]] : []), ["appearance", "Appearance"], ["materials", "Materials"], ["applications", "Applications"], ...(!isRemote ? [["companion", "Companion Access"]] : []), ["privacy", "Privacy & data"], ...(!isRemote ? [["backups", "Backups"]] : []), ["updates", "Updates"], ["about", "About"]].map(([id, label]) => <a key={id} href={`#${id}`} className={activeSection === id ? "is-active" : ""} onClick={() => setActiveSection(id)}>{t(label)}</a>)}</nav>
         <div className="settings-content">
-          <section className="settings-section" id="libraries">
+          {connection && <section className="settings-section" id="connection"><div className="settings-section__header"><div><h2>{t("Library connection")}</h2><p>{t("Use this Desktop locally, host other devices, or connect it to one canonical Volum server.")}</p></div></div><RemoteConnection status={connection} onChange={(next) => { queryClient.setQueryData(["backend-connection"], next); void queryClient.invalidateQueries(); }} /></section>}
+          {!isRemote && <section className="settings-section" id="libraries">
             <div className="settings-section__header"><div><h2>{t("Libraries")}</h2><p>{t("Use one managed home for projects you want Volum to own, plus any number of linked folders.")}</p></div><button className="button button--primary" onClick={addRoot}><FolderPlus size={16} /> {t("Add linked folder")}</button></div>
             <div className={`managed-library-card ${managed?.root ? "is-ready" : ""}`}><span className="root-icon root-icon--online"><HardDrive size={21} /></span><div><strong>{t("Managed Volum library")}</strong><small>{managed?.root?.path ?? t("Not configured")}</small><small>{managed?.root ? t("Projects, Inbox, and Trash are organized here. Managed model files are included in backups.") : t("Choose a folder before creating empty, copied, or moved projects.")}</small></div>{managed?.root ? <div className="managed-library-card__actions"><span className="status-pill status-pill--online">{t("Source of truth")}</span><button className="button button--quiet" disabled={importingInbox} onClick={() => void importInbox()}><Download size={14} />{t(importingInbox ? "Importing Inbox…" : "Import Inbox")}</button></div> : <button className="button button--quiet" onClick={() => void chooseManagedLibrary()}><FolderOpen size={15} />{t("Choose…")}</button>}</div>
             {managedLibraryError && <div className="form-error">{managedLibraryError}</div>}
             {inboxMessage && <p className="settings-footnote">{inboxMessage}</p>}
             <div className="settings-subheading"><h3>{t("Linked libraries")}</h3><p>{t("Indexed in place. Volum never reorganizes these folders without an explicit Move or Copy action.")}</p></div>
             <div className="root-list">{roots.filter((root) => root.rootKind === "linked").map((root) => <div className="root-row" key={root.id}><span className={`root-icon root-icon--${root.status}`}><HardDrive size={20} /></span><div><strong>{root.displayName}</strong><small>{root.path}</small><small>{plural(root.modelCount, "{count} project", "{count} projects")} · {t("Scanned {date}", { date: formatDate(root.lastScanAt) })}</small></div><span className={`status-pill status-pill--${root.status}`}>{t(root.status === "online" ? "Online" : root.status === "offline" ? "Offline" : root.status === "scanning" ? "Scanning" : root.status === "paused" ? "Paused" : "Error")}</span>{root.status === "offline" ? <button className="button button--quiet" onClick={() => void reconnectRoot(root.id)}><FolderOpen size={14} /> {t("Reconnect")}</button> : <button className="icon-button" onClick={() => api.startScan(root.id)} aria-label={t("Rescan")}><RefreshCw size={16} /></button>}<button className="icon-button" onClick={async () => { await api.removeRoot(root.id); queryClient.invalidateQueries({ queryKey: ["roots"] }); }} aria-label={t("Remove library")}><Trash2 size={16} /></button></div>)}</div>
+          </section>}
+          {!isRemote && <section className="settings-section" id="web-imports"><div className="settings-section__header"><div><h2>{t("Web imports")}</h2><p>{t("Downloaded files are copied here before Volum indexes them.")}</p></div><button className="button button--quiet" onClick={chooseWebImportFolder}><FolderOpen size={15} /> {t("Choose folder")}</button></div><div className="web-import-folder-setting"><span><Download size={19} /></span><div><strong>{t(preferences.web_import_folder ? "Custom import folder" : "Default import folder")}</strong><small>{preferences.web_import_folder || (roots[0] ? `${roots[0].path}/Web Imports` : t("Add a library to configure imports"))}</small></div>{preferences.web_import_folder && <button className="button button--quiet" onClick={async () => { await api.savePreference("web_import_folder", ""); await queryClient.invalidateQueries({ queryKey: ["preferences"] }); }}>{t("Use default")}</button>}</div>{webImportFolderError && <div className="form-error">{webImportFolderError}</div>}<p className="settings-footnote">{t("The selected folder must be inside an indexed library. Each import is organized by provider and model.")}</p></section>}
+          <section className="settings-section" id="appearance">
+            <div className="settings-section__header"><div><h2>{t("Appearance")}</h2><p>{t("Use your system setting or choose a theme.")}</p></div></div>
+            <div className="theme-choices">{([["system", MoreHorizontal], ["light", Sun], ["dark", Moon]] as Array<[Theme, typeof Sun]>).map(([value, Icon]) => <button key={value} className={theme === value ? "is-active" : ""} onClick={() => setTheme(value)}><span><Icon size={21} /></span><strong>{t(value === "system" ? "System" : value === "light" ? "Light" : "Dark")}</strong></button>)}</div>
+            <div className="language-setting"><div><h3>{t("Language")}</h3><p>{t("Follow the operating system language, or override it for Volum.")}</p></div><label className="field field--compact"><span>{t("App language")}</span><select value={language} onChange={(event) => setLanguage(event.target.value as LanguagePreference)}><option value="system">{t("System")}</option><option value="en">English</option><option value="ca">Català</option><option value="es">Español (España)</option></select></label></div>
+            <div className="menu-bar-setting">
+              <div><h3>{t("Menu bar")}</h3><p>{t("Show a Volum icon in the menu bar or system tray. Closing the window keeps indexing and Companion Access running.")}</p></div>
+              <button
+                className={`settings-switch ${menuBarEnabled ? "is-on" : ""}`}
+                role="switch"
+                aria-label={t("Show Volum in the menu bar")}
+                aria-checked={menuBarEnabled}
+                disabled={menuBarToggle.isPending}
+                onClick={() => menuBarToggle.mutate(!menuBarEnabled)}
+              ><span /></button>
+              {menuBarError && <div className="form-error">{menuBarError}</div>}
+            </div>
           </section>
-          <section className="settings-section" id="web-imports"><div className="settings-section__header"><div><h2>{t("Web imports")}</h2><p>{t("Downloaded files are copied here before Volum indexes them.")}</p></div><button className="button button--quiet" onClick={chooseWebImportFolder}><FolderOpen size={15} /> {t("Choose folder")}</button></div><div className="web-import-folder-setting"><span><Download size={19} /></span><div><strong>{t(preferences.web_import_folder ? "Custom import folder" : "Default import folder")}</strong><small>{preferences.web_import_folder || (roots[0] ? `${roots[0].path}/Web Imports` : t("Add a library to configure imports"))}</small></div>{preferences.web_import_folder && <button className="button button--quiet" onClick={async () => { await api.savePreference("web_import_folder", ""); await queryClient.invalidateQueries({ queryKey: ["preferences"] }); }}>{t("Use default")}</button>}</div>{webImportFolderError && <div className="form-error">{webImportFolderError}</div>}<p className="settings-footnote">{t("The selected folder must be inside an indexed library. Each import is organized by provider and model.")}</p></section>
-          <section className="settings-section" id="appearance"><div className="settings-section__header"><div><h2>{t("Appearance")}</h2><p>{t("Use your system setting or choose a theme.")}</p></div></div><div className="theme-choices">{([["system", MoreHorizontal], ["light", Sun], ["dark", Moon]] as Array<[Theme, typeof Sun]>).map(([value, Icon]) => <button key={value} className={theme === value ? "is-active" : ""} onClick={() => setTheme(value)}><span><Icon size={21} /></span><strong>{t(value === "system" ? "System" : value === "light" ? "Light" : "Dark")}</strong></button>)}</div><div className="language-setting"><div><h3>{t("Language")}</h3><p>{t("Follow the operating system language, or override it for Volum.")}</p></div><label className="field field--compact"><span>{t("App language")}</span><select value={language} onChange={(event) => setLanguage(event.target.value as LanguagePreference)}><option value="system">{t("System")}</option><option value="en">English</option><option value="ca">Català</option><option value="es">Español (España)</option></select></label></div></section>
           <section className="settings-section" id="materials"><div className="settings-section__header"><div><h2>{t("Materials")}</h2><p>{t("Price presets for estimates—not spool inventory.")}</p></div></div><div className="material-list">{materials.map((material) => <div className="material-row" key={material.id}><span className="material-swatch" style={{ background: material.colorHex ?? "#e9e2d3" }} /><div><strong>{material.name}</strong><small>{material.materialType} · {material.colorHex ? `RGB ${hexToRgb(material.colorHex).join(", ")} · ` : ""}{material.spoolWeightG.toLocaleString(intlLocale)} g</small></div><strong>{new Intl.NumberFormat(intlLocale, { style: "currency", currency: material.currency }).format(material.spoolPriceMinor / 100)}</strong></div>)}</div><form className="material-form" onSubmit={saveMaterial}><div className="material-form__main"><ColorPicker value={materialColor} onChange={setMaterialColor} /><input value={materialName} onChange={(event) => setMaterialName(event.target.value)} placeholder={t("Material name")} aria-label={t("Material name")} /><div className="input-unit input-unit--prefix"><span>€</span><input type="number" value={price} onChange={(event) => setPrice(event.target.value)} step=".01" aria-label={t("Spool price")} /></div><button className="button button--quiet">{t("Add preset")}</button></div></form></section>
           <section className="settings-section" id="applications"><div className="settings-section__header"><div><h2>{t("Slicer applications")}</h2><p>{t("Enabled slicers available from model actions.")}</p></div><button className="button button--quiet" onClick={() => setSlicerPickerOpen(true)}><Plus size={15} /> {t("Add")}</button></div><div className="slicer-settings-list">{enabledSlicerApplications.map((slicer) => { const isDefault = slicerConfig.defaultId === slicer.id; return <div className={`slicer-settings-row ${!slicer.installed ? "is-unavailable" : ""}`} key={slicer.id}><SlicerIcon application={slicer} size={34} /><div className="slicer-settings-row__copy"><strong>{slicer.name}</strong><small>{slicer.installed ? slicer.path : t("Not installed")}</small></div><button className="slicer-enable is-enabled" onClick={() => toggleSlicer(slicer.id)} aria-label={t("Disable {name}", { name: slicer.name })}><span><Check size={12} /></span>{t("Enabled")}</button><button className={`slicer-default ${isDefault ? "is-default" : ""}`} disabled={!slicer.installed} onClick={() => updateSlicerConfig({ ...slicerConfig, defaultId: slicer.id })}><Star size={13} fill={isDefault ? "currentColor" : "none"} />{t(isDefault ? "Default" : "Make default")}</button>{slicer.custom && <button className="icon-button icon-button--tiny" onClick={() => removeCustomSlicer(slicer.id)} aria-label={t("Remove {name}", { name: slicer.name })}><Trash2 size={14} /></button>}</div>; })}{enabledSlicerApplications.length === 0 && <div className="slicer-settings-empty">{t("No slicers are enabled. Add a slicer to use it from model actions.")}</div>}</div><p className="settings-footnote">{t("Only enabled slicers are shown here and in the Open menu.")}</p></section>
-          <section className="settings-section" id="privacy"><div className="settings-section__header"><div><h2>{t("Privacy & data")}</h2><p>{t("Volum has no account, analytics, or model uploads. Its index and previews remain on this computer.")}</p></div></div><div className="privacy-note"><Package size={20} /><span><strong>{t("Local by default")}</strong><small>{t("Network access is used for update checks, About projects, and public MakerWorld or Printables metadata only when you preview a link. No library information is sent.")}</small></span></div><div className="settings-actions"><button className="button button--quiet" onClick={exportMetadata}>{t("Export metadata")}</button><button className="button button--quiet" onClick={exportDiagnostics}>{t("Export diagnostics")}</button><button className="button button--quiet" onClick={() => roots.forEach((root) => api.startScan(root.id))}><RefreshCw size={15} /> {t("Rebuild index")}</button></div></section>
-          <BackupSettings />
+          {!isRemote && <CompanionSettings />}
+          <section className="settings-section" id="privacy"><div className="settings-section__header"><div><h2>{t("Privacy & data")}</h2><p>{t(isRemote ? "The paired server is canonical. Requests are authenticated and Volum never synchronizes its SQLite database between machines." : "Volum has no account, analytics, or model uploads. Its index and previews remain on this computer.")}</p></div></div><div className="privacy-note"><Package size={20} /><span><strong>{t(isRemote ? "Server-authoritative" : "Local by default")}</strong><small>{t(isRemote ? "Only API data and explicitly mirrored originals cross the connection. Pairing tokens stay in the operating system credential store." : "Network access is used for update checks, optional Companion Access through your Tailnet, About projects, and public MakerWorld or Printables metadata only when you request them. No hosted Volum relay is used.")}</small></span></div>{!isRemote && <div className="settings-actions"><button className="button button--quiet" onClick={exportMetadata}>{t("Export metadata")}</button><button className="button button--quiet" onClick={exportDiagnostics}>{t("Export diagnostics")}</button><button className="button button--quiet" onClick={() => roots.forEach((root) => api.startScan(root.id))}><RefreshCw size={15} /> {t("Rebuild index")}</button></div>}</section>
+          {!isRemote && <BackupSettings />}
           <UpdateSettings />
           <AboutSettings />
         </div>

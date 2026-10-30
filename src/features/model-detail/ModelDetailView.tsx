@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowLeft, Box, Check, ChevronDown, Clock3, Copy, ExternalLink, FileBox, FolderOpen, Globe2,
+  ArrowLeft, Box, Check, ChevronDown, Clock3, Copy, Crosshair, ExternalLink, Eye, FileBox, FolderOpen, Globe2,
   GitBranch, Heart, Layers3, LoaderCircle, Package, Pencil, Plus, Printer, QrCode, RotateCcw, Save, Scale, ScanSearch, Scissors, Star, Tags, Trash2, TriangleAlert, X
 } from "lucide-react";
 import { save as chooseSavePath } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "../../app/store";
-import { ModelViewer, type ModelView, type ViewerGeometry } from "../../components/ModelViewer";
+import { ModelViewer, type ModelView, type ViewerGeometry, type ViewerObject } from "../../components/ModelViewer";
 import { api, backendMode, currentBackendConnection, isTauri } from "../../lib/tauri/api";
 import { formatBytes, formatCurrency, formatDate, formatDimensions, formatDuration, formatNumber, titleCase } from "../../lib/format";
 import { enabledSlicers, parseSlicerConfig } from "../../lib/slicers";
@@ -200,6 +200,12 @@ export function ModelDetailView({ modelId }: { modelId: string }) {
   const [cameraView, setCameraView] = useState<ModelView>("iso");
   const [activePlateIndex, setActivePlateIndex] = useState<number>();
   const [viewerGeometry, setViewerGeometry] = useState<ViewerGeometry>();
+  const [viewerObjects, setViewerObjects] = useState<ViewerObject[]>([]);
+  const [selectedObjectId, setSelectedObjectId] = useState<number>();
+  const [isolatedObjectId, setIsolatedObjectId] = useState<number>();
+  const [focusObjectId, setFocusObjectId] = useState<number>();
+  const [focusSignal, setFocusSignal] = useState(0);
+  const [objectsOpen, setObjectsOpen] = useState(false);
   const [previewError, setPreviewError] = useState("");
   const [notes, setNotes] = useState("");
   const [splitAssetIds, setSplitAssetIds] = useState<string[]>([]);
@@ -218,8 +224,49 @@ export function ModelDetailView({ modelId }: { modelId: string }) {
   const viewerPlates = activeAsset?.metadata.threeMf?.plates ?? [];
   useEffect(() => {
     setViewerGeometry(undefined);
+    setViewerObjects([]);
+    setSelectedObjectId(undefined);
+    setIsolatedObjectId(undefined);
+    setFocusObjectId(undefined);
+    setObjectsOpen(false);
     setActivePlateIndex(viewerPlates.length > 1 ? (viewerPlates.find((plate) => plate.objectCount > 0)?.index ?? viewerPlates[0]?.index) : undefined);
   }, [activeAsset?.id]);
+  useEffect(() => {
+    setViewerObjects([]);
+    setSelectedObjectId(undefined);
+    setIsolatedObjectId(undefined);
+    setFocusObjectId(undefined);
+    setObjectsOpen(false);
+  }, [activePlateIndex]);
+  const selectedObject = viewerObjects.find((object) => object.id === selectedObjectId);
+  const selectObject = (objectId?: number) => {
+    if (!objectId) {
+      setSelectedObjectId(undefined);
+      setFocusObjectId(undefined);
+      if (isolatedObjectId) {
+        setIsolatedObjectId(undefined);
+        setResetSignal((value) => value + 1);
+      }
+      return;
+    }
+    setSelectedObjectId(objectId);
+  };
+  const focusObject = (objectId: number) => {
+    setSelectedObjectId(objectId);
+    setFocusObjectId(objectId);
+    setFocusSignal((value) => value + 1);
+  };
+  const isolateObject = (objectId: number) => {
+    setSelectedObjectId(objectId);
+    setIsolatedObjectId(objectId);
+    setFocusObjectId(objectId);
+    setFocusSignal((value) => value + 1);
+  };
+  const showAllObjects = () => {
+    setIsolatedObjectId(undefined);
+    setFocusObjectId(undefined);
+    setResetSignal((value) => value + 1);
+  };
   const fileFilamentGrams = activeAsset?.metadata.filamentGrams;
   const suggestedFilamentGrams = fileFilamentGrams ?? model?.webSource?.filamentGrams;
   const suggestedFilamentSource = fileFilamentGrams != null ? "file" : "web";
@@ -267,18 +314,29 @@ export function ModelDetailView({ modelId }: { modelId: string }) {
       <section className="model-detail__stage">
         <div className="detail-toolbar">
           <button className="button button--floating" onClick={() => selectModel()}><ArrowLeft size={17} /> {t("Back")}</button>
-           <div className="detail-toolbar__right">
-             <button className="button button--floating" disabled={!remote && companion.isLoading} onClick={() => setProjectQrOpen(true)}><QrCode size={16} /> {t("Open on phone")}</button>
-             <button className={`button button--floating button--icon ${model.favorite ? "is-favorite" : ""}`} onClick={() => favorite.mutate()} aria-label={t("Favorite")}><Heart size={17} fill={model.favorite ? "currentColor" : "none"} /></button>
-            <button className="button button--floating" onClick={() => { setCameraView("iso"); setResetSignal((value) => value + 1); }}><RotateCcw size={16} /> {t("Reset view")}</button>
-          </div>
+           <div className="detail-toolbar__right detail-toolbar__actions">
+             <button className="button button--floating button--icon" disabled={!remote && companion.isLoading} onClick={() => setProjectQrOpen(true)} aria-label={t("Open on phone")} title={t("Open on phone")}><QrCode size={16} /></button>
+             <button className={`button button--floating button--icon ${model.favorite ? "is-favorite" : ""}`} onClick={() => favorite.mutate()} aria-label={t("Favorite")} title={t("Favorite")}><Heart size={17} fill={model.favorite ? "currentColor" : "none"} /></button>
+           </div>
         </div>
         <div className="viewer-wrap">
-          <ModelViewer assetId={activeAsset?.id} extension={activeAsset?.extension ?? model.primaryExtension} modelId={model.id} plateIndex={activePlateIndex} revision={activeAsset?.modifiedAt} resetSignal={resetSignal} view={cameraView} onError={setPreviewError} onGeometry={setViewerGeometry} />
+          <ModelViewer assetId={activeAsset?.id} extension={activeAsset?.extension ?? model.primaryExtension} modelId={model.id} plateIndex={activePlateIndex} revision={activeAsset?.modifiedAt} resetSignal={resetSignal} view={cameraView} selectedObjectId={selectedObjectId} isolatedObjectId={isolatedObjectId} focusObjectId={focusObjectId} focusSignal={focusSignal} onObjectSelect={selectObject} onObjects={setViewerObjects} onError={setPreviewError} onGeometry={setViewerGeometry} />
           {previewError && <div className="viewer-error"><TriangleAlert size={15} />{previewError}</div>}
-          {viewerPlates.length > 1 && <div className="viewer-plate-controls" role="group" aria-label={t("3MF plate")}><button type="button" className={activePlateIndex == null ? "is-active" : ""} onClick={() => setActivePlateIndex(undefined)}>{t("All plates")}</button>{viewerPlates.map((plate) => <button type="button" key={plate.index} className={activePlateIndex === plate.index ? "is-active" : ""} onClick={() => setActivePlateIndex(plate.index)}>{plate.name || t("Plate {index}", { index: plate.index })}</button>)}</div>}
-          <div className="viewer-view-controls" role="group" aria-label={t("Model view")}>{(["iso", "front", "side", "top"] as ModelView[]).map((view) => <button type="button" key={view} className={cameraView === view ? "is-active" : ""} onClick={() => setCameraView(view)}>{t(view === "iso" ? "Isometric" : view === "front" ? "Front" : view === "side" ? "Side" : "Top")}</button>)}</div>
-          <div className="viewer-hint">{t("Drag to rotate · Scroll to zoom")}</div>
+          {viewerObjects.length > 0 && <div className="viewer-object-menu">
+            <button type="button" className="viewer-object-menu__toggle" aria-expanded={objectsOpen} onClick={() => setObjectsOpen((open) => !open)}><Layers3 size={15} />{plural(viewerObjects.length, "{count} object", "{count} objects")}<ChevronDown size={13} /></button>
+            {objectsOpen && <div className="viewer-object-menu__list">{viewerObjects.map((object) => <button type="button" key={object.id} className={selectedObjectId === object.id ? "is-selected" : ""} onClick={() => { selectObject(object.id); setObjectsOpen(false); }}><Box size={15} /><span><strong>{object.name || t("Object {number}", { number: object.id })}</strong><small>{object.dimensions.map((value) => `${formatNumber(value)} mm`).join(" × ")}</small></span>{selectedObjectId === object.id && <Check size={13} />}</button>)}</div>}
+          </div>}
+          {selectedObject && <section className="viewer-object-inspector" aria-label={t("Selected object details")}>
+            <header><div><span>{t("OBJECT {current} OF {count}", { current: selectedObject.id, count: viewerObjects.length })}</span><strong>{selectedObject.name || t("Object {number}", { number: selectedObject.id })}</strong></div><button type="button" aria-label={t("Clear object selection")} onClick={() => selectObject(undefined)}><X size={14} /></button></header>
+            <div className="viewer-object-inspector__metrics"><div><span>{t("X · WIDTH")}</span><strong>{formatNumber(selectedObject.dimensions[0])} mm</strong></div><div><span>{t("Y · DEPTH")}</span><strong>{formatNumber(selectedObject.dimensions[1])} mm</strong></div><div><span>{t("Z · HEIGHT")}</span><strong>{formatNumber(selectedObject.dimensions[2])} mm</strong></div></div>
+            <p>{t("{triangles} triangles · Base Z {z} mm", { triangles: formatNumber(selectedObject.triangleCount), z: formatNumber(selectedObject.bounds[2]) })}</p>
+            <div className="viewer-object-inspector__actions"><button type="button" onClick={() => focusObject(selectedObject.id)}><Crosshair size={14} />{t("Fit to view")}</button>{isolatedObjectId ? <button type="button" className="is-primary" onClick={showAllObjects}><Layers3 size={14} />{t("Show all")}</button> : <button type="button" className="is-primary" onClick={() => isolateObject(selectedObject.id)}><Eye size={14} />{t("Inspect alone")}</button>}</div>
+          </section>}
+          <div className="viewer-control-dock">
+            {viewerPlates.length > 1 && <label className="viewer-plate-select"><Box size={14} /><select value={activePlateIndex ?? ""} onChange={(event) => setActivePlateIndex(event.target.value ? Number(event.target.value) : undefined)} aria-label={t("3MF plate")}><option value="">{t("All plates")}</option>{viewerPlates.map((plate) => <option key={plate.index} value={plate.index}>{t("Plate {index}", { index: plate.index })}</option>)}</select></label>}
+            <div className="viewer-view-controls" role="group" aria-label={t("Model view")}>{(["iso", "front", "side", "top"] as ModelView[]).map((view) => <button type="button" key={view} className={cameraView === view ? "is-active" : ""} onClick={() => setCameraView(view)}>{t(view === "iso" ? "Isometric" : view === "front" ? "Front" : view === "side" ? "Side" : "Top")}</button>)}</div>
+            <button type="button" className="viewer-reset-button" onClick={() => { setCameraView("iso"); setResetSignal((value) => value + 1); }} aria-label={t("Reset view")} title={t("Reset view")}><RotateCcw size={15} /></button>
+          </div>
         </div>
         {model.assets.length > 1 && <div className="variant-strip">{model.assets.map((asset) => <button className={asset.id === activeAsset?.id ? "is-active" : ""} key={asset.id} onClick={() => { setActiveAssetId(asset.id); setPreviewError(""); }}><FileBox size={16} /><span>{asset.extension.toUpperCase()}</span></button>)}</div>}
       </section>

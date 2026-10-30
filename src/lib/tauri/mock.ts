@@ -325,6 +325,7 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
     }
     case "get_scan_status": return { rootId: args.rootId, state: "complete", discovered: models.length, processed: models.length, errors: 0 } as T;
     case "get_preferences": return preferences as T;
+    case "clear_preview_cache": return undefined as T;
     case "list_slicer_apps": return [
       { id: "bambu-studio", name: "Bambu Studio", path: "/Applications/BambuStudio.app", installed: true, custom: false, brandColor: "#00ae42" },
       { id: "orca-slicer", name: "OrcaSlicer", installed: false, custom: false, brandColor: "#1f9ad6" },

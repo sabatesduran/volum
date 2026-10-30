@@ -40,6 +40,6 @@ createRoot(document.getElementById("root")!).render(
   <QueryClientProvider client={queryClient}>
     {screen === "pairing"
       ? <PairingScreen onPaired={() => undefined} />
-      : <CompanionApp credential={visualCredential} onCredentialChange={() => undefined} onUnpair={() => undefined} />}
+      : <CompanionApp credential={visualCredential} onCredentialChange={() => undefined} onUnpair={() => undefined} onPreviewStl={async () => undefined} />}
   </QueryClientProvider>,
 );

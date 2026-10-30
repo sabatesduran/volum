@@ -17,6 +17,14 @@ const BUILD_PLATE_SURFACE: [u8; 3] = [54, 55, 64];
 const BUILD_PLATE_GRID: [u8; 3] = [83, 85, 96];
 const BUILD_PLATE_GRID_MAJOR: [u8; 3] = [108, 111, 123];
 const BUILD_PLATE_BORDER: [u8; 3] = [137, 140, 151];
+const BUILD_PLATE_GRID_SPACING: f32 = 10.0;
+const MAX_GRID_LINES_PER_AXIS: f32 = 200.0;
+const TRIANGLE_KIND_MODEL: u8 = 0;
+const TRIANGLE_KIND_PLATE_SURFACE: u8 = 1;
+const TRIANGLE_KIND_PLATE_GRID: u8 = 2;
+const TRIANGLE_KIND_PLATE_GRID_MAJOR: u8 = 3;
+const TRIANGLE_KIND_PLATE_BORDER: u8 = 4;
+const MAX_VIEWER_OBJECTS: usize = 4_096;
 static STEP_TESSELLATION_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -61,11 +69,67 @@ impl Vec3 {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Bounds3 {
+    min: Vec3,
+    max: Vec3,
+}
+
+impl Bounds3 {
+    fn from_points(points: impl IntoIterator<Item = Vec3>) -> Option<Self> {
+        let mut bounds: Option<Self> = None;
+        for point in points {
+            if !point.finite() {
+                continue;
+            }
+            if let Some(current) = &mut bounds {
+                current.min.x = current.min.x.min(point.x);
+                current.min.y = current.min.y.min(point.y);
+                current.min.z = current.min.z.min(point.z);
+                current.max.x = current.max.x.max(point.x);
+                current.max.y = current.max.y.max(point.y);
+                current.max.z = current.max.z.max(point.z);
+            } else {
+                bounds = Some(Self {
+                    min: point,
+                    max: point,
+                });
+            }
+        }
+        bounds
+    }
+
+    fn size(self) -> Vec3 {
+        self.max.sub(self.min)
+    }
+
+    fn center(self) -> Vec3 {
+        Vec3::new(
+            (self.min.x + self.max.x) * 0.5,
+            (self.min.y + self.max.y) * 0.5,
+            (self.min.z + self.max.z) * 0.5,
+        )
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct MeshObject {
+    id: u32,
+    triangle_count: u32,
+    bounds: Bounds3,
+    name: Option<String>,
+}
+
 #[derive(Default)]
 pub(crate) struct Mesh {
     pub(crate) vertices: Vec<Vec3>,
     pub(crate) triangles: Vec<[usize; 3]>,
     pub(crate) vertex_colors: Vec<[u8; 3]>,
+    pub(crate) triangle_colors: Vec<[u8; 3]>,
+    pub(crate) triangle_kinds: Vec<u8>,
+    pub(crate) triangle_object_ids: Vec<u32>,
+    pub(crate) objects: Vec<MeshObject>,
+    pub(crate) source_bounds: Option<Bounds3>,
 }
 
 #[derive(Clone, Copy)]
@@ -133,7 +197,7 @@ fn parse_step(path: &Path) -> Result<Mesh, String> {
     ensure_mesh(Mesh {
         vertices,
         triangles,
-        vertex_colors: Vec::new(),
+        ..Mesh::default()
     })
 }
 
@@ -142,7 +206,7 @@ pub fn viewer_mesh(
     extension: &str,
     plate_index: Option<u32>,
 ) -> Result<Vec<u8>, String> {
-    let mesh = match extension {
+    let mut mesh = match extension {
         "stl" => parse_stl(&std::fs::read(path).map_err(|error| error.to_string())?)?,
         "obj" => parse_obj(&std::fs::read(path).map_err(|error| error.to_string())?)?,
         "3mf" => {
@@ -158,6 +222,7 @@ pub fn viewer_mesh(
         "zip" => parse_archive(path)?,
         _ => return Err(format!("No interactive renderer for {extension}")),
     };
+    prepare_viewer_mesh(&mut mesh)?;
     encode_viewer_mesh(&mesh)
 }
 
@@ -222,7 +287,7 @@ fn parse_stl(bytes: &[u8]) -> Result<Mesh, String> {
             let mut mesh = Mesh {
                 vertices: Vec::with_capacity(count.saturating_mul(3)),
                 triangles: Vec::with_capacity(count),
-                vertex_colors: Vec::new(),
+                ..Mesh::default()
             };
             for triangle in 0..count {
                 let facet = 84 + triangle * 50;
@@ -370,7 +435,9 @@ impl Transform {
 
 #[derive(Default)]
 struct ThreeMfObject {
+    name: Option<String>,
     mesh: Mesh,
+    triangle_paint: Vec<Option<String>>,
     components: Vec<ThreeMfInstance>,
 }
 
@@ -402,8 +469,34 @@ enum PlateSelection {
 struct ThreeMfProject {
     filament_colors: Vec<[u8; 3]>,
     object_extruders: HashMap<u32, usize>,
+    object_names: HashMap<u32, String>,
     plate_objects: BTreeMap<u32, HashSet<u32>>,
-    plate_size: Option<[f32; 2]>,
+    plate_bounds: Option<PlateBounds>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PlateBounds {
+    min_x: f32,
+    min_y: f32,
+    max_x: f32,
+    max_y: f32,
+}
+
+impl PlateBounds {
+    fn width(self) -> f32 {
+        self.max_x - self.min_x
+    }
+
+    fn height(self) -> f32 {
+        self.max_y - self.min_y
+    }
+
+    fn center(self) -> (f32, f32) {
+        (
+            (self.min_x + self.max_x) * 0.5,
+            (self.min_y + self.max_y) * 0.5,
+        )
+    }
 }
 
 impl ThreeMfProject {
@@ -464,6 +557,11 @@ fn parse_3mf_archive<R: Read + Seek>(
         let entry = archive.by_name(path).map_err(|error| error.to_string())?;
         parts.insert(normalize_3mf_path(path), parse_3mf_part(entry)?);
     }
+    let has_face_paint = parts.values().any(|part| {
+        part.objects
+            .values()
+            .any(|object| object.triangle_paint.iter().any(|paint| paint.is_some()))
+    });
     let project = parse_3mf_project(&mut archive, &archive_paths)?;
     let selected_objects = project.selected_objects(selection)?;
 
@@ -477,41 +575,106 @@ fn parse_3mf_archive<R: Read + Seek>(
     let mut target = ThreeMfEmitTarget {
         stack: &mut stack,
         output: &mut output,
+        face_colors: has_face_paint,
     };
     if let Some(root) = parts.get(&root_path) {
         for item in &root.build {
             if selected_objects.is_some_and(|objects| !objects.contains(&item.object_id)) {
                 continue;
             }
+            let viewer_object_id = u32::try_from(target.output.objects.len() + 1)
+                .map_err(|_| "3MF contains too many objects for the viewer")?;
+            let triangle_start = target.output.triangles.len();
+            let object_name = project
+                .object_names
+                .get(&item.object_id)
+                .cloned()
+                .or_else(|| {
+                    root.objects
+                        .get(&item.object_id)
+                        .and_then(|object| object.name.clone())
+                });
             emit_3mf_object(
                 &parts,
                 &project,
                 &root_path,
                 item.object_id,
+                viewer_object_id,
                 item.transform,
                 None,
                 &mut target,
             )?;
+            finish_viewer_object(target.output, viewer_object_id, triangle_start, object_name)?;
         }
     }
     if target.output.triangles.len() == plate_triangle_count && selected_objects.is_none() {
         for (path, part) in &parts {
             for (&object_id, object) in &part.objects {
                 if !object.mesh.triangles.is_empty() {
+                    let viewer_object_id = u32::try_from(target.output.objects.len() + 1)
+                        .map_err(|_| "3MF contains too many objects for the viewer")?;
+                    let triangle_start = target.output.triangles.len();
+                    let object_name = project
+                        .object_names
+                        .get(&object_id)
+                        .cloned()
+                        .or_else(|| object.name.clone());
                     emit_3mf_object(
                         &parts,
                         &project,
                         path,
                         object_id,
+                        viewer_object_id,
                         Transform::identity(),
                         None,
                         &mut target,
+                    )?;
+                    finish_viewer_object(
+                        target.output,
+                        viewer_object_id,
+                        triangle_start,
+                        object_name,
                     )?;
                 }
             }
         }
     }
+    if target.output.objects.len() > MAX_VIEWER_OBJECTS {
+        target.output.objects.clear();
+        target.output.triangle_object_ids.fill(0);
+    }
     ensure_mesh(output)
+}
+
+fn finish_viewer_object(
+    output: &mut Mesh,
+    object_id: u32,
+    triangle_start: usize,
+    name: Option<String>,
+) -> Result<(), String> {
+    let triangles = output
+        .triangles
+        .get(triangle_start..)
+        .ok_or_else(|| "3MF object triangle range is invalid".to_string())?;
+    if triangles.is_empty() {
+        return Ok(());
+    }
+    let bounds = Bounds3::from_points(
+        triangles
+            .iter()
+            .flat_map(|triangle| triangle.iter())
+            .filter_map(|index| output.vertices.get(*index).copied()),
+    )
+    .ok_or_else(|| "3MF object bounds are invalid".to_string())?;
+    let triangle_count = u32::try_from(triangles.len())
+        .map_err(|_| "3MF object has too many triangles for the viewer")?;
+    output.objects.push(MeshObject {
+        id: object_id,
+        triangle_count,
+        bounds,
+        name,
+    });
+    Ok(())
 }
 
 fn parse_3mf_project<R: Read + Seek>(
@@ -535,7 +698,7 @@ fn parse_3mf_project<R: Read + Seek>(
                 .flatten()
                 .filter_map(|value| value.as_str().and_then(parse_hex_color))
                 .collect();
-            project.plate_size = printable_area_size(&value);
+            project.plate_bounds = printable_area_bounds(&value);
         }
     }
     if let Some(path) = find_archive_path(paths, "metadata/model_settings.config") {
@@ -545,7 +708,7 @@ fn parse_3mf_project<R: Read + Seek>(
     Ok(project)
 }
 
-fn printable_area_size(value: &serde_json::Value) -> Option<[f32; 2]> {
+fn printable_area_bounds(value: &serde_json::Value) -> Option<PlateBounds> {
     let points = value.get("printable_area")?.as_array()?;
     let coordinates = points
         .iter()
@@ -558,10 +721,17 @@ fn printable_area_size(value: &serde_json::Value) -> Option<[f32; 2]> {
     let max_x = coordinates.iter().map(|point| point.0).reduce(f32::max)?;
     let min_y = coordinates.iter().map(|point| point.1).reduce(f32::min)?;
     let max_y = coordinates.iter().map(|point| point.1).reduce(f32::max)?;
-    let width = max_x - min_x;
-    let height = max_y - min_y;
-    (width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0)
-        .then_some([width, height])
+    let bounds = PlateBounds {
+        min_x,
+        min_y,
+        max_x,
+        max_y,
+    };
+    (bounds.width().is_finite()
+        && bounds.height().is_finite()
+        && bounds.width() > 0.0
+        && bounds.height() > 0.0)
+        .then_some(bounds)
 }
 
 fn find_archive_path<'a>(paths: &'a [String], wanted: &str) -> Option<&'a str> {
@@ -667,6 +837,11 @@ fn apply_bambu_metadata(
             project.object_extruders.insert(object_id, extruder);
         }
     }
+    if key == "name" && current_part.is_none() {
+        if let (Some(object_id), Some(name)) = (current_object, viewer_object_name(&value)) {
+            project.object_names.insert(object_id, name);
+        }
+    }
     let Some((plate_index, objects)) = current_plate else {
         return;
     };
@@ -691,7 +866,15 @@ fn parse_3mf_part<R: Read>(source: R) -> Result<ThreeMfPart, String> {
                 let binding = event.name();
                 if xml_local_name(binding.as_ref()) == "object" {
                     if let Some(id) = xml_attribute(&event, "id").and_then(|id| id.parse().ok()) {
-                        current = Some((id, ThreeMfObject::default()));
+                        current = Some((
+                            id,
+                            ThreeMfObject {
+                                name: xml_attribute(&event, "name")
+                                    .as_deref()
+                                    .and_then(viewer_object_name),
+                                ..ThreeMfObject::default()
+                            },
+                        ));
                     }
                 }
             }
@@ -718,6 +901,10 @@ fn parse_3mf_part<R: Read>(source: R) -> Result<ThreeMfPart, String> {
                                 xml_index(&event, "v3"),
                             ) {
                                 object.mesh.triangles.push([v1, v2, v3]);
+                                object.triangle_paint.push(
+                                    xml_attribute(&event, "paint_color")
+                                        .or_else(|| xml_attribute(&event, "mmu_segmentation")),
+                                );
                             }
                         }
                     }
@@ -736,7 +923,15 @@ fn parse_3mf_part<R: Read>(source: R) -> Result<ThreeMfPart, String> {
                     "object" => {
                         if let Some(id) = xml_attribute(&event, "id").and_then(|id| id.parse().ok())
                         {
-                            part.objects.insert(id, ThreeMfObject::default());
+                            part.objects.insert(
+                                id,
+                                ThreeMfObject {
+                                    name: xml_attribute(&event, "name")
+                                        .as_deref()
+                                        .and_then(viewer_object_name),
+                                    ..ThreeMfObject::default()
+                                },
+                            );
                         }
                     }
                     _ => {}
@@ -773,9 +968,11 @@ fn emit_build_plates(
     build: &[ThreeMfInstance],
     output: &mut Mesh,
 ) -> Result<(), String> {
-    let Some([width, height]) = project.plate_size else {
+    let Some(bounds) = project.plate_bounds else {
         return Ok(());
     };
+    let width = bounds.width();
+    let height = bounds.height();
     let plates = match selection {
         PlateSelection::All => project
             .plate_objects
@@ -793,6 +990,22 @@ fn emit_build_plates(
             .get(&index)
             .ok_or_else(|| format!("3MF plate {index} was not found"))?],
     };
+    let (base_center_x, base_center_y) = bounds.center();
+    let spacing = plate_grid_spacing(width, height);
+    if plates.is_empty() {
+        if !build.is_empty() {
+            emit_build_plate(
+                output,
+                base_center_x,
+                base_center_y,
+                width,
+                height,
+                -0.55,
+                spacing,
+            );
+        }
+        return Ok(());
+    }
     let step_x = width * 1.2;
     let step_y = height * 1.2;
     for objects in plates {
@@ -800,19 +1013,26 @@ fn emit_build_plates(
             continue;
         };
         let translation = anchor.transform.translation();
-        let tile_x = ((translation.x - width * 0.5) / step_x).round();
-        let tile_y = ((translation.y - height * 0.5) / step_y).round();
-        let center_x = width * 0.5 + tile_x * step_x;
-        let center_y = height * 0.5 + tile_y * step_y;
-        emit_build_plate(output, center_x, center_y, width, height);
+        let tile_x = ((translation.x - base_center_x) / step_x).round();
+        let tile_y = ((translation.y - base_center_y) / step_y).round();
+        let center_x = base_center_x + tile_x * step_x;
+        let center_y = base_center_y + tile_y * step_y;
+        emit_build_plate(output, center_x, center_y, width, height, -0.55, spacing);
     }
     Ok(())
 }
 
-fn emit_build_plate(output: &mut Mesh, center_x: f32, center_y: f32, width: f32, height: f32) {
-    let surface = -0.55;
+fn emit_build_plate(
+    output: &mut Mesh,
+    center_x: f32,
+    center_y: f32,
+    width: f32,
+    height: f32,
+    surface: f32,
+    spacing: f32,
+) {
     let radius = (width.min(height) * 0.028)
-        .clamp(2.0, 8.0)
+        .clamp(spacing * 0.2, spacing * 0.8)
         .min(width * 0.45)
         .min(height * 0.45);
     let outline = rounded_rectangle(center_x, center_y, width, height, radius, surface);
@@ -821,55 +1041,57 @@ fn emit_build_plate(output: &mut Mesh, center_x: f32, center_y: f32, width: f32,
         Vec3::new(center_x, center_y, surface),
         &outline,
         BUILD_PLATE_SURFACE,
+        TRIANGLE_KIND_PLATE_SURFACE,
     );
 
-    let border_width = 1.7_f32.min(radius * 0.4);
+    let border_width = (spacing * 0.17).min(radius * 0.4);
+    let border_z = surface + spacing * 0.004;
+    let grid_z = surface + spacing * 0.007;
     let inner = rounded_rectangle(
         center_x,
         center_y,
         width - border_width * 2.0,
         height - border_width * 2.0,
         radius - border_width,
-        surface + 0.04,
+        border_z,
     );
-    emit_colored_ring(output, &outline, &inner, BUILD_PLATE_BORDER);
+    emit_colored_ring(
+        output,
+        &outline,
+        &inner,
+        BUILD_PLATE_BORDER,
+        TRIANGLE_KIND_PLATE_BORDER,
+    );
 
-    let spacing = 10.0;
     let half_width = width * 0.5;
     let half_height = height * 0.5;
-    let max_vertical = (half_width / spacing).floor() as i32;
-    let max_horizontal = (half_height / spacing).floor() as i32;
-    for step in -max_vertical..=max_vertical {
-        let local_x = step as f32 * spacing;
-        if local_x.abs() >= half_width - border_width {
-            continue;
-        }
-        let major = step % 5 == 0;
-        let thickness = if major { 0.62 } else { 0.34 };
-        let extent =
-            rounded_axis_extent(local_x, half_width, half_height, radius) - border_width * 1.35;
+    let grid_inset = border_width * 1.35;
+    for (local_x, index) in metric_grid_lines(half_width, grid_inset, spacing) {
+        let major = index % 5 == 0;
+        let thickness = spacing * if major { 0.062 } else { 0.034 };
+        let extent = rounded_axis_extent(local_x, half_width, half_height, radius) - grid_inset;
         emit_colored_quad(
             output,
             [
                 Vec3::new(
                     center_x + local_x - thickness * 0.5,
                     center_y - extent,
-                    surface + 0.07,
+                    grid_z,
                 ),
                 Vec3::new(
                     center_x + local_x + thickness * 0.5,
                     center_y - extent,
-                    surface + 0.07,
+                    grid_z,
                 ),
                 Vec3::new(
                     center_x + local_x + thickness * 0.5,
                     center_y + extent,
-                    surface + 0.07,
+                    grid_z,
                 ),
                 Vec3::new(
                     center_x + local_x - thickness * 0.5,
                     center_y + extent,
-                    surface + 0.07,
+                    grid_z,
                 ),
             ],
             if major {
@@ -877,39 +1099,39 @@ fn emit_build_plate(output: &mut Mesh, center_x: f32, center_y: f32, width: f32,
             } else {
                 BUILD_PLATE_GRID
             },
+            if major {
+                TRIANGLE_KIND_PLATE_GRID_MAJOR
+            } else {
+                TRIANGLE_KIND_PLATE_GRID
+            },
         );
     }
-    for step in -max_horizontal..=max_horizontal {
-        let local_y = step as f32 * spacing;
-        if local_y.abs() >= half_height - border_width {
-            continue;
-        }
-        let major = step % 5 == 0;
-        let thickness = if major { 0.62 } else { 0.34 };
-        let extent =
-            rounded_axis_extent(local_y, half_height, half_width, radius) - border_width * 1.35;
+    for (local_y, index) in metric_grid_lines(half_height, grid_inset, spacing) {
+        let major = index % 5 == 0;
+        let thickness = spacing * if major { 0.062 } else { 0.034 };
+        let extent = rounded_axis_extent(local_y, half_height, half_width, radius) - grid_inset;
         emit_colored_quad(
             output,
             [
                 Vec3::new(
                     center_x - extent,
                     center_y + local_y - thickness * 0.5,
-                    surface + 0.07,
+                    grid_z,
                 ),
                 Vec3::new(
                     center_x + extent,
                     center_y + local_y - thickness * 0.5,
-                    surface + 0.07,
+                    grid_z,
                 ),
                 Vec3::new(
                     center_x + extent,
                     center_y + local_y + thickness * 0.5,
-                    surface + 0.07,
+                    grid_z,
                 ),
                 Vec3::new(
                     center_x - extent,
                     center_y + local_y + thickness * 0.5,
-                    surface + 0.07,
+                    grid_z,
                 ),
             ],
             if major {
@@ -917,8 +1139,48 @@ fn emit_build_plate(output: &mut Mesh, center_x: f32, center_y: f32, width: f32,
             } else {
                 BUILD_PLATE_GRID
             },
+            if major {
+                TRIANGLE_KIND_PLATE_GRID_MAJOR
+            } else {
+                TRIANGLE_KIND_PLATE_GRID
+            },
         );
     }
+}
+
+fn metric_grid_lines(half_extent: f32, inset: f32, spacing: f32) -> Vec<(f32, i32)> {
+    let extent = half_extent * 2.0;
+    if !extent.is_finite() || !spacing.is_finite() || extent <= spacing {
+        return Vec::new();
+    }
+    let max_position = half_extent - inset;
+    let count = (extent / spacing).ceil() as i32;
+    (1..count)
+        .filter_map(|index| {
+            let position = -half_extent + index as f32 * spacing;
+            (position <= max_position).then_some((position, index))
+        })
+        .collect()
+}
+
+fn plate_grid_spacing(width: f32, height: f32) -> f32 {
+    let required = width.max(height) / MAX_GRID_LINES_PER_AXIS;
+    if !required.is_finite() || required <= BUILD_PLATE_GRID_SPACING {
+        BUILD_PLATE_GRID_SPACING
+    } else {
+        nice_metric_step(required)
+    }
+}
+
+fn nice_metric_step(minimum: f32) -> f32 {
+    let magnitude = 10_f32.powf(minimum.log10().floor());
+    for multiplier in [1.0, 2.0, 5.0, 10.0] {
+        let candidate = magnitude * multiplier;
+        if candidate >= minimum {
+            return candidate;
+        }
+    }
+    magnitude * 10.0
 }
 
 fn rounded_rectangle(
@@ -959,7 +1221,7 @@ fn rounded_axis_extent(position: f32, half_axis: f32, half_other: f32, radius: f
             .sqrt()
 }
 
-fn emit_colored_fan(output: &mut Mesh, center: Vec3, outline: &[Vec3], color: [u8; 3]) {
+fn emit_colored_fan(output: &mut Mesh, center: Vec3, outline: &[Vec3], color: [u8; 3], kind: u8) {
     let base = output.vertices.len();
     output.vertices.push(center);
     output.vertices.extend_from_slice(outline);
@@ -972,10 +1234,13 @@ fn emit_colored_fan(output: &mut Mesh, center: Vec3, outline: &[Vec3], color: [u
             base + 1 + index,
             base + 1 + (index + 1) % outline.len(),
         ]);
+        output.triangle_colors.push(color);
+        output.triangle_kinds.push(kind);
+        output.triangle_object_ids.push(0);
     }
 }
 
-fn emit_colored_ring(output: &mut Mesh, outer: &[Vec3], inner: &[Vec3], color: [u8; 3]) {
+fn emit_colored_ring(output: &mut Mesh, outer: &[Vec3], inner: &[Vec3], color: [u8; 3], kind: u8) {
     if outer.len() != inner.len() || outer.is_empty() {
         return;
     }
@@ -995,21 +1260,165 @@ fn emit_colored_ring(output: &mut Mesh, outer: &[Vec3], inner: &[Vec3], color: [
                 base + outer.len() + index,
             ],
         ]);
+        output.triangle_colors.extend([color, color]);
+        output.triangle_kinds.extend([kind, kind]);
+        output.triangle_object_ids.extend([0, 0]);
     }
 }
 
-fn emit_colored_quad(output: &mut Mesh, vertices: [Vec3; 4], color: [u8; 3]) {
+fn emit_colored_quad(output: &mut Mesh, vertices: [Vec3; 4], color: [u8; 3], kind: u8) {
     let base = output.vertices.len();
     output.vertices.extend(vertices);
     output.vertex_colors.extend(std::iter::repeat_n(color, 4));
     output
         .triangles
         .extend([[base, base + 1, base + 2], [base, base + 2, base + 3]]);
+    output.triangle_colors.extend([color, color]);
+    output.triangle_kinds.extend([kind, kind]);
+    output.triangle_object_ids.extend([0, 0]);
+}
+
+const MAX_PAINT_DEPTH: usize = 64;
+const MAX_PAINT_LEAVES: usize = 100_000;
+
+struct PaintedLeaf {
+    vertices: [Vec3; 3],
+    state: usize,
+}
+
+struct PaintedTriangle {
+    split: bool,
+    leaves: Vec<PaintedLeaf>,
+}
+
+fn decode_painted_triangle(value: &str, vertices: [Vec3; 3]) -> Option<PaintedTriangle> {
+    if value.is_empty() {
+        return None;
+    }
+    let codes = value
+        .bytes()
+        .rev()
+        .map(paint_hex_digit)
+        .collect::<Option<Vec<_>>>()?;
+    let split = codes.first().is_some_and(|code| code & 0b11 != 0);
+    let mut cursor = 0;
+    let mut leaves = Vec::new();
+    decode_paint_node(&codes, &mut cursor, vertices, 0, &mut leaves)?;
+    (cursor == codes.len()).then_some(PaintedTriangle { split, leaves })
+}
+
+fn decode_paint_leaf_state(value: &str) -> Option<usize> {
+    let mut codes = value.bytes().rev().map(paint_hex_digit);
+    let code = codes.next()??;
+    if code & 0b11 != 0 {
+        return None;
+    }
+    let state = if code & 0b1100 == 0b1100 {
+        let mut state = 3_usize;
+        loop {
+            let next = usize::from(codes.next()??);
+            if next == 15 {
+                state = state.checked_add(15)?;
+            } else {
+                break state.checked_add(next)?;
+            }
+        }
+    } else {
+        usize::from(code >> 2)
+    };
+    codes.next().is_none().then_some(state)
+}
+
+fn paint_hex_digit(digit: u8) -> Option<u8> {
+    match digit {
+        b'0'..=b'9' => Some(digit - b'0'),
+        b'A'..=b'F' => Some(digit - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn decode_paint_node(
+    codes: &[u8],
+    cursor: &mut usize,
+    vertices: [Vec3; 3],
+    depth: usize,
+    leaves: &mut Vec<PaintedLeaf>,
+) -> Option<()> {
+    if depth > MAX_PAINT_DEPTH || leaves.len() >= MAX_PAINT_LEAVES {
+        return None;
+    }
+    let code = *codes.get(*cursor)?;
+    *cursor += 1;
+    let split_sides = usize::from(code & 0b11);
+    if split_sides == 0 {
+        let state = if code & 0b1100 == 0b1100 {
+            let mut state = 3_usize;
+            loop {
+                let next = usize::from(*codes.get(*cursor)?);
+                *cursor += 1;
+                if next == 15 {
+                    state = state.checked_add(15)?;
+                } else {
+                    break state.checked_add(next)?;
+                }
+            }
+        } else {
+            usize::from(code >> 2)
+        };
+        leaves.push(PaintedLeaf { vertices, state });
+        return Some(());
+    }
+
+    let special_side = usize::from(code >> 2);
+    if special_side >= 3 || (split_sides == 3 && special_side != 0) {
+        return None;
+    }
+    let children = split_painted_triangle(vertices, split_sides, special_side)?;
+    for child in children.into_iter().rev() {
+        decode_paint_node(codes, cursor, child, depth + 1, leaves)?;
+    }
+    Some(())
+}
+
+fn split_painted_triangle(
+    vertices: [Vec3; 3],
+    split_sides: usize,
+    special_side: usize,
+) -> Option<Vec<[Vec3; 3]>> {
+    let a = vertices[special_side];
+    let b = vertices[(special_side + 1) % 3];
+    let c = vertices[(special_side + 2) % 3];
+    let midpoint = |left: Vec3, right: Vec3| {
+        Vec3::new(
+            (left.x + right.x) * 0.5,
+            (left.y + right.y) * 0.5,
+            (left.z + right.z) * 0.5,
+        )
+    };
+    match split_sides {
+        1 => {
+            let bc = midpoint(b, c);
+            Some(vec![[a, b, bc], [bc, c, a]])
+        }
+        2 => {
+            let ab = midpoint(a, b);
+            let ac = midpoint(a, c);
+            Some(vec![[a, ab, ac], [ab, b, ac], [b, c, ac]])
+        }
+        3 => {
+            let ab = midpoint(a, b);
+            let bc = midpoint(b, c);
+            let ac = midpoint(a, c);
+            Some(vec![[a, ab, ac], [ab, b, bc], [bc, c, ac], [ab, bc, ac]])
+        }
+        _ => None,
+    }
 }
 
 struct ThreeMfEmitTarget<'a> {
     stack: &'a mut HashSet<(String, u32)>,
     output: &'a mut Mesh,
+    face_colors: bool,
 }
 
 fn emit_3mf_object(
@@ -1017,6 +1426,7 @@ fn emit_3mf_object(
     project: &ThreeMfProject,
     part_path: &str,
     object_id: u32,
+    viewer_object_id: u32,
     transform: Transform,
     inherited_color: Option<[u8; 3]>,
     target: &mut ThreeMfEmitTarget<'_>,
@@ -1032,6 +1442,7 @@ fn emit_3mf_object(
         .get(&object_id)
         .ok_or_else(|| format!("3MF object is missing: {object_id}"))?;
     let color = project.object_color(object_id).or(inherited_color);
+    let default_color = color.unwrap_or([216, 200, 170]);
     let base = target.output.vertices.len();
     target.output.vertices.extend(
         object
@@ -1042,21 +1453,94 @@ fn emit_3mf_object(
             .map(|point| transform.apply(point)),
     );
     target.output.vertex_colors.extend(std::iter::repeat_n(
-        color.unwrap_or([216, 200, 170]),
+        default_color,
         object.mesh.vertices.len(),
     ));
-    target.output.triangles.extend(
-        object
-            .mesh
-            .triangles
+    for (triangle_index, triangle) in object.mesh.triangles.iter().enumerate() {
+        if triangle
             .iter()
-            .filter(|triangle| {
-                triangle
-                    .iter()
-                    .all(|index| *index < object.mesh.vertices.len())
-            })
-            .map(|triangle| [base + triangle[0], base + triangle[1], base + triangle[2]]),
-    );
+            .any(|index| *index >= object.mesh.vertices.len())
+        {
+            continue;
+        }
+        if !target.face_colors {
+            target.output.triangles.push([
+                base + triangle[0],
+                base + triangle[1],
+                base + triangle[2],
+            ]);
+            target.output.triangle_kinds.push(TRIANGLE_KIND_MODEL);
+            target.output.triangle_object_ids.push(viewer_object_id);
+            continue;
+        }
+
+        let paint = object
+            .triangle_paint
+            .get(triangle_index)
+            .and_then(Option::as_deref);
+        if let Some(state) = paint.and_then(decode_paint_leaf_state) {
+            target.output.triangles.push([
+                base + triangle[0],
+                base + triangle[1],
+                base + triangle[2],
+            ]);
+            target
+                .output
+                .triangle_colors
+                .push(paint_state_color(project, state, default_color));
+            target.output.triangle_kinds.push(TRIANGLE_KIND_MODEL);
+            target.output.triangle_object_ids.push(viewer_object_id);
+            continue;
+        }
+        let painted = paint.and_then(|value| {
+            decode_painted_triangle(
+                value,
+                [
+                    object.mesh.vertices[triangle[0]],
+                    object.mesh.vertices[triangle[1]],
+                    object.mesh.vertices[triangle[2]],
+                ],
+            )
+        });
+        if painted.as_ref().is_some_and(|painted| painted.split) {
+            let painted = painted.expect("painted triangle was checked above");
+            for leaf in painted.leaves {
+                let leaf_color = paint_state_color(project, leaf.state, default_color);
+                let leaf_base = target.output.vertices.len();
+                target.output.vertices.extend(
+                    leaf.vertices
+                        .into_iter()
+                        .map(|point| transform.apply(point)),
+                );
+                target
+                    .output
+                    .vertex_colors
+                    .extend(std::iter::repeat_n(leaf_color, 3));
+                target
+                    .output
+                    .triangles
+                    .push([leaf_base, leaf_base + 1, leaf_base + 2]);
+                target.output.triangle_colors.push(leaf_color);
+                target.output.triangle_kinds.push(TRIANGLE_KIND_MODEL);
+                target.output.triangle_object_ids.push(viewer_object_id);
+            }
+        } else {
+            let state = painted
+                .and_then(|painted| painted.leaves.first().map(|leaf| leaf.state))
+                .unwrap_or_default();
+            target.output.triangles.push([
+                base + triangle[0],
+                base + triangle[1],
+                base + triangle[2],
+            ]);
+            target
+                .output
+                .triangle_colors
+                .push(paint_state_color(project, state, default_color));
+            target.output.triangle_kinds.push(TRIANGLE_KIND_MODEL);
+            target.output.triangle_object_ids.push(viewer_object_id);
+        }
+    }
     for component in &object.components {
         let component_path = component.path.as_deref().unwrap_or(part_path);
         emit_3mf_object(
@@ -1064,6 +1548,7 @@ fn emit_3mf_object(
             project,
             component_path,
             component.object_id,
+            viewer_object_id,
             transform.then(component.transform),
             color,
             target,
@@ -1071,6 +1556,14 @@ fn emit_3mf_object(
     }
     target.stack.remove(&key);
     Ok(())
+}
+
+fn paint_state_color(project: &ThreeMfProject, state: usize, default_color: [u8; 3]) -> [u8; 3] {
+    state
+        .checked_sub(1)
+        .and_then(|index| project.filament_colors.get(index))
+        .copied()
+        .unwrap_or(default_color)
 }
 
 fn find_3mf_part<'a>(
@@ -1108,6 +1601,94 @@ fn xml_index(event: &quick_xml::events::BytesStart<'_>, name: &str) -> Option<us
     xml_attribute(event, name)?.parse().ok()
 }
 
+fn viewer_object_name(value: &str) -> Option<String> {
+    let unescaped = quick_xml::escape::unescape(value).ok()?;
+    let name = unescaped
+        .trim()
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(160)
+        .collect::<String>();
+    (!name.is_empty()).then_some(name)
+}
+
+fn prepare_viewer_mesh(mesh: &mut Mesh) -> Result<(), String> {
+    if mesh.triangle_kinds.len() != mesh.triangles.len() {
+        mesh.triangle_kinds = vec![TRIANGLE_KIND_MODEL; mesh.triangles.len()];
+    }
+    if !mesh.objects.is_empty() && mesh.triangle_object_ids.len() != mesh.triangles.len() {
+        return Err("Model object metadata is invalid".into());
+    }
+    let source_bounds = model_bounds(mesh).ok_or_else(|| "Model bounds are invalid".to_string())?;
+    let source_size = source_bounds.size();
+    if !source_size.finite() || source_size.x < 0.0 || source_size.y < 0.0 || source_size.z < 0.0 {
+        return Err("Model bounds are invalid".into());
+    }
+    mesh.source_bounds = Some(source_bounds);
+
+    if mesh.triangle_colors.len() != mesh.triangles.len() {
+        mesh.triangle_colors = mesh
+            .triangles
+            .iter()
+            .map(|triangle| {
+                triangle
+                    .first()
+                    .and_then(|index| mesh.vertex_colors.get(*index))
+                    .copied()
+                    .unwrap_or([216, 200, 170])
+            })
+            .collect();
+    }
+
+    if !mesh
+        .triangle_kinds
+        .iter()
+        .any(|kind| *kind != TRIANGLE_KIND_MODEL)
+    {
+        emit_fallback_build_plate(mesh, source_bounds);
+    }
+    if mesh.objects.is_empty() {
+        mesh.triangle_object_ids.clear();
+    } else if mesh.triangle_object_ids.len() != mesh.triangles.len() {
+        return Err("Model object metadata is invalid".into());
+    }
+    Ok(())
+}
+
+fn model_bounds(mesh: &Mesh) -> Option<Bounds3> {
+    Bounds3::from_points(
+        mesh.triangles
+            .iter()
+            .zip(&mesh.triangle_kinds)
+            .filter(|(_, kind)| **kind == TRIANGLE_KIND_MODEL)
+            .flat_map(|(triangle, _)| triangle)
+            .filter_map(|index| mesh.vertices.get(*index).copied()),
+    )
+}
+
+fn emit_fallback_build_plate(mesh: &mut Mesh, bounds: Bounds3) {
+    let size = bounds.size();
+    let footprint = size.x.max(size.y).max(0.0);
+    let padding = (footprint * 0.1).max(BUILD_PLATE_GRID_SPACING);
+    let required = (footprint + padding * 2.0).max(BUILD_PLATE_GRID_SPACING * 5.0);
+    let initial_spacing = plate_grid_spacing(required, required);
+    let initial_major = initial_spacing * 5.0;
+    let initial_side = (required / initial_major).ceil().max(1.0) * initial_major;
+    let spacing = plate_grid_spacing(initial_side, initial_side);
+    let major = spacing * 5.0;
+    let side = (required / major).ceil().max(1.0) * major;
+    let center = bounds.center();
+    emit_build_plate(
+        mesh,
+        center.x,
+        center.y,
+        side,
+        side,
+        bounds.min.z - spacing * 0.055,
+        spacing,
+    );
+}
+
 fn encode_viewer_mesh(mesh: &Mesh) -> Result<Vec<u8>, String> {
     let vertex_count = u32::try_from(mesh.vertices.len())
         .map_err(|_| "Model has too many vertices for the viewer".to_string())?;
@@ -1117,17 +1698,132 @@ fn encode_viewer_mesh(mesh: &Mesh) -> Result<Vec<u8>, String> {
         .checked_mul(3)
         .and_then(|count| u32::try_from(count).ok())
         .ok_or_else(|| "Model has too many triangles for the viewer".to_string())?;
-    let has_colors = mesh.vertex_colors.len() == mesh.vertices.len();
+    let has_triangle_colors = mesh.triangle_colors.len() == mesh.triangles.len();
+    let has_vertex_colors = mesh.vertex_colors.len() == mesh.vertices.len();
+    let has_semantics = mesh.source_bounds.is_some()
+        && has_triangle_colors
+        && mesh.triangle_kinds.len() == mesh.triangles.len();
+    if has_semantics {
+        let bounds = mesh
+            .source_bounds
+            .expect("viewer bounds were checked above");
+        let has_objects = !mesh.objects.is_empty()
+            && mesh.objects.len() <= MAX_VIEWER_OBJECTS
+            && mesh.triangle_object_ids.len() == mesh.triangles.len();
+        if has_objects {
+            let object_count = u32::try_from(mesh.objects.len())
+                .map_err(|_| "Model has too many objects for the viewer".to_string())?;
+            let header_length = 40 + mesh.objects.len() * 32;
+            let object_name_bytes = mesh
+                .objects
+                .iter()
+                .map(|object| object.name.as_deref().unwrap_or_default().len())
+                .sum::<usize>();
+            let has_object_names = object_name_bytes > 0;
+            let mut bytes = Vec::with_capacity(
+                header_length
+                    + mesh.vertices.len() * std::mem::size_of::<[f32; 3]>()
+                    + index_count as usize * std::mem::size_of::<u32>()
+                    + mesh.triangle_colors.len() * 3
+                    + mesh.triangle_kinds.len()
+                    + mesh.triangle_object_ids.len() * std::mem::size_of::<u32>()
+                    + usize::from(has_object_names) * (8 + mesh.objects.len() * 4)
+                    + object_name_bytes,
+            );
+            bytes.extend_from_slice(b"VLM5");
+            bytes.extend_from_slice(&vertex_count.to_le_bytes());
+            bytes.extend_from_slice(&index_count.to_le_bytes());
+            for value in [
+                bounds.min.x,
+                bounds.min.y,
+                bounds.min.z,
+                bounds.max.x,
+                bounds.max.y,
+                bounds.max.z,
+            ] {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
+            bytes.extend_from_slice(&object_count.to_le_bytes());
+            for (index, object) in mesh.objects.iter().enumerate() {
+                if object.id != index as u32 + 1 || object.triangle_count == 0 {
+                    return Err("Model object metadata is invalid".into());
+                }
+                bytes.extend_from_slice(&object.id.to_le_bytes());
+                bytes.extend_from_slice(&object.triangle_count.to_le_bytes());
+                for value in [
+                    object.bounds.min.x,
+                    object.bounds.min.y,
+                    object.bounds.min.z,
+                    object.bounds.max.x,
+                    object.bounds.max.y,
+                    object.bounds.max.z,
+                ] {
+                    bytes.extend_from_slice(&value.to_le_bytes());
+                }
+            }
+            append_viewer_geometry(&mut bytes, mesh)?;
+            for object_id in &mesh.triangle_object_ids {
+                if *object_id > object_count {
+                    return Err("Model object metadata is invalid".into());
+                }
+                bytes.extend_from_slice(&object_id.to_le_bytes());
+            }
+            if has_object_names {
+                bytes.extend_from_slice(b"VNM1");
+                bytes.extend_from_slice(&object_count.to_le_bytes());
+                for object in &mesh.objects {
+                    let name = object.name.as_deref().unwrap_or_default().as_bytes();
+                    let name_length = u32::try_from(name.len())
+                        .map_err(|_| "3MF object name is too long for the viewer")?;
+                    if name_length > 1024 {
+                        return Err("3MF object name is too long for the viewer".into());
+                    }
+                    bytes.extend_from_slice(&name_length.to_le_bytes());
+                    bytes.extend_from_slice(name);
+                }
+            }
+            return Ok(bytes);
+        }
+        let mut bytes = Vec::with_capacity(
+            36 + mesh.vertices.len() * std::mem::size_of::<[f32; 3]>()
+                + index_count as usize * std::mem::size_of::<u32>()
+                + mesh.triangle_colors.len() * 3
+                + mesh.triangle_kinds.len(),
+        );
+        bytes.extend_from_slice(b"VLM4");
+        bytes.extend_from_slice(&vertex_count.to_le_bytes());
+        bytes.extend_from_slice(&index_count.to_le_bytes());
+        for value in [
+            bounds.min.x,
+            bounds.min.y,
+            bounds.min.z,
+            bounds.max.x,
+            bounds.max.y,
+            bounds.max.z,
+        ] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        append_viewer_geometry(&mut bytes, mesh)?;
+        return Ok(bytes);
+    }
     let mut bytes = Vec::with_capacity(
         12 + mesh.vertices.len() * std::mem::size_of::<[f32; 3]>()
             + index_count as usize * std::mem::size_of::<u32>()
-            + if has_colors {
+            + if has_triangle_colors {
+                mesh.triangle_colors.len() * 3
+            } else if has_vertex_colors {
                 mesh.vertex_colors.len() * 3
             } else {
                 0
             },
     );
-    bytes.extend_from_slice(if has_colors { b"VLM2" } else { b"VLM1" });
+    bytes.extend_from_slice(if has_triangle_colors {
+        b"VLM3"
+    } else if has_vertex_colors {
+        b"VLM2"
+    } else {
+        b"VLM1"
+    });
     bytes.extend_from_slice(&vertex_count.to_le_bytes());
     bytes.extend_from_slice(&index_count.to_le_bytes());
     for vertex in &mesh.vertices {
@@ -1142,12 +1838,36 @@ fn encode_viewer_mesh(mesh: &Mesh) -> Result<Vec<u8>, String> {
             bytes.extend_from_slice(&index.to_le_bytes());
         }
     }
-    if has_colors {
+    if has_triangle_colors {
+        for color in &mesh.triangle_colors {
+            bytes.extend_from_slice(color);
+        }
+    } else if has_vertex_colors {
         for color in &mesh.vertex_colors {
             bytes.extend_from_slice(color);
         }
     }
     Ok(bytes)
+}
+
+fn append_viewer_geometry(bytes: &mut Vec<u8>, mesh: &Mesh) -> Result<(), String> {
+    for vertex in &mesh.vertices {
+        bytes.extend_from_slice(&vertex.x.to_le_bytes());
+        bytes.extend_from_slice(&vertex.y.to_le_bytes());
+        bytes.extend_from_slice(&vertex.z.to_le_bytes());
+    }
+    for triangle in &mesh.triangles {
+        for index in triangle {
+            let index = u32::try_from(*index)
+                .map_err(|_| "Model has an invalid vertex index".to_string())?;
+            bytes.extend_from_slice(&index.to_le_bytes());
+        }
+    }
+    for color in &mesh.triangle_colors {
+        bytes.extend_from_slice(color);
+    }
+    bytes.extend_from_slice(&mesh.triangle_kinds);
+    Ok(())
 }
 
 fn ensure_mesh(mesh: Mesh) -> Result<Mesh, String> {
@@ -1206,7 +1926,7 @@ fn rasterize(mesh: &Mesh) -> Result<Vec<u8>, String> {
     let mut image = RgbaImage::new(WIDTH, HEIGHT);
     let mut depth_buffer = vec![f32::NEG_INFINITY; WIDTH as usize * HEIGHT as usize];
     let light = Vec3::new(-0.45, -0.75, 1.0).normalized();
-    for triangle in &mesh.triangles {
+    for (triangle_index, triangle) in mesh.triangles.iter().enumerate() {
         let [a_index, b_index, c_index] = *triangle;
         if [a_index, b_index, c_index]
             .iter()
@@ -1225,9 +1945,10 @@ fn rasterize(mesh: &Mesh) -> Result<Vec<u8>, String> {
         let facing = normal.dot(forward).abs();
         let brightness = (0.46 + diffuse * 0.42 + facing * 0.12).clamp(0.38, 1.0);
         let base_color = mesh
-            .vertex_colors
-            .get(a_index)
+            .triangle_colors
+            .get(triangle_index)
             .copied()
+            .or_else(|| mesh.vertex_colors.get(a_index).copied())
             .unwrap_or([214, 202, 180]);
         let color = [
             (base_color[0] as f32 * brightness) as u8,
@@ -1322,7 +2043,7 @@ mod tests {
     #[test]
     fn builds_a_rounded_grid_plate_without_an_opaque_underside() {
         let mut mesh = Mesh::default();
-        emit_build_plate(&mut mesh, 0.0, 0.0, 100.0, 80.0);
+        emit_build_plate(&mut mesh, 0.0, 0.0, 100.0, 80.0, -0.55, 10.0);
         assert!(mesh.triangles.len() > 100);
         assert!(mesh.vertex_colors.contains(&BUILD_PLATE_SURFACE));
         assert!(mesh.vertex_colors.contains(&BUILD_PLATE_GRID));
@@ -1336,12 +2057,112 @@ mod tests {
     }
 
     #[test]
+    fn anchors_a1_grid_lines_to_physical_ten_millimeter_steps() {
+        let lines = metric_grid_lines(128.0, 1.7 * 1.35, 10.0);
+        assert_eq!(lines.first(), Some(&(-118.0, 1)));
+        assert_eq!(lines.last(), Some(&(122.0, 25)));
+        assert_eq!(
+            lines
+                .iter()
+                .filter_map(|(_, index)| (index % 5 == 0).then_some(*index))
+                .collect::<Vec<_>>(),
+            vec![5, 10, 15, 20, 25]
+        );
+    }
+
+    #[test]
+    fn lays_out_an_a1_mini_as_eighteen_physical_cells() {
+        let lines = metric_grid_lines(90.0, 1.7 * 1.35, 10.0);
+        assert_eq!(lines.len(), 17);
+        assert_eq!(lines.first(), Some(&(-80.0, 1)));
+        assert_eq!(lines.last(), Some(&(80.0, 17)));
+        assert_eq!(
+            lines
+                .iter()
+                .filter_map(|(_, index)| (index % 5 == 0).then_some(*index))
+                .collect::<Vec<_>>(),
+            vec![5, 10, 15]
+        );
+    }
+
+    #[test]
+    fn preserves_odd_plate_remainders_without_stretching_the_grid() {
+        let lines = metric_grid_lines(61.5, 1.7 * 1.35, 10.0);
+        assert_eq!(lines.first(), Some(&(-51.5, 1)));
+        assert_eq!(lines.last(), Some(&(58.5, 12)));
+        assert!(lines
+            .windows(2)
+            .all(|pair| (pair[1].0 - pair[0].0 - 10.0).abs() < 0.0001));
+    }
+
+    #[test]
+    fn preserves_the_origin_and_shape_of_printable_area_metadata() {
+        let value = serde_json::json!({
+            "printable_area": ["-10x5", "170x5", "170x125", "-10x125"]
+        });
+        let bounds = printable_area_bounds(&value).unwrap();
+        assert_eq!(bounds.width(), 180.0);
+        assert_eq!(bounds.height(), 120.0);
+        assert_eq!(bounds.center(), (80.0, 65.0));
+    }
+
+    #[test]
+    fn scales_grid_spacing_only_for_extreme_plate_sizes() {
+        assert_eq!(plate_grid_spacing(180.0, 180.0), 10.0);
+        assert_eq!(plate_grid_spacing(256.0, 256.0), 10.0);
+        assert_eq!(plate_grid_spacing(12_000.0, 8_000.0), 100.0);
+    }
+
+    #[test]
+    fn adds_a_square_fallback_plate_without_changing_source_bounds() {
+        let mut mesh = Mesh {
+            vertices: vec![
+                Vec3::new(10.0, 20.0, 7.0),
+                Vec3::new(30.0, 20.0, 7.0),
+                Vec3::new(10.0, 50.0, 9.0),
+            ],
+            triangles: vec![[0, 1, 2]],
+            ..Mesh::default()
+        };
+        prepare_viewer_mesh(&mut mesh).unwrap();
+
+        let bounds = mesh.source_bounds.unwrap();
+        assert_eq!(
+            (bounds.min.x, bounds.min.y, bounds.min.z),
+            (10.0, 20.0, 7.0)
+        );
+        assert_eq!(
+            (bounds.max.x, bounds.max.y, bounds.max.z),
+            (30.0, 50.0, 9.0)
+        );
+        assert!(mesh
+            .triangle_kinds
+            .iter()
+            .any(|kind| *kind == TRIANGLE_KIND_PLATE_SURFACE));
+        let plate_vertices = mesh.vertices.iter().skip(3).collect::<Vec<_>>();
+        assert!(plate_vertices.iter().all(|vertex| vertex.z < 7.0));
+        let plate_min_x = plate_vertices
+            .iter()
+            .map(|vertex| vertex.x)
+            .reduce(f32::min)
+            .unwrap();
+        let plate_max_x = plate_vertices
+            .iter()
+            .map(|vertex| vertex.x)
+            .reduce(f32::max)
+            .unwrap();
+        assert!((plate_min_x + 5.0).abs() < 0.001);
+        assert!((plate_max_x - 45.0).abs() < 0.001);
+        assert_eq!(&encode_viewer_mesh(&mesh).unwrap()[..4], b"VLM4");
+    }
+
+    #[test]
     fn resolves_external_3mf_components_and_build_transforms() {
         let cursor = Cursor::new(Vec::new());
         let mut writer = zip::ZipWriter::new(cursor);
         let options = zip::write::SimpleFileOptions::default();
         writer.start_file("3D/3dmodel.model", options).unwrap();
-        writer.write_all(br#"<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06"><resources><object id="2"><components><component objectid="1" p:path="/3D/Objects/object_1.model"/></components></object></resources><build><item objectid="2" transform="1 0 0 0 1 0 0 0 1 10 20 30"/></build></model>"#).unwrap();
+        writer.write_all(br#"<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06"><resources><object id="2" name="Assembly &amp; mount"><components><component objectid="1" p:path="/3D/Objects/object_1.model"/></components></object></resources><build><item objectid="2" transform="1 0 0 0 1 0 0 0 1 10 20 30"/></build></model>"#).unwrap();
         writer
             .start_file("3D/Objects/object_1.model", options)
             .unwrap();
@@ -1349,6 +2170,7 @@ mod tests {
         let cursor = writer.finish().unwrap();
         let mesh = parse_3mf(cursor.get_ref()).unwrap();
         assert_eq!(mesh.triangles.len(), 1);
+        assert_eq!(mesh.objects[0].name.as_deref(), Some("Assembly & mount"));
         assert_eq!(
             (mesh.vertices[0].x, mesh.vertices[0].y, mesh.vertices[0].z),
             (10.0, 20.0, 30.0)
@@ -1372,13 +2194,92 @@ mod tests {
         writer
             .start_file("Metadata/model_settings.config", options)
             .unwrap();
-        writer.write_all(br#"<config><object id="1"><metadata key="extruder" value="1"/></object><object id="2"><metadata key="extruder" value="2"/></object><plate><metadata key="plater_id" value="1"/><model_instance><metadata key="object_id" value="1"/></model_instance></plate><plate><metadata key="plater_id" value="2"/><model_instance><metadata key="object_id" value="2"/></model_instance></plate></config>"#).unwrap();
-        let cursor = writer.finish().unwrap();
-        let archive = ZipArchive::new(cursor).unwrap();
-        let mesh = parse_3mf_archive(archive, PlateSelection::Index(2)).unwrap();
+        writer.write_all(br#"<config><object id="1"><metadata key="name" value="Dock"/><metadata key="extruder" value="1"/></object><object id="2"><metadata key="name" value="Right rail"/><metadata key="extruder" value="2"/></object><plate><metadata key="plater_id" value="1"/><model_instance><metadata key="object_id" value="1"/></model_instance></plate><plate><metadata key="plater_id" value="2"/><model_instance><metadata key="object_id" value="2"/></model_instance></plate></config>"#).unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+        let archive = ZipArchive::new(Cursor::new(&bytes)).unwrap();
+        let mut mesh = parse_3mf_archive(archive, PlateSelection::Index(2)).unwrap();
         assert_eq!(mesh.triangles.len(), 1);
         assert_eq!(mesh.vertices[0].x, 30.0);
         assert!(mesh.vertex_colors.iter().all(|color| *color == [0, 255, 0]));
         assert_eq!(encode_viewer_mesh(&mesh).unwrap()[..4], *b"VLM2");
+        assert_eq!(mesh.objects.len(), 1);
+        assert_eq!(mesh.objects[0].triangle_count, 1);
+        assert_eq!(mesh.objects[0].name.as_deref(), Some("Right rail"));
+        assert_eq!(mesh.triangle_object_ids, vec![1]);
+        prepare_viewer_mesh(&mut mesh).unwrap();
+        let payload = encode_viewer_mesh(&mesh).unwrap();
+        assert_eq!(&payload[..4], b"VLM5");
+        assert_eq!(u32::from_le_bytes(payload[36..40].try_into().unwrap()), 1);
+        assert_eq!(u32::from_le_bytes(payload[40..44].try_into().unwrap()), 1);
+        assert_eq!(u32::from_le_bytes(payload[44..48].try_into().unwrap()), 1);
+        assert!(payload
+            .windows(b"Right rail".len())
+            .any(|value| value == b"Right rail"));
+
+        let archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut all = parse_3mf_archive(archive, PlateSelection::All).unwrap();
+        assert_eq!(all.objects.len(), 2);
+        assert_eq!(all.objects[0].name.as_deref(), Some("Dock"));
+        assert_eq!(all.objects[1].name.as_deref(), Some("Right rail"));
+        assert_eq!(all.triangle_object_ids, vec![1, 2]);
+        prepare_viewer_mesh(&mut all).unwrap();
+        let payload = encode_viewer_mesh(&all).unwrap();
+        assert_eq!(&payload[..4], b"VLM5");
+        assert_eq!(u32::from_le_bytes(payload[36..40].try_into().unwrap()), 2);
+    }
+
+    #[test]
+    fn decodes_bambu_paint_states_and_subdivisions() {
+        let vertices = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(2.0, 0.0, 0.0),
+            Vec3::new(0.0, 2.0, 0.0),
+        ];
+        let filament_two = decode_painted_triangle("8", vertices).unwrap();
+        assert!(!filament_two.split);
+        assert_eq!(filament_two.leaves[0].state, 2);
+        let filament_three = decode_painted_triangle("0C", vertices).unwrap();
+        assert_eq!(filament_three.leaves[0].state, 3);
+
+        let split = decode_painted_triangle("481", vertices).unwrap();
+        assert!(split.split);
+        assert_eq!(split.leaves.len(), 2);
+        assert_eq!(split.leaves[0].state, 2);
+        assert_eq!(split.leaves[1].state, 1);
+        assert!(split.leaves.iter().any(|leaf| {
+            leaf.vertices
+                .iter()
+                .any(|vertex| vertex.x == 1.0 && vertex.y == 1.0)
+        }));
+        assert!(decode_painted_triangle("C", vertices).is_none());
+        assert!(decode_painted_triangle("lowercase", vertices).is_none());
+    }
+
+    #[test]
+    fn preserves_bambu_and_prusa_face_paint_as_triangle_colors() {
+        let cursor = Cursor::new(Vec::new());
+        let mut writer = zip::ZipWriter::new(cursor);
+        let options = zip::write::SimpleFileOptions::default();
+        writer.start_file("3D/3dmodel.model", options).unwrap();
+        writer.write_all(br#"<model xmlns:slic3rpe="http://schemas.slic3r.org/3mf/2017/06"><resources><object id="1"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/><vertex x="1" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2" paint_color="8"/><triangle v1="1" v2="3" v3="2" slic3rpe:mmu_segmentation="0C"/></triangles></mesh></object></resources><build><item objectid="1"/></build></model>"#).unwrap();
+        writer
+            .start_file("Metadata/project_settings.config", options)
+            .unwrap();
+        writer
+            .write_all(br##"{"filament_colour":["#ff0000","#00ff00","#0000ff"]}"##)
+            .unwrap();
+        writer
+            .start_file("Metadata/model_settings.config", options)
+            .unwrap();
+        writer
+            .write_all(
+                br#"<config><object id="1"><metadata key="extruder" value="1"/></object></config>"#,
+            )
+            .unwrap();
+        let cursor = writer.finish().unwrap();
+        let mesh = parse_3mf(cursor.get_ref()).unwrap();
+        assert_eq!(mesh.triangles.len(), 2);
+        assert_eq!(mesh.triangle_colors, vec![[0, 255, 0], [0, 0, 255]]);
+        assert_eq!(encode_viewer_mesh(&mesh).unwrap()[..4], *b"VLM3");
     }
 }

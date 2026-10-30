@@ -1,65 +1,61 @@
-import { useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Camera, CircleAlert, LoaderCircle, ShieldCheck, UploadCloud, X } from "lucide-react";
+import { Camera, Check, CircleAlert, FileBox, LoaderCircle, ShieldCheck, UploadCloud } from "lucide-react";
 import { useState } from "react";
-import { Brand } from "../../components/Brand";
 import { QuickCapturePanel } from "../capture/QuickCapturePanel";
-import { formatBytes } from "../../lib/format";
 import { localizedError, t } from "../../lib/i18n";
-import { notifyCompletion } from "../../lib/notifications";
-import { cancelUpload, filenameFromFilePath, uploadProjectFile } from "../../lib/transport";
-import type { Credential, UploadProgress } from "../../types";
+import { filenameFromFilePath } from "../../lib/transport";
+import type { Credential } from "../../types";
 
-export function UploadScreen({ credential, enabled, photosEnabled, onOpen }: { credential: Credential; enabled: boolean; photosEnabled: boolean; onOpen: (id: string) => void }) {
-  const queryClient = useQueryClient();
+export function UploadScreen({
+  credential,
+  photosEnabled,
+  onOpen,
+  onPreviewStl,
+}: {
+  credential: Credential;
+  photosEnabled: boolean;
+  onOpen: (id: string) => void;
+  onPreviewStl: (filePath: string, filename: string) => Promise<void>;
+}) {
   const [mode, setMode] = useState<"file" | "photo">("photo");
-  const [filePath, setFilePath] = useState("");
-  const [filename, setFilename] = useState("");
-  const [projectName, setProjectName] = useState("");
-  const [progress, setProgress] = useState<UploadProgress>();
-  const [uploading, setUploading] = useState(false);
-  const [uploadId, setUploadId] = useState("");
-  const [canceling, setCanceling] = useState(false);
+  const [choosing, setChoosing] = useState(false);
   const [error, setError] = useState("");
   const choose = async () => {
+    setChoosing(true);
     setError("");
     try {
-      const selected = await open({ multiple: false, directory: false, title: t("Choose a 3D file"), filters: [{ name: t("3D files"), extensions: ["stl", "3mf", "obj", "step", "stp"] }] });
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        title: t("Choose an STL file to preview"),
+        filters: [{ name: t("STL files"), extensions: ["stl"] }],
+      });
       if (!selected || Array.isArray(selected)) return;
-      const nextFilename = filenameFromFilePath(selected);
-      setFilePath(selected); setFilename(nextFilename); setProjectName(nextFilename.replace(/\.[^.]+$/, "")); setProgress(undefined);
-    } catch (reason) { setError(localizedError(reason)); }
-  };
-  const upload = async () => {
-    if (!filePath || !filename || !projectName.trim()) return;
-    setUploading(true); setError(""); setProgress(undefined);
-    const nextUploadId = crypto.randomUUID();
-    setUploadId(nextUploadId);
-    try {
-      const result = await uploadProjectFile(credential, filePath, filename, { projectName: projectName.trim() }, setProgress, nextUploadId);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["projects"] }),
-        queryClient.invalidateQueries({ queryKey: ["status"] })
-      ]);
-      await notifyCompletion(t("3D file imported"), t("{filename} is now in Volum.", { filename: result.filename }));
-      onOpen(result.projectId);
+      await onPreviewStl(selected, filenameFromFilePath(selected));
     } catch (reason) {
-      const message = reason instanceof Error ? reason.message : String(reason);
-      if (message !== "Upload canceled") setError(localizedError(reason));
-    } finally { setUploading(false); setUploadId(""); setCanceling(false); }
-  };
-  const cancel = async () => {
-    if (!uploadId || canceling) return;
-    setCanceling(true);
-    try {
-      const canceled = await cancelUpload(uploadId);
-      if (!canceled) {
-        setError(t("The upload is still starting or has already finished. Try again if it remains active."));
-        setCanceling(false);
-      }
+      setError(localizedError(reason));
+    } finally {
+      setChoosing(false);
     }
-    catch (reason) { setError(localizedError(reason)); setCanceling(false); }
   };
-  const percent = progress?.totalBytes ? Math.round(progress.uploadedBytes / progress.totalBytes * 100) : 0;
-  return <main className="library-screen upload-screen"><header className="mobile-header"><div><div className="eyebrow">{t("WORKSHOP CAPTURE")}</div><h1>{t("Capture")}</h1><p>{t("Add a project photo or send a new print file")}</p></div><Brand compact /></header><div className="capture-mode" role="tablist" aria-label={t("Capture type")}><button role="tab" aria-selected={mode === "photo"} className={mode === "photo" ? "is-active" : ""} onClick={() => setMode("photo")}><Camera />{t("Photo")}</button><button role="tab" aria-selected={mode === "file"} className={mode === "file" ? "is-active" : ""} onClick={() => setMode("file")}><UploadCloud />{t("3D file")}</button></div>{mode === "photo" ? <QuickCapturePanel credential={credential} enabled={photosEnabled} onOpen={onOpen} /> : <><section className="upload-card"><span className="upload-card__icon"><UploadCloud /></span><h2>{filename || t("Choose a 3D file")}</h2><p>{filename ? `${progress ? `${formatBytes(progress.totalBytes)} · ` : ""}${t("Ready for Volum Desktop")}` : t("STL, 3MF, OBJ, STEP, and STP up to 500 MB.")}</p><button className="button button--quiet button--large" disabled={uploading} onClick={() => void choose()}>{filename ? t("Choose another file") : t("Browse Files")}</button>{filename && <label className="upload-name"><span>{t("New project name")}</span><input value={projectName} maxLength={160} disabled={uploading} onChange={(event) => setProjectName(event.target.value)} /></label>}{uploading && <div className="upload-status" role="status" aria-live="polite"><div><LoaderCircle className="spin" /><strong>{canceling ? t("Canceling upload") : t("Uploading to Desktop")}</strong><span>{percent}%</span></div><div className="upload-progress"><span style={{ width: `${percent}%` }} /></div><small>{t("Keep Volum open until the file is imported.")}</small><button className="cancel-upload-button" disabled={canceling} onClick={() => void cancel()}><X />{canceling ? t("Canceling…") : t("Cancel upload")}</button></div>}{error && <div className="error-banner" role="alert"><CircleAlert size={16} />{error}</div>}<button className="button button--primary button--large" disabled={!enabled || !filePath || !projectName.trim() || uploading} onClick={() => void upload()}>{uploading ? <LoaderCircle className="spin" /> : <UploadCloud />}{uploading ? `${t("Uploading")} ${percent}%` : t("Upload to Volum")}</button>{!enabled && <small className="upload-unavailable">{t("Update Volum Desktop to enable secure file uploads.")}</small>}</section><p className="upload-privacy"><ShieldCheck />{t("Sent directly through your Tailnet. No Volum cloud or relay.")}</p></>}</main>;
+  return <main className="library-screen upload-screen">
+    <header className="mobile-header"><div><h1>{t("Capture")}</h1><p>{t("Add a project photo or open an STL on this device")}</p></div></header>
+    <div className="capture-mode" role="tablist" aria-label={t("Capture type")}>
+      <button role="tab" aria-selected={mode === "photo"} className={mode === "photo" ? "is-active" : ""} onClick={() => setMode("photo")}><Camera /><span>{t("Photo")}</span>{mode === "photo" && <Check className="capture-mode__check" />}</button>
+      <button role="tab" aria-selected={mode === "file"} className={mode === "file" ? "is-active" : ""} onClick={() => setMode("file")}><UploadCloud /><span>{t("STL file")}</span>{mode === "file" && <Check className="capture-mode__check" />}</button>
+    </div>
+    {mode === "photo"
+      ? <QuickCapturePanel credential={credential} enabled={photosEnabled} onOpen={onOpen} />
+      : <>
+        <section className="upload-card local-picker-card">
+          <span className="upload-card__icon"><FileBox /></span>
+          <h2>{t("Open an STL")}</h2>
+          <p>{t("Inspect the model privately on this device, then choose whether and where to save it.")}</p>
+          <button className="button button--primary button--large" disabled={choosing} onClick={() => void choose()}>{choosing ? <LoaderCircle className="spin" /> : <UploadCloud />}{t("Browse STL files")}</button>
+          <div className="local-picker-promise"><ShieldCheck /><span><strong>{t("Local first")}</strong>{t("No network request is made until you tap Save to Volum.")}</span></div>
+          <small>{t("STL files up to 500 MB. Large or detailed models may skip the preview but can still be saved.")}</small>
+        </section>
+        {error && <div className="error-banner" role="alert"><CircleAlert />{error}</div>}
+      </>}
+  </main>;
 }

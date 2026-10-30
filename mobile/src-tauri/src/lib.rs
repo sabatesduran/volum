@@ -1,3 +1,5 @@
+mod local_preview;
+
 #[cfg(not(target_os = "android"))]
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use futures_util::StreamExt;
@@ -6,14 +8,15 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
+    io::{Read, Write},
     net::IpAddr,
     path::PathBuf,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc,
+        Arc, Mutex as StdMutex,
     },
 };
-use tauri::{ipc::Channel, Manager};
+use tauri::{ipc::Channel, Emitter, Manager};
 use tauri_plugin_fs::{FilePath, FsExt, OpenOptions};
 use tokio::sync::{watch, Mutex};
 use tokio_util::io::ReaderStream;
@@ -22,7 +25,9 @@ const MAX_JSON_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
 const MAX_MEDIA_RESPONSE_BYTES: usize = 30 * 1024 * 1024;
 const MAX_UPLOAD_BYTES: u64 = 500 * 1024 * 1024;
 const MAX_PHOTO_UPLOAD_BYTES: u64 = 25 * 1024 * 1024;
+const MAX_LOCAL_PREVIEW_BYTES: u64 = 100 * 1024 * 1024;
 const MEDIA_ENVELOPE_MAGIC: &[u8; 4] = b"VMC1";
+const LOCAL_PREVIEW_ENVELOPE_MAGIC: &[u8; 4] = b"VLP1";
 #[cfg(target_os = "ios")]
 const VAULT_KEYRING_SERVICE: &str = "dev.didac.volum.companion.vault";
 #[cfg(target_os = "ios")]
@@ -33,6 +38,14 @@ struct MobileState {
     client: reqwest::Client,
     upload_client: reqwest::Client,
     uploads: Arc<Mutex<HashMap<String, watch::Sender<bool>>>>,
+    opened_stls: Arc<StdMutex<OpenedStlState>>,
+    next_local_file_id: Arc<AtomicU64>,
+}
+
+#[derive(Default)]
+struct OpenedStlState {
+    files: HashMap<String, FilePath>,
+    announcements: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -77,6 +90,28 @@ struct CompanionPhotoUploadRequest {
     caption: String,
     if_unmodified_since: String,
     upload_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalStlStageRequest {
+    file_path: Option<FilePath>,
+    opened_id: Option<String>,
+    suggested_filename: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalStlFile {
+    cache_path: String,
+    filename: String,
+    byte_size: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenedStl {
+    id: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -251,6 +286,251 @@ fn encode_media_envelope(
     envelope.extend_from_slice(content_type);
     envelope.extend_from_slice(body);
     Ok(envelope)
+}
+
+#[tauri::command]
+fn companion_take_opened_stls(
+    state: tauri::State<'_, MobileState>,
+) -> Result<Vec<OpenedStl>, String> {
+    let mut opened = state
+        .opened_stls
+        .lock()
+        .map_err(|_| "The incoming file queue is unavailable".to_string())?;
+    Ok(opened
+        .announcements
+        .drain(..)
+        .map(|id| OpenedStl { id })
+        .collect())
+}
+
+#[tauri::command]
+async fn companion_stage_local_stl(
+    request: LocalStlStageRequest,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, MobileState>,
+) -> Result<LocalStlFile, String> {
+    if request.file_path.is_some() == request.opened_id.is_some() {
+        return Err("Choose one STL file to preview".into());
+    }
+    let (file_path, trusted_open) = if let Some(opened_id) = request.opened_id.as_deref() {
+        let path = state
+            .opened_stls
+            .lock()
+            .map_err(|_| "The incoming file queue is unavailable".to_string())?
+            .files
+            .remove(opened_id)
+            .ok_or_else(|| "The shared STL is no longer available".to_string())?;
+        (path, true)
+    } else {
+        (
+            request
+                .file_path
+                .clone()
+                .ok_or_else(|| "Choose an STL file to preview".to_string())?,
+            false,
+        )
+    };
+    let filename = local_stl_filename(request.suggested_filename.as_deref(), &file_path);
+    let mut options = OpenOptions::new();
+    options.read(true);
+    let mut source = if trusted_open {
+        app.fs().open(file_path.clone(), options)
+    } else {
+        open_selected_file(&app, &file_path, options)
+    }
+    .map_err(|_| "The selected STL is no longer available".to_string())?;
+    let staged = copy_local_stl(&app, &state, &mut source);
+    drop(source);
+    #[cfg(target_os = "ios")]
+    if let FilePath::Url(url) = file_path {
+        let _ = app.fs().stop_accessing_security_scoped_resource(url);
+    }
+    let (cache_path, byte_size) = staged?;
+    Ok(LocalStlFile {
+        cache_path: cache_path.to_string_lossy().into_owned(),
+        filename,
+        byte_size,
+    })
+}
+
+fn copy_local_stl(
+    app: &tauri::AppHandle,
+    state: &MobileState,
+    source: &mut std::fs::File,
+) -> Result<(PathBuf, u64), String> {
+    let reported_size = source.metadata().ok().map(|metadata| metadata.len());
+    if reported_size.is_some_and(|size| size > MAX_UPLOAD_BYTES) {
+        return Err("3D files can be at most 500 MB".into());
+    }
+
+    let id = state.next_local_file_id.fetch_add(1, Ordering::Relaxed);
+    let cache_directory = app
+        .path()
+        .app_cache_dir()
+        .map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(&cache_directory).map_err(|error| error.to_string())?;
+    let cache_path = cache_directory.join(format!("volum-local-{id}.stl"));
+    let mut target = std::fs::File::create(&cache_path)
+        .map_err(|_| "Volum could not prepare the selected STL".to_string())?;
+    let copy_result = (|| {
+        let copied = std::io::copy(
+            &mut std::io::Read::by_ref(source).take(MAX_UPLOAD_BYTES + 1),
+            &mut target,
+        )
+        .map_err(|_| "Volum could not prepare the selected STL".to_string())?;
+        target
+            .flush()
+            .map_err(|_| "Volum could not prepare the selected STL".to_string())?;
+        if copied == 0 {
+            return Err("Choose a non-empty STL file".into());
+        }
+        if copied > MAX_UPLOAD_BYTES {
+            return Err("3D files can be at most 500 MB".into());
+        }
+        if reported_size.is_some_and(|size| size > 0 && size != copied) {
+            return Err("The selected STL changed while it was being opened".into());
+        }
+        if !looks_like_stl(&cache_path, copied) {
+            return Err("The selected file is not a valid STL".into());
+        }
+        Ok(copied)
+    })();
+    let byte_size = match copy_result {
+        Ok(size) => size,
+        Err(error) => {
+            drop(target);
+            let _ = std::fs::remove_file(&cache_path);
+            return Err(error);
+        }
+    };
+    let _ = app.fs_scope().allow_file(&cache_path);
+    Ok((cache_path, byte_size))
+}
+
+#[tauri::command]
+async fn companion_preview_local_stl(
+    cache_path: String,
+    app: tauri::AppHandle,
+) -> Result<tauri::ipc::Response, String> {
+    let path = validated_local_stl_path(&app, &cache_path)?;
+    let metadata = std::fs::metadata(&path)
+        .map_err(|_| "The local STL preview is no longer available".to_string())?;
+    if metadata.len() > MAX_LOCAL_PREVIEW_BYTES {
+        return Err("This STL is too large for an on-device preview. You can still save it to Volum Desktop.".into());
+    }
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|_| "The local STL preview is no longer available".to_string())?;
+    let preview = tokio::task::spawn_blocking(move || local_preview::stl_preview(&bytes))
+        .await
+        .map_err(|_| "The on-device STL preview stopped unexpectedly".to_string())??;
+    let mut envelope = Vec::with_capacity(8 + preview.payload.len());
+    envelope.extend_from_slice(LOCAL_PREVIEW_ENVELOPE_MAGIC);
+    envelope.extend_from_slice(&preview.triangle_count.to_le_bytes());
+    envelope.extend_from_slice(&preview.payload);
+    Ok(tauri::ipc::Response::new(envelope))
+}
+
+#[tauri::command]
+fn companion_remove_local_stl(cache_path: String, app: tauri::AppHandle) -> Result<bool, String> {
+    let path = validated_local_stl_path(&app, &cache_path)?;
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(_) => Err("Volum could not remove the temporary STL".into()),
+    }
+}
+
+fn local_stl_filename(suggested: Option<&str>, path: &FilePath) -> String {
+    let candidate = suggested
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+        .or_else(|| match path {
+            FilePath::Path(path) => path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(str::to_string),
+            FilePath::Url(url) => url
+                .path_segments()
+                .and_then(Iterator::last)
+                .filter(|value| !value.is_empty())
+                .and_then(percent_decode_filename),
+        })
+        .unwrap_or_else(|| "Shared model.stl".into());
+    let basename = PathBuf::from(candidate)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("Shared model.stl")
+        .trim()
+        .rsplit(':')
+        .next()
+        .unwrap_or("Shared model.stl")
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or("Shared model.stl")
+        .trim()
+        .to_string();
+    if basename.to_ascii_lowercase().ends_with(".stl") {
+        basename
+    } else {
+        format!("{}.stl", basename.trim_end_matches('.'))
+    }
+}
+
+fn percent_decode_filename(value: &str) -> Option<String> {
+    let mut bytes = Vec::with_capacity(value.len());
+    let source = value.as_bytes();
+    let mut index = 0;
+    while index < source.len() {
+        if source[index] == b'%' && index + 2 < source.len() {
+            let high = (source[index + 1] as char).to_digit(16)?;
+            let low = (source[index + 2] as char).to_digit(16)?;
+            bytes.push(((high << 4) | low) as u8);
+            index += 3;
+        } else {
+            bytes.push(source[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(bytes).ok()
+}
+
+fn looks_like_stl(path: &std::path::Path, byte_size: u64) -> bool {
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let header_size = usize::try_from(byte_size.min(64 * 1024)).unwrap_or(64 * 1024);
+    let mut header = vec![0_u8; header_size];
+    if file.read_exact(&mut header).is_err() {
+        return false;
+    }
+    if byte_size >= 84 && header.len() >= 84 {
+        let count = u32::from_le_bytes(header[80..84].try_into().unwrap()) as u64;
+        if count > 0
+            && 84_u64.saturating_add(count.saturating_mul(50)) <= byte_size.saturating_add(2)
+        {
+            return true;
+        }
+    }
+    let text = String::from_utf8_lossy(&header).to_ascii_lowercase();
+    text.trim_start().starts_with("solid") && text.contains("facet") && text.contains("vertex")
+}
+
+fn validated_local_stl_path(app: &tauri::AppHandle, value: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(value);
+    let directory = app
+        .path()
+        .app_cache_dir()
+        .map_err(|error| error.to_string())?;
+    if path.parent() != Some(directory.as_path())
+        || !path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .is_some_and(|name| name.starts_with("volum-local-") && name.ends_with(".stl"))
+    {
+        return Err("The local STL preview path is invalid".into());
+    }
+    Ok(path)
 }
 
 #[tauri::command]
@@ -764,6 +1044,32 @@ fn write_private(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+fn cleanup_local_stls(app: &tauri::AppHandle) {
+    let Ok(directory) = app.path().app_cache_dir() else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    let stale_before = std::time::SystemTime::now()
+        .checked_sub(std::time::Duration::from_secs(24 * 60 * 60))
+        .unwrap_or(std::time::UNIX_EPOCH);
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_local_stl = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .is_some_and(|name| name.starts_with("volum-local-") && name.ends_with(".stl"));
+        let stale = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .is_ok_and(|modified| modified < stale_before);
+        if is_local_stl && stale {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let client = reqwest::Client::builder()
@@ -785,6 +1091,8 @@ pub fn run() {
             client,
             upload_client,
             uploads: Arc::new(Mutex::new(HashMap::new())),
+            opened_stls: Arc::new(StdMutex::new(OpenedStlState::default())),
+            next_local_file_id: Arc::new(AtomicU64::new(1)),
         })
         .setup(|app| {
             let salt_path = app
@@ -794,21 +1102,50 @@ pub fn run() {
                 .join("stronghold.salt");
             app.handle()
                 .plugin(tauri_plugin_stronghold::Builder::with_argon2(&salt_path).build())?;
+            cleanup_local_stls(app.handle());
             Ok(())
         });
     #[cfg(any(target_os = "android", target_os = "ios"))]
     let builder = builder.plugin(tauri_plugin_barcode_scanner::init());
-    builder
+    let app = builder
         .invoke_handler(tauri::generate_handler![
             companion_json_request,
             companion_media_request,
+            companion_take_opened_stls,
+            companion_stage_local_stl,
+            companion_preview_local_stl,
+            companion_remove_local_stl,
             companion_upload_file,
             companion_upload_photo,
             companion_cancel_upload,
             vault_password
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Volum Companion");
+        .build(tauri::generate_context!())
+        .expect("error while building Volum Companion");
+    app.run(|app, event| {
+        #[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
+        if let tauri::RunEvent::Opened { urls } = event {
+            let state = app.state::<MobileState>();
+            let mut queued = false;
+            if let Ok(mut opened) = state.opened_stls.lock() {
+                for url in urls {
+                    if !matches!(url.scheme(), "file" | "content") {
+                        continue;
+                    }
+                    let id = format!(
+                        "opened-{}",
+                        state.next_local_file_id.fetch_add(1, Ordering::Relaxed)
+                    );
+                    opened.files.insert(id.clone(), FilePath::Url(url));
+                    opened.announcements.push(id);
+                    queued = true;
+                }
+            }
+            if queued {
+                let _ = app.emit("volum://opened-stl", ());
+            }
+        }
+    });
 }
 
 #[cfg(test)]

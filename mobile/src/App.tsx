@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { cancel, Format, requestPermissions, scan } from "@tauri-apps/plugin-barcode-scanner";
+import { open } from "@tauri-apps/plugin-dialog";
 import {
   Boxes, Camera, CircleAlert, Heart, LibraryBig, LoaderCircle, QrCode, Settings2,
-  ShieldCheck, Wifi,
+  ShieldCheck, Wifi, X,
 } from "lucide-react";
 import volumIcon from "./assets/volum-icon-transparent.png";
 import { Brand } from "./components/Brand";
@@ -12,15 +14,23 @@ import { LibraryScreen, type Tab } from "./features/library/LibraryScreen";
 import { CollectionsScreen } from "./features/organization/CollectionsScreen";
 import { ProjectDetailScreen } from "./features/project/ProjectDetailScreen";
 import { SettingsScreen } from "./features/settings/SettingsScreen";
+import { LocalStlPreviewScreen } from "./features/upload/LocalStlPreviewScreen";
 import { UploadScreen } from "./features/upload/UploadScreen";
 import { clearCredential, loadCredential, saveCredential } from "./lib/credentials";
 import { clearOfflineProjects } from "./lib/offline";
 import { clearMediaCache } from "./lib/mediaCache";
 import { localizedError, t, useLanguage } from "./lib/i18n";
-import { pairWithDesktop, parsePairingPayload, requestJson } from "./lib/transport";
+import {
+  removeLocalStl,
+  stageOpenedStl,
+  stageSelectedStl,
+  takeOpenedStls,
+  type LocalStlFile,
+} from "./lib/localStl";
+import { filenameFromFilePath, pairWithDesktop, parsePairingPayload, requestJson } from "./lib/transport";
 import type { Credential, ServerStatus } from "./types";
 
-export function PairingScreen({ onPaired }: { onPaired: (credential: Credential) => void }) {
+export function PairingScreen({ onPaired, onCancel }: { onPaired: (credential: Credential) => void; onCancel?: () => void }) {
   const [manual, setManual] = useState(false);
   const [payloadText, setPayloadText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -62,6 +72,7 @@ export function PairingScreen({ onPaired }: { onPaired: (credential: Credential)
   };
 
   return <main className="pairing-screen">
+    {onCancel && <button className="pairing-cancel round-button" aria-label={t("Back to STL preview")} onClick={onCancel}><X /></button>}
     <header><Brand /><span className="companion-label">{t("MOBILE")}</span></header>
     <section className="pairing-intro">
       <div className="pairing-icon-stage" aria-hidden="true"><span /><span /><img src={volumIcon} alt="" /></div>
@@ -86,11 +97,11 @@ export function PairingScreen({ onPaired }: { onPaired: (credential: Credential)
   </main>;
 }
 
-export function CompanionApp({ credential, onCredentialChange, onUnpair }: { credential: Credential; onCredentialChange: (credential: Credential) => void; onUnpair: () => void }) {
+export function CompanionApp({ credential, initialProjectId, onInitialProjectOpened, onCredentialChange, onUnpair, onPreviewStl }: { credential: Credential; initialProjectId?: string; onInitialProjectOpened?: () => void; onCredentialChange: (credential: Credential) => void; onUnpair: () => void; onPreviewStl: (filePath: string, filename: string) => Promise<void> }) {
   const queryClient = useQueryClient();
   const observedRevision = useRef("");
   const [tab, setTab] = useState<Tab>("library");
-  const [projectId, setProjectId] = useState<string>();
+  const [projectId, setProjectId] = useState<string | undefined>(initialProjectId);
   const [collectionId, setCollectionId] = useState<string>();
   const status = useQuery({
     queryKey: ["status", credential.baseUrl],
@@ -106,11 +117,14 @@ export function CompanionApp({ credential, onCredentialChange, onUnpair }: { cre
     }
     observedRevision.current = next;
   }, [queryClient, status.data?.libraryRevision]);
+  useEffect(() => {
+    if (initialProjectId) onInitialProjectOpened?.();
+  }, [initialProjectId, onInitialProjectOpened]);
   const canWrite = Boolean(status.data?.capabilities.organizationWrites);
   if (projectId) return <ProjectDetailScreen key={projectId} credential={credential} id={projectId} canWrite={canWrite} onBack={() => setProjectId(undefined)} onOpen={setProjectId} />;
   const chooseTab = (next: Tab) => { setTab(next); if (next !== "library") setCollectionId(undefined); };
   return <div className="app-shell">
-    {tab === "collections" ? <CollectionsScreen credential={credential} canWrite={canWrite} onSelect={(id) => { setCollectionId(id); setTab("library"); }} onOpen={setProjectId} /> : tab === "upload" ? <UploadScreen credential={credential} enabled={Boolean(status.data?.capabilities.fileUploads)} photosEnabled={Boolean(status.data?.capabilities.photoUploads)} onOpen={setProjectId} /> : tab === "settings" ? <SettingsScreen credential={credential} status={status.data} onCredentialChange={onCredentialChange} onRefresh={() => status.refetch()} onUnpair={onUnpair} /> : <LibraryScreen credential={credential} tab={tab} selectedCollection={collectionId} onCollection={setCollectionId} onOpen={setProjectId} />}
+    {tab === "collections" ? <CollectionsScreen credential={credential} canWrite={canWrite} onSelect={(id) => { setCollectionId(id); setTab("library"); }} onOpen={setProjectId} /> : tab === "upload" ? <UploadScreen credential={credential} photosEnabled={Boolean(status.data?.capabilities.photoUploads)} onOpen={setProjectId} onPreviewStl={onPreviewStl} /> : tab === "settings" ? <SettingsScreen credential={credential} status={status.data} onCredentialChange={onCredentialChange} onRefresh={() => status.refetch()} onUnpair={onUnpair} /> : <LibraryScreen credential={credential} tab={tab} selectedCollection={collectionId} onCollection={setCollectionId} onOpen={setProjectId} />}
     <nav className="bottom-nav">{([
       ["library", "Library", LibraryBig], ["favorites", "Favorites", Heart], ["upload", "Capture", Camera], ["collections", "Collections", Boxes], ["settings", "Settings", Settings2]
     ] as Array<[Tab, string, typeof LibraryBig]>).map(([id, label, Icon]) => <button key={id} className={tab === id ? "is-active" : ""} onClick={() => chooseTab(id)}><Icon size={20} fill={id === "favorites" && tab === id ? "currentColor" : "none"} /><span>{t(label)}</span></button>)}</nav>
@@ -123,9 +137,92 @@ export function App() {
   const [credential, setCredential] = useState<Credential>();
   const [loading, setLoading] = useState(true);
   const [startupError, setStartupError] = useState("");
+  const [localFile, setLocalFile] = useState<LocalStlFile>();
+  const localFileRef = useRef<LocalStlFile | undefined>(undefined);
+  const [stagingLocalFile, setStagingLocalFile] = useState(false);
+  const [incomingError, setIncomingError] = useState("");
+  const [pairingForLocalFile, setPairingForLocalFile] = useState(false);
+  const [resumeLocalSave, setResumeLocalSave] = useState(false);
+  const [initialProjectId, setInitialProjectId] = useState<string>();
+  const drainRunning = useRef(false);
   useEffect(() => {
     void loadCredential().then(setCredential).catch((reason) => setStartupError(localizedError(reason))).finally(() => setLoading(false));
   }, []);
+  const replaceLocalFile = useCallback((next: LocalStlFile) => {
+    const previous = localFileRef.current;
+    localFileRef.current = next;
+    setLocalFile(next);
+    if (previous && previous.cachePath !== next.cachePath) {
+      void removeLocalStl(previous.cachePath).catch(() => undefined);
+    }
+  }, []);
+  const previewSelectedStl = useCallback(async (filePath: string, filename: string) => {
+    setStagingLocalFile(true);
+    try {
+      replaceLocalFile(await stageSelectedStl(filePath, filename));
+    } finally {
+      setStagingLocalFile(false);
+    }
+  }, [replaceLocalFile]);
+  const replaceFromPicker = useCallback(async () => {
+    const selected = await open({
+      multiple: false,
+      directory: false,
+      title: t("Choose an STL file to preview"),
+      filters: [{ name: t("STL files"), extensions: ["stl"] }],
+    });
+    if (!selected || Array.isArray(selected)) return;
+    await previewSelectedStl(selected, filenameFromFilePath(selected) || "model.stl");
+  }, [previewSelectedStl]);
+  const discardLocalFile = useCallback(() => {
+    const current = localFileRef.current;
+    localFileRef.current = undefined;
+    setLocalFile(undefined);
+    setResumeLocalSave(false);
+    if (current) void removeLocalStl(current.cachePath).catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    let active = true;
+    let unlisten: UnlistenFn | undefined;
+    const drain = async () => {
+      if (drainRunning.current) return;
+      drainRunning.current = true;
+      setStagingLocalFile(true);
+      try {
+        while (active) {
+          const opened = await takeOpenedStls();
+          if (!opened.length) break;
+          for (const item of opened) {
+            try {
+              const staged = await stageOpenedStl(item.id);
+              if (active) replaceLocalFile(staged);
+              else await removeLocalStl(staged.cachePath).catch(() => undefined);
+            } catch (reason) {
+              if (active) setIncomingError(localizedError(reason));
+            }
+          }
+        }
+      } catch {
+        // The event bridge may be unavailable in browser-only previews.
+      } finally {
+        drainRunning.current = false;
+        if (active) setStagingLocalFile(false);
+      }
+    };
+    void listen("volum://opened-stl", () => { void drain(); })
+      .then((stop) => {
+        if (!active) stop();
+        else {
+          unlisten = stop;
+          void drain();
+        }
+      })
+      .catch(() => { void drain(); });
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, [replaceLocalFile]);
   const unpair = async () => {
     if (!window.confirm(t("Unpair this device and remove its cached credentials?"))) return;
     let cacheError = "";
@@ -142,7 +239,33 @@ export function App() {
     setCredential(undefined);
     if (cacheError) window.alert(t("This device was unpaired, but its offline cache could not be fully removed: {error}", { error: localizedError(cacheError) }));
   };
-  if (loading) return <main className="launch-screen"><Brand /><LoaderCircle className="spin" /></main>;
-  if (startupError) return <main className="launch-screen"><Brand /><div className="error-banner" role="alert"><CircleAlert />{startupError}</div></main>;
-  return credential ? <CompanionApp credential={credential} onCredentialChange={setCredential} onUnpair={() => void unpair()} /> : <PairingScreen onPaired={setCredential} />;
+  let content;
+  if (stagingLocalFile && !localFile) {
+    content = <main className="local-stl-opening"><Brand /><LoaderCircle className="spin" /><strong>{t("Opening STL on this device…")}</strong><span>{t("Nothing is being uploaded.")}</span></main>;
+  } else if (localFile && pairingForLocalFile) {
+    content = <PairingScreen
+      onPaired={(next) => { setCredential(next); setPairingForLocalFile(false); }}
+      onCancel={() => { setPairingForLocalFile(false); setResumeLocalSave(false); }}
+    />;
+  } else if (localFile) {
+    content = <LocalStlPreviewScreen
+      file={localFile}
+      credential={credential}
+      startSaving={resumeLocalSave}
+      onSavingStarted={() => setResumeLocalSave(false)}
+      onDiscard={discardLocalFile}
+      onReplace={replaceFromPicker}
+      onPair={() => { setResumeLocalSave(true); setPairingForLocalFile(true); }}
+      onSaved={(projectId) => { discardLocalFile(); setInitialProjectId(projectId); }}
+    />;
+  } else if (loading) {
+    content = <main className="launch-screen"><Brand /><LoaderCircle className="spin" /></main>;
+  } else if (startupError) {
+    content = <main className="launch-screen"><Brand /><div className="error-banner" role="alert"><CircleAlert />{startupError}</div></main>;
+  } else {
+    content = credential
+      ? <CompanionApp credential={credential} initialProjectId={initialProjectId} onInitialProjectOpened={() => setInitialProjectId(undefined)} onCredentialChange={setCredential} onUnpair={() => void unpair()} onPreviewStl={previewSelectedStl} />
+      : <PairingScreen onPaired={setCredential} />;
+  }
+  return <>{content}{incomingError && <div className="sheet-scrim"><section className="mobile-sheet incoming-file-error" role="alertdialog" aria-modal="true"><header><div><span className="eyebrow">{t("OPEN STL")}</span><h2>{t("This file could not be opened")}</h2></div><button className="round-button" aria-label={t("Close")} onClick={() => setIncomingError("")}><X /></button></header><div className="error-banner"><CircleAlert />{incomingError}</div><button className="button button--primary button--large sheet-submit" onClick={() => setIncomingError("")}>{t("Continue")}</button></section></div>}</>;
 }

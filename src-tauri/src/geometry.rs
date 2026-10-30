@@ -220,6 +220,8 @@ mod tests {
                 .collect(),
             triangles: vec![[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]],
             vertex_colors: Vec::new(),
+            triangle_colors: Vec::new(),
+            ..Mesh::default()
         }
     }
 
@@ -303,11 +305,15 @@ mod tests {
             vertices: vertices.clone(),
             triangles: vec![[0, 1, 2], [0, 2, 3]],
             vertex_colors: Vec::new(),
+            triangle_colors: Vec::new(),
+            ..Mesh::default()
         };
         let right = Mesh {
             vertices,
             triangles: vec![[0, 1, 3], [1, 2, 3]],
             vertex_colors: Vec::new(),
+            triangle_colors: Vec::new(),
+            ..Mesh::default()
         };
         assert_eq!(
             analyze_mesh(&left).unwrap().geometry_hash,

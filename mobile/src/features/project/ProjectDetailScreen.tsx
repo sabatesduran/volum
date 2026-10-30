@@ -5,7 +5,7 @@ import QRCode from "qrcode";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowDown, ArrowLeft, ArrowUp, Box, Boxes, CalendarDays, Camera, Check, ChevronDown,
-  ChevronRight, CircleAlert, CloudCheck, CloudDownload, CloudOff, ExternalLink, Eye,
+  ChevronRight, CircleAlert, CloudCheck, CloudDownload, CloudOff, Crosshair, ExternalLink, Eye,
   FileImage, Folder, Gauge, HardDrive, Heart, Layers3, ListChecks, LoaderCircle, Package, Pencil,
   Plus, Printer, QrCode, RotateCcw, Ruler, Scale, Share2, Tag as TagIcon, Trash2,
   UploadCloud, Wifi, Wrench, X,
@@ -28,6 +28,7 @@ import {
   type OfflineDownloadProgress,
 } from "../../lib/offline";
 import { projectQrPayload } from "../../lib/projectQr";
+import type { LocalStlObject } from "../../lib/localStl";
 import {
   cancelUpload, filenameFromFilePath, mutateJson, requestJson, uploadProjectFile,
   uploadProjectPhoto,
@@ -88,6 +89,12 @@ export function ProjectDetailScreen({ credential, id, canWrite: writesAllowed, o
   const [viewerReset, setViewerReset] = useState(0);
   const [viewerAssetId, setViewerAssetId] = useState<string>();
   const [plateIndex, setPlateIndex] = useState<number>();
+  const [viewerObjects, setViewerObjects] = useState<LocalStlObject[]>([]);
+  const [selectedObjectId, setSelectedObjectId] = useState<number>();
+  const [isolatedObjectId, setIsolatedObjectId] = useState<number>();
+  const [focusObjectId, setFocusObjectId] = useState<number>();
+  const [focusSignal, setFocusSignal] = useState(0);
+  const [viewerObjectsOpen, setViewerObjectsOpen] = useState(false);
   const [photoDraft, setPhotoDraft] = useState<PhotoDraft>();
   const [photoProgress, setPhotoProgress] = useState<UploadProgress>();
   const [offlineProgress, setOfflineProgress] = useState<OfflineDownloadProgress>();
@@ -116,6 +123,42 @@ export function ProjectDetailScreen({ credential, id, canWrite: writesAllowed, o
   const offlineViewerPayload = viewerAsset?.id === offlineViewerAssetId ? offline.data?.viewerMesh : undefined;
   const offlinePhotoMap = new Map(offline.data?.photoThumbnails.map((item) => [item.photoId, item.blob]) ?? []);
   const handleViewerStatus = useCallback((_status: "ready" | "error", _message?: string) => undefined, []);
+  useEffect(() => {
+    setViewerObjects([]);
+    setSelectedObjectId(undefined);
+    setIsolatedObjectId(undefined);
+    setFocusObjectId(undefined);
+    setViewerObjectsOpen(false);
+  }, [plateIndex, showViewer, viewerAsset?.id]);
+  const selectedObject = viewerObjects.find((object) => object.id === selectedObjectId);
+  const selectViewerObject = (objectId?: number) => {
+    if (!objectId) {
+      setSelectedObjectId(undefined);
+      setFocusObjectId(undefined);
+      if (isolatedObjectId) {
+        setIsolatedObjectId(undefined);
+        setViewerReset((value) => value + 1);
+      }
+      return;
+    }
+    setSelectedObjectId(objectId);
+  };
+  const focusViewerObject = (objectId: number) => {
+    setSelectedObjectId(objectId);
+    setFocusObjectId(objectId);
+    setFocusSignal((value) => value + 1);
+  };
+  const isolateViewerObject = (objectId: number) => {
+    setSelectedObjectId(objectId);
+    setIsolatedObjectId(objectId);
+    setFocusObjectId(objectId);
+    setFocusSignal((value) => value + 1);
+  };
+  const showAllViewerObjects = () => {
+    setIsolatedObjectId(undefined);
+    setFocusObjectId(undefined);
+    setViewerReset((value) => value + 1);
+  };
   const fieldMap = new Map((fields.data ?? []).map((field) => [field.id, field]));
   const saveProject = async (changes: OptimisticProjectChanges) => {
     if (!project) return false;
@@ -447,10 +490,18 @@ export function ProjectDetailScreen({ credential, id, canWrite: writesAllowed, o
   const projectFormat = (project.primaryExtension || "PROJECT").toUpperCase();
   if (workshopMode && docs) return <WorkshopScreen credential={credential} project={project} documentation={docs} offlinePhotos={offlinePhotoMap} onBack={() => setWorkshopMode(false)} />;
   if (showViewer && viewerAsset) return <main className="fullscreen-viewer">
-    <Suspense fallback={<div className="viewer-state"><LoaderCircle className="spin" /><span>{t("Opening 3D viewer…")}</span></div>}><MobileModelViewer credential={credential} assetId={viewerAsset.id} revision={viewerAsset.modifiedAt} plateIndex={plateIndex} offlinePayload={offlineViewerPayload} resetSignal={viewerReset} onStatus={handleViewerStatus} /></Suspense>
-    <button className="round-button fullscreen-viewer__back" aria-label={t("Back to project")} onClick={() => setShowViewer(false)}><ArrowLeft /></button>
-    <button className="round-button fullscreen-viewer__reset" aria-label={t("Reset 3D view")} onClick={() => setViewerReset((value) => value + 1)}><RotateCcw /></button>
-    <div className="fullscreen-viewer__caption"><span>{viewerAsset.extension} · {viewerAsset.filename}</span><strong>{project.displayName}</strong>{viewerPlates.length > 0 && detail.data && <label><span>{t("Plate")}</span><select value={plateIndex ?? ""} onChange={(event) => setPlateIndex(event.target.value ? Number(event.target.value) : undefined)}><option value="">{t("All plates")}</option>{viewerPlates.map((plate) => <option key={plate.index} value={plate.index}>{plate.name || t("Plate {number}", { number: plate.index + 1 })}</option>)}</select></label>}</div>
+    <Suspense fallback={<div className="viewer-state"><LoaderCircle className="spin" /><span>{t("Opening 3D viewer…")}</span></div>}><MobileModelViewer credential={credential} assetId={viewerAsset.id} revision={viewerAsset.modifiedAt} plateIndex={plateIndex} offlinePayload={offlineViewerPayload} resetSignal={viewerReset} selectedObjectId={selectedObjectId} isolatedObjectId={isolatedObjectId} focusObjectId={focusObjectId} focusSignal={focusSignal} onObjectSelect={selectViewerObject} onObjects={setViewerObjects} onStatus={handleViewerStatus} /></Suspense>
+    <div className="fullscreen-viewer__toolbar"><button className="round-button fullscreen-viewer__back" aria-label={t("Back to project")} onClick={() => setShowViewer(false)}><ArrowLeft /></button><button className="round-button fullscreen-viewer__reset" aria-label={t("Reset 3D view")} onClick={() => setViewerReset((value) => value + 1)}><RotateCcw /></button></div>
+    {viewerObjects.length > 0 && <button className="project-viewer-objects-button" aria-label={t("Open object list")} onClick={() => setViewerObjectsOpen(true)}><Layers3 /><span>{viewerObjects.length === 1 ? t("1 object") : t("{count} objects", { count: viewerObjects.length })}</span></button>}
+    {selectedObject && <section className="local-object-inspector project-object-inspector" aria-label={t("Selected object details")}>
+      <header><div><span>{t("OBJECT {current} OF {count}", { current: selectedObject.id, count: viewerObjects.length })}</span><strong>{selectedObject.name || t("Object {number}", { number: selectedObject.id })}</strong></div><button className="round-button" aria-label={t("Clear object selection")} onClick={() => selectViewerObject(undefined)}><X /></button></header>
+      <div className="local-object-inspector__metrics"><div><span>{t("X · WIDTH")}</span><strong>{formatNumber(selectedObject.dimensions[0])} mm</strong></div><div><span>{t("Y · DEPTH")}</span><strong>{formatNumber(selectedObject.dimensions[1])} mm</strong></div><div><span>{t("Z · HEIGHT")}</span><strong>{formatNumber(selectedObject.dimensions[2])} mm</strong></div></div>
+      <p>{t("{triangles} triangles · Base Z {z} mm", { triangles: formatNumber(selectedObject.triangleCount), z: formatNumber(selectedObject.bounds[2]) })}</p>
+      <div className="local-object-inspector__actions"><button className="button button--quiet" onClick={() => focusViewerObject(selectedObject.id)}><Crosshair />{t("Fit to view")}</button>{isolatedObjectId ? <button className="button button--primary" onClick={showAllViewerObjects}><Layers3 />{t("Show all")}</button> : <button className="button button--primary" onClick={() => isolateViewerObject(selectedObject.id)}><Eye />{t("Inspect alone")}</button>}</div>
+    </section>}
+    {viewerPlates.length > 1 && detail.data && <label className="fullscreen-viewer__plate"><Layers3 /><select value={plateIndex ?? ""} onChange={(event) => setPlateIndex(event.target.value ? Number(event.target.value) : undefined)} aria-label={t("Plate")}><option value="">{t("All plates")}</option>{viewerPlates.map((plate) => <option key={plate.index} value={plate.index}>{t("Plate {number}", { number: plate.index })}</option>)}</select></label>}
+    {!selectedObject && <div className="viewer-hint viewer-hint--fullscreen">{viewerObjects.length ? t("Tap an object · Drag to rotate") : t("Drag to rotate · Pinch to zoom")}</div>}
+    {viewerObjectsOpen && <div className="sheet-scrim" role="presentation"><section className="mobile-sheet mobile-sheet--tall local-objects-sheet" role="dialog" aria-modal="true" aria-labelledby="plate-objects-title"><header><div><span className="eyebrow">{t("PLATE OBJECTS")}</span><h2 id="plate-objects-title">{t("Inspect individual objects")}</h2></div><button className="round-button" aria-label={t("Close")} onClick={() => setViewerObjectsOpen(false)}><X /></button></header><p>{t("Select an object to inspect its dimensions and placement.")}</p><div className="local-objects-list">{viewerObjects.map((object) => <button key={object.id} className={selectedObjectId === object.id ? "is-selected" : ""} aria-pressed={selectedObjectId === object.id} onClick={() => { selectViewerObject(object.id); setViewerObjectsOpen(false); }}><span><Box /></span><div><strong>{object.name || t("Object {number}", { number: object.id })}</strong><small>{object.dimensions.map((value) => `${formatNumber(value)} mm`).join(" × ")}</small><small>{t("{count} triangles", { count: formatNumber(object.triangleCount) })}</small></div>{selectedObjectId === object.id && <Check />}</button>)}</div></section></div>}
   </main>;
   return <main className="detail-screen">
     <PullToRefresh onRefresh={() => Promise.all([detail.refetch(), documentation.refetch(), fields.refetch(), collections.refetch(), tags.refetch()])} />

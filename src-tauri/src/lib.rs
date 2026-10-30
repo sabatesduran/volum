@@ -177,6 +177,7 @@ pub fn run() {
             commands::get_cached_thumbnail,
             commands::request_thumbnail,
             commands::cancel_thumbnail_request,
+            commands::clear_preview_cache,
             commands::get_preferences,
             commands::list_slicer_apps,
             commands::save_preference,

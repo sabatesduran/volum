@@ -11,6 +11,8 @@ import { AboutSettings } from "../../components/AboutSettings";
 import { Dialog } from "../../components/Dialog";
 import type { LanguagePreference, SlicerConfig, Theme } from "../../types";
 import { intlLocale, plural, t } from "../../lib/i18n";
+import { clearCachedObjectUrls } from "../../lib/mediaCache";
+import { clearCachedViewerPayloads } from "../../lib/viewerMeshCache";
 import { UpdateSettings } from "../updates/UpdateSettings";
 import { BackupSettings } from "../backups/BackupSettings";
 import { CompanionSettings } from "./CompanionSettings";
@@ -62,7 +64,7 @@ export function SettingsView() {
   const [materialColor, setMaterialColor] = useState("#e9e2d3");
   const [activeSection, setActiveSection] = useState(() => window.location.hash.slice(1) || "libraries");
   useEffect(() => {
-    if (isRemote && ["libraries", "web-imports", "companion", "backups"].includes(activeSection)) setActiveSection("connection");
+    if (isRemote && ["libraries", "web-imports", "companion", "backups", "developer"].includes(activeSection)) setActiveSection("connection");
   }, [activeSection, isRemote]);
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => document.getElementById(activeSection)?.scrollIntoView({ block: "start" }));
@@ -73,6 +75,9 @@ export function SettingsView() {
   const [managedLibraryError, setManagedLibraryError] = useState("");
   const [importingInbox, setImportingInbox] = useState(false);
   const [inboxMessage, setInboxMessage] = useState("");
+  const [clearingPreviewCache, setClearingPreviewCache] = useState(false);
+  const [previewCacheMessage, setPreviewCacheMessage] = useState("");
+  const [previewCacheError, setPreviewCacheError] = useState("");
   const chooseManagedLibrary = async () => {
     const path = isTauri() ? await open({ directory: true, multiple: false, title: t("Choose the managed Volum library") }) : "/Users/you/Volum";
     if (!path || Array.isArray(path)) return;
@@ -177,11 +182,27 @@ export function SettingsView() {
     const path = await save({ title: t("Export redacted diagnostics"), defaultPath: "volum-diagnostics.json", filters: [{ name: "JSON", extensions: ["json"] }] });
     if (path) await api.exportDiagnostics(path, true);
   };
+  const clearPreviewCache = async () => {
+    if (!window.confirm(t("Clear all generated previews? They will be rebuilt as needed."))) return;
+    setClearingPreviewCache(true);
+    setPreviewCacheMessage("");
+    setPreviewCacheError("");
+    try {
+      await api.clearPreviewCache();
+      clearCachedObjectUrls();
+      clearCachedViewerPayloads();
+      setPreviewCacheMessage(t("Preview cache cleared. Previews will be rebuilt as needed."));
+    } catch (reason) {
+      setPreviewCacheError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setClearingPreviewCache(false);
+    }
+  };
   return (
     <section className="content-view settings-view">
       <header className="view-header"><div><div className="eyebrow">{t("Volum preferences")}</div><h1>{t("Settings")}</h1><p>{t("Libraries, web imports, backups, materials, appearance, indexing, and about.")}</p></div></header>
       <div className="settings-layout">
-        <nav className="settings-nav">{[["connection", "Connection"], ...(!isRemote ? [["libraries", "Libraries"], ["web-imports", "Web imports"]] : []), ["appearance", "Appearance"], ["materials", "Materials"], ["applications", "Applications"], ...(!isRemote ? [["companion", "Companion Access"]] : []), ["privacy", "Privacy & data"], ...(!isRemote ? [["backups", "Backups"]] : []), ["updates", "Updates"], ["about", "About"]].map(([id, label]) => <a key={id} href={`#${id}`} className={activeSection === id ? "is-active" : ""} onClick={() => setActiveSection(id)}>{t(label)}</a>)}</nav>
+        <nav className="settings-nav">{[["connection", "Connection"], ...(!isRemote ? [["libraries", "Libraries"], ["web-imports", "Web imports"]] : []), ["appearance", "Appearance"], ["materials", "Materials"], ["applications", "Applications"], ...(!isRemote ? [["companion", "Companion Access"]] : []), ["privacy", "Privacy & data"], ...(!isRemote ? [["backups", "Backups"], ["developer", "Developer"]] : []), ["updates", "Updates"], ["about", "About"]].map(([id, label]) => <a key={id} href={`#${id}`} className={activeSection === id ? "is-active" : ""} onClick={() => setActiveSection(id)}>{t(label)}</a>)}</nav>
         <div className="settings-content">
           {connection && <section className="settings-section" id="connection"><div className="settings-section__header"><div><h2>{t("Library connection")}</h2><p>{t("Use this Desktop locally, host other devices, or connect it to one canonical Volum server.")}</p></div></div><RemoteConnection status={connection} onChange={(next) => { queryClient.setQueryData(["backend-connection"], next); void queryClient.invalidateQueries(); }} /></section>}
           {!isRemote && <section className="settings-section" id="libraries">
@@ -215,6 +236,7 @@ export function SettingsView() {
           {!isRemote && <CompanionSettings />}
           <section className="settings-section" id="privacy"><div className="settings-section__header"><div><h2>{t("Privacy & data")}</h2><p>{t(isRemote ? "The paired server is canonical. Requests are authenticated and Volum never synchronizes its SQLite database between machines." : "Volum has no account, analytics, or model uploads. Its index and previews remain on this computer.")}</p></div></div><div className="privacy-note"><Package size={20} /><span><strong>{t(isRemote ? "Server-authoritative" : "Local by default")}</strong><small>{t(isRemote ? "Only API data and explicitly mirrored originals cross the connection. Pairing tokens stay in the operating system credential store." : "Network access is used for update checks, optional Companion Access through your Tailnet, About projects, and public MakerWorld or Printables metadata only when you request them. No hosted Volum relay is used.")}</small></span></div>{!isRemote && <div className="settings-actions"><button className="button button--quiet" onClick={exportMetadata}>{t("Export metadata")}</button><button className="button button--quiet" onClick={exportDiagnostics}>{t("Export diagnostics")}</button><button className="button button--quiet" onClick={() => roots.forEach((root) => api.startScan(root.id))}><RefreshCw size={15} /> {t("Rebuild index")}</button></div>}</section>
           {!isRemote && <BackupSettings />}
+          {!isRemote && <section className="settings-section" id="developer"><div className="settings-section__header"><div><h2>{t("Developer")}</h2><p>{t("Troubleshooting tools for local generated data.")}</p></div></div><div className="settings-subheading"><h3>{t("Preview cache")}</h3><p>{t("Remove generated thumbnails and interactive model data. Your projects, metadata, and original files are not changed.")}</p></div><div className="settings-actions"><button className="button button--quiet" disabled={clearingPreviewCache} onClick={() => void clearPreviewCache()}><Trash2 size={15} />{t(clearingPreviewCache ? "Clearing…" : "Clear preview cache")}</button></div>{previewCacheMessage && <p className="settings-footnote">{previewCacheMessage}</p>}{previewCacheError && <div className="form-error">{previewCacheError}</div>}</section>}
           <UpdateSettings />
           <AboutSettings />
         </div>

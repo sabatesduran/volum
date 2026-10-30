@@ -4,6 +4,11 @@ const MAX_OBJECT_URLS = 128;
 const objectUrls = new Map<string, string>();
 const pendingUrls = new Map<string, Promise<string | undefined>>();
 
+export function clearCachedObjectUrls() {
+  objectUrls.forEach((url) => URL.revokeObjectURL(url));
+  objectUrls.clear();
+}
+
 export async function cachedObjectUrl(
   key: string,
   mimeType: string,

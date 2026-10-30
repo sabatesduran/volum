@@ -8,6 +8,7 @@ use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
 type CommandResult<T> = Result<T, String>;
+const VIEWER_MESH_RENDERER_VERSION: &str = "viewer-8";
 
 #[derive(Debug)]
 struct DuplicateMatchRow {
@@ -1837,10 +1838,11 @@ pub(crate) async fn viewer_mesh_bytes(
     let plate_key = plate_index
         .map(|index| index.to_string())
         .unwrap_or_else(|| "all".into());
-    if let Some(row) = sqlx::query("SELECT id, cache_path FROM viewer_meshes WHERE asset_id = ? AND fingerprint = ? AND plate_key = ? AND renderer_version = 'viewer-2'")
+    if let Some(row) = sqlx::query("SELECT id, cache_path FROM viewer_meshes WHERE asset_id = ? AND fingerprint = ? AND plate_key = ? AND renderer_version = ?")
         .bind(asset_id)
         .bind(&fingerprint)
         .bind(&plate_key)
+        .bind(VIEWER_MESH_RENDERER_VERSION)
         .fetch_optional(&state.pool)
         .await
         .map_err(db_error)?
@@ -1900,6 +1902,41 @@ pub async fn get_cached_thumbnail(
         .await?
         .unwrap_or_default();
     Ok(tauri::ipc::Response::new(bytes))
+}
+
+#[tauri::command]
+pub async fn clear_preview_cache(state: State<'_, AppState>) -> CommandResult<()> {
+    for cancellation in state.thumbnail_cancellations.lock().await.values() {
+        cancellation.cancel();
+    }
+
+    let mut transaction = state.pool.begin().await.map_err(db_error)?;
+    sqlx::query("DELETE FROM thumbnails")
+        .execute(&mut *transaction)
+        .await
+        .map_err(db_error)?;
+    sqlx::query("DELETE FROM viewer_meshes")
+        .execute(&mut *transaction)
+        .await
+        .map_err(db_error)?;
+    transaction.commit().await.map_err(db_error)?;
+
+    for directory in [
+        state.data_dir.join("thumbnails"),
+        state.data_dir.join("viewer-meshes"),
+    ] {
+        match tokio::fs::remove_dir_all(&directory).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!(
+                    "Could not clear the preview cache at {}: {error}",
+                    directory.display()
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -2401,10 +2438,11 @@ async fn persist_viewer_mesh(
     tokio::fs::create_dir_all(&directory)
         .await
         .map_err(|error| error.to_string())?;
-    let cache_name =
-        blake3::hash(format!("{asset_id}|{fingerprint}|{plate_key}|viewer-2").as_bytes())
-            .to_hex()
-            .to_string();
+    let cache_name = blake3::hash(
+        format!("{asset_id}|{fingerprint}|{plate_key}|{VIEWER_MESH_RENDERER_VERSION}").as_bytes(),
+    )
+    .to_hex()
+    .to_string();
     let path = directory.join(format!("{cache_name}.vlm"));
     let temporary = directory.join(format!("{}.tmp", Uuid::new_v4()));
     tokio::fs::write(&temporary, bytes)
@@ -2414,11 +2452,12 @@ async fn persist_viewer_mesh(
         .await
         .map_err(|error| error.to_string())?;
     let timestamp = now();
-    sqlx::query("INSERT INTO viewer_meshes (id, asset_id, fingerprint, plate_key, renderer_version, cache_path, byte_size, last_accessed_at, created_at) VALUES (?, ?, ?, ?, 'viewer-2', ?, ?, ?, ?) ON CONFLICT(asset_id, fingerprint, plate_key, renderer_version) DO UPDATE SET cache_path = excluded.cache_path, byte_size = excluded.byte_size, last_accessed_at = excluded.last_accessed_at")
+    sqlx::query("INSERT INTO viewer_meshes (id, asset_id, fingerprint, plate_key, renderer_version, cache_path, byte_size, last_accessed_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(asset_id, fingerprint, plate_key, renderer_version) DO UPDATE SET cache_path = excluded.cache_path, byte_size = excluded.byte_size, last_accessed_at = excluded.last_accessed_at")
         .bind(Uuid::new_v4().to_string())
         .bind(asset_id)
         .bind(fingerprint)
         .bind(plate_key)
+        .bind(VIEWER_MESH_RENDERER_VERSION)
         .bind(path.to_string_lossy().to_string())
         .bind(bytes.len() as i64)
         .bind(&timestamp)

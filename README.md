@@ -13,7 +13,7 @@ Volum works as a standalone Desktop application, as a Desktop-hosted server for 
 | Mode | Canonical library | Desktop UI | Typical use |
 | --- | --- | --- | --- |
 | **Local Desktop** | This Desktop | Direct Rust calls; no HTTP hop | One computer, removable drives, or mounted shares |
-| **Desktop host** | The hosting Desktop | Host UI remains direct; other clients use `/api/v1` | Share an existing Desktop library over Tailscale |
+| **Desktop host** | The hosting Desktop | Host UI remains direct; other clients use `/api/v1` | Share an existing Desktop library over Tailscale, another private network, or HTTPS |
 | **Dedicated `volumd`** | The server/NAS | Remote Desktop or Companion client | Always-on managed library in Docker |
 
 “Canonical” means that machine owns the database, metadata, organization, and authoritative files. Remote clients send authenticated commands to it.
@@ -67,7 +67,7 @@ The Desktop host and `volumd` use the same Rust core, migrations, indexer, manag
 - Portable project packages and scheduled local, mounted-share, or WebDAV backups
 - English, Catalan, and European Spanish interfaces
 - Light, dark, and system themes
-- Authenticated Desktop/mobile access through Tailscale
+- Authenticated Desktop/mobile access through Tailscale, private LAN/VPN routes, or HTTPS
 - Optional resumable, BLAKE3-verified Desktop mirror with offline opening and conflict preservation
 - No account, analytics, hosted Volum relay, or required network connection
 
@@ -86,12 +86,12 @@ The Desktop UI calls the local Rust core directly. Companion Access and a mirror
 
 Use this when an existing Desktop should remain canonical.
 
-1. Install and sign in to [Tailscale](https://tailscale.com/) on the host and client devices.
+1. For the easiest setup, install and sign in to [Tailscale](https://tailscale.com/) on the host and client devices. Volum detects it automatically.
 2. In the host, open **Settings → Companion Access**.
-3. Enable Companion Access.
-4. Decide whether paired devices may perform organization writes.
-5. Create a pairing payload. It expires after five minutes and can be used once.
-6. On another Desktop, open **Settings → Connection**, paste the payload, and connect. Volum Companion can scan the same payload.
+3. Keep **Automatic** for Tailscale, or choose **Custom** and enter the private listener IP plus the separate URL clients will use.
+4. Enable Companion Access and decide whether paired devices may perform organization writes.
+5. Create a pairing payload. You can edit its advertised URL before showing the QR code. It expires after five minutes and can be used once.
+6. On another Desktop, open **Settings → Connection**, paste the payload, and connect. Volum on mobile can scan the same payload, review or edit the address, and then connect.
 7. Revoke lost or retired devices from the host.
 
 The host Desktop continues using direct local calls. Only remote clients use the HTTP API.
@@ -102,20 +102,20 @@ The repository includes a hardened Compose service, a multi-stage Dockerfile, an
 
 ### 1. Choose the address clients will use
 
-`VOLUM_PUBLIC_URL` must be a complete reachable origin with no path, query, credentials, or fragment. Prefer a Tailscale IPv4/IPv6 address or MagicDNS name:
+`VOLUM_PUBLIC_URL` must be a complete reachable origin with no path, query, credentials, or fragment. Tailscale remains the easiest option:
 
 ```bash
 export VOLUM_PUBLIC_URL=http://volum-nas.your-tailnet.ts.net:43821
 ```
 
-For a public or non-Tailscale network, terminate TLS in a trusted reverse proxy and use an `https://` origin. Do not expose plain HTTP port `43821` to the public internet.
+Private LAN, WireGuard, Twingate, and ZeroTier addresses may use `http://` when the host resolves to private IPs and the network supplies the trusted boundary. Any public or otherwise non-private route must terminate TLS in a trusted reverse proxy and use an `https://` origin. Never expose plain HTTP port `43821` to the public internet.
 
 ### 2. Start the server
 
 ```bash
-export VOLUM_PRINT_PAIRING=true
+read -rsp "Volum administrator password: " VOLUM_ADMIN_PASSWORD
+export VOLUM_ADMIN_PASSWORD
 docker compose up -d --build
-docker compose logs -f volumd
 ```
 
 On first startup, `volumd`:
@@ -124,22 +124,28 @@ On first startup, `volumd`:
 - creates `/library/Projects`, `/library/Inbox`, and `/library/Trash`;
 - runs all database migrations;
 - starts indexing and filesystem watchers;
-- prints a five-minute, single-use pairing payload when `VOLUM_PRINT_PAIRING=true`.
+- serves the Volum administrator at `VOLUM_PUBLIC_URL`.
 
-Paste the payload into **Desktop → Settings → Connection** or scan it with Companion. After pairing, stop printing new secrets on every restart:
+Open `VOLUM_PUBLIC_URL`, sign in with the administrator password, select **Pair device**, and scan the five-minute, single-use QR code with Volum on your phone. You can remove the clear-text environment value after the first successful start because only its Argon2id hash is persisted under `/config`.
+
+Container-log pairing remains available as an emergency fallback:
 
 ```bash
-export VOLUM_PRINT_PAIRING=false
+export VOLUM_PRINT_PAIRING=true
 docker compose up -d
+docker compose logs -f volumd
 ```
 
 For a persistent deployment, put both values in a private `.env` file beside `compose.yaml`:
 
 ```dotenv
 VOLUM_PUBLIC_URL=http://volum-nas.your-tailnet.ts.net:43821
+VOLUM_ADMIN_PASSWORD=
 VOLUM_PRINT_PAIRING=false
 VOLUM_ORGANIZATION_WRITES=true
 ```
+
+Fill the blank password value with a private value of at least 12 characters before starting Compose.
 
 ### 3. Persist the database and library
 
@@ -167,7 +173,7 @@ curl --fail http://127.0.0.1:43821/healthz
 # ok
 ```
 
-See [`docs/SERVER.md`](docs/SERVER.md) for environment variables, firewall guidance, image publication, storage, and recovery details.
+See the [self-hosting documentation](website/docs/server/index.md) for installation, environment variables, firewall guidance, storage, and recovery details.
 
 ## Pairing, authentication, and transport security
 
@@ -176,11 +182,15 @@ See [`docs/SERVER.md`](docs/SERVER.md) for environment variables, firewall guida
 - The server stores only a hash of that token.
 - Desktop stores its token in the operating-system credential store, never in `remote.json` or the webview.
 - Revocation is checked server-side immediately.
-- `/identity`, `/pair`, and `/healthz` are the only unauthenticated endpoints.
-- Desktop accepts plain HTTP only for localhost, Tailscale addresses, and `*.ts.net` hosts. Other hosts require HTTPS.
+- `/identity`, `/pair`, `/healthz`, and the bounded web login/bootstrap routes are the only unauthenticated endpoints.
+- The web administrator uses an explicit per-browser bearer token stored in IndexedDB, not cookies or ambient browser authentication.
+- Desktop and mobile accept any trusted `https://` origin.
+- Plain HTTP is accepted only for loopback, private IPv4/IPv6, link-local, Tailscale, or hostnames that resolve entirely to private addresses. Public HTTP is rejected.
+- Clients call `/identity` and verify the expected server ID and protocol before sending a one-time pairing secret or using a token at a replacement address.
+- QR payload transports are `tailscale-http`, `private-http`, or `https`; existing `tailscale-http` payloads remain compatible.
 - `VOLUM_ORGANIZATION_WRITES=false` makes paired clients read-only for organization and managed-file mutations.
 
-Tailscale encrypts traffic between Tailnet devices even when the application origin is `http://`. Firewall port `43821` so it is reachable only from the intended Tailnet or trusted reverse proxy.
+Tailscale encrypts traffic between Tailnet devices even when the application origin is `http://`. Other private HTTP routes rely on the LAN or VPN for confidentiality, so use only networks you trust. Firewall port `43821` so it is reachable only from intended private clients or a trusted reverse proxy.
 
 ## What remote Desktop can do
 
@@ -205,13 +215,15 @@ Some operations intentionally remain on the canonical machine because they are f
 
 These controls are hidden in remote mode, and the Desktop API adapter blocks every unimplemented remote command by default. It never falls back to mutating the local library.
 
-## Optional managed mirror
+## Optional local project files
 
-A remote Desktop may keep verified originals for offline opening:
+A remote Desktop may keep verified originals for offline opening and slicer access. Each Desktop can choose **Selected projects** or **Entire library** independently:
 
 1. Open **Settings → Connection**.
-2. Choose an empty, private local folder for the mirror.
-3. Enable the mirror and run **Sync now**. Desktop also synchronizes periodically while remote mode is active.
+2. Choose whether to keep selected projects or the entire library locally.
+3. Choose an empty, private local folder and run **Sync now**. Desktop also synchronizes periodically while remote mode is active.
+
+In selected mode, individual projects can be kept from their card or detail view. Folder and collection controls create live rules: projects added later—including projects entering a smart collection—are downloaded automatically. An individual project can be excluded from a broader rule.
 
 The mirror stores normal project files plus `.volum/manifest.json` and resumable partial downloads. It never stores or synchronizes SQLite.
 
@@ -260,7 +272,7 @@ Restore both locations from the same recovery point. Do not copy only `volum.sql
 | `VOLUM_BIND` | `0.0.0.0:43821` | Listener IP and port |
 | `VOLUM_PUBLIC_URL` | Loopback-derived | Reachable origin embedded in pairing payloads; required by Compose |
 | `VOLUM_ORGANIZATION_WRITES` | `true` | Allow paired clients to edit organization and managed files |
-| `VOLUM_PRINT_PAIRING` | Automatic without an explicit value; `false` in Compose | Print a fresh five-minute pairing payload at startup |
+| `VOLUM_PRINT_PAIRING` | `false` | Print a fresh five-minute pairing payload at startup only when explicitly enabled |
 
 ## Troubleshooting
 
@@ -268,8 +280,8 @@ Restore both locations from the same recovery point. Do not copy only `volum.sql
 
 - Open `VOLUM_PUBLIC_URL/healthz` from the client device.
 - Confirm `VOLUM_PUBLIC_URL` is the address the client can reach, not `0.0.0.0` or a container-only hostname.
-- Check the NAS firewall and Tailscale ACLs.
-- Plain HTTP on a normal LAN address such as `192.168.x.x` is intentionally rejected by Desktop; use Tailscale or HTTPS.
+- Check the NAS firewall and any Tailscale ACL, WireGuard, Twingate, ZeroTier, VLAN, or reverse-proxy policy.
+- Confirm HTTP names resolve only to private addresses. Use HTTPS for public names or routes.
 
 ### Pairing is rejected
 
@@ -292,7 +304,7 @@ Original files need a configured mirror before Desktop can hand a safe local pat
 The local/Desktop-host/headless architecture and real-server mirror conflict flow are covered by automated tests. Before treating the NAS image as generally available, the project still needs:
 
 - real `linux/amd64` and `linux/arm64` Docker builds and health tests on NAS hardware;
-- end-to-end Tailnet and native credential-store testing on every supported Desktop platform;
+- end-to-end private-network/HTTPS and native credential-store testing on every supported Desktop platform;
 - hardening for duplicate filenames mapping to one mirror path;
 - a retention/compaction policy for the durable `sync_changes` log;
 - migration and recovery testing against a copy of a large production database.
@@ -359,7 +371,7 @@ Private signing keys and pairing payloads must never be committed.
 
 ## Privacy and security
 
-The React webview has no general filesystem or shell permission. File paths received over IPC are resolved from database asset IDs and revalidated against approved roots in Rust. Archive traversal and decompression limits are enforced for ZIP-based formats. Remote DTOs do not expose canonical absolute paths, bearer tokens never enter the webview, and unencrypted non-Tailnet Desktop connections are rejected.
+The React webview has no general filesystem or shell permission. File paths received over IPC are resolved from database asset IDs and revalidated against approved roots in Rust. Archive traversal and decompression limits are enforced for ZIP-based formats. Remote DTOs do not expose canonical absolute paths, bearer tokens never enter the webview, and unencrypted public connections are rejected.
 
 See [`SECURITY.md`](SECURITY.md) for vulnerability reporting.
 

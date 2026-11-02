@@ -151,6 +151,6 @@ export function QuickCapturePanel({
     {error && <div className="error-banner" role="alert"><CircleAlert />{error}</div>}
     <button className="button button--primary button--large" disabled={!enabled || !projectId || !file || uploading} onClick={() => void upload()}>{uploading ? <LoaderCircle className="spin" /> : <Check />}{uploading ? `${t("Uploading")} ${percent}%` : t("Add photo to project")}</button>
     {!enabled && <small className="upload-unavailable">{t("Enable organization writes in Volum Desktop to add photos.")}</small>}
-    <p className="upload-privacy"><ShieldCheck />{t("Sent directly through your Tailnet. No Volum cloud or relay.")}</p>
+    <p className="upload-privacy"><ShieldCheck />{t("Sent directly through your chosen network. No Volum cloud or relay.")}</p>
   </section>;
 }

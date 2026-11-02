@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Volum",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "identifier": "com.dsd.volum.companion",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -31,6 +31,9 @@
     "targets": "all",
     "category": "Productivity",
     "shortDescription": "Your Volum library in the workshop",
-    "longDescription": "Browse projects, photos, parts, and assembly guides from a Volum Desktop library through your private Tailscale network."
+    "longDescription": "Browse projects, photos, parts, and assembly guides from a Volum Desktop library through Tailscale, another private network, or HTTPS.",
+    "iOS": {
+      "bundleVersion": "3"
+    }
   }
 }

@@ -39,3 +39,12 @@ playwright-report
 test-results
 *.log
 .DS_Store
+.asc
+**/*.ipa
+**/*.xcarchive
+website/.vitepress/cache
+website/dist
+mobile/src-tauri/gen/android/**/build
+mobile/src-tauri/gen/apple/build
+**/*.apk
+**/*.aab

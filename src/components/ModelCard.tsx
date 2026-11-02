@@ -1,17 +1,19 @@
-import { Heart, MoreHorizontal } from "lucide-react";
+import { CloudCheck, CloudDownload, Heart, MoreHorizontal } from "lucide-react";
 import { memo, useState } from "react";
-import { api } from "../lib/tauri/api";
+import { api, backendMode } from "../lib/tauri/api";
 import { formatDate } from "../lib/format";
 import { useAppStore } from "../app/store";
 import type { ModelSummary } from "../types";
 import { ModelThumbnail } from "./ModelThumbnail";
 import { plural, t } from "../lib/i18n";
 
-function ModelCardComponent({ model, context = "folder", onChanged, trashed = false }: { model: ModelSummary; context?: "folder" | "date" | "format"; onChanged?: () => void; trashed?: boolean }) {
+function ModelCardComponent({ model, context = "folder", onChanged, trashed = false, availableLocally = false, localCopyMode, localCopyBusy = false, onToggleLocal }: { model: ModelSummary; context?: "folder" | "date" | "format"; onChanged?: () => void; trashed?: boolean; availableLocally?: boolean; localCopyMode?: "all" | "selected"; localCopyBusy?: boolean; onToggleLocal?: (projectId: string, keep: boolean) => Promise<void> }) {
   const selectModel = useAppStore((state) => state.selectModel);
   const toggleModelSelection = useAppStore((state) => state.toggleModelSelection);
   const selected = useAppStore((state) => state.selectedModelIds.includes(model.id));
   const [menuOpen, setMenuOpen] = useState(false);
+  const remote = backendMode() === "remote";
+  const canOpenOriginal = !remote || availableLocally;
   const toggleFavorite = async (event: React.MouseEvent) => {
     event.stopPropagation();
     await api.toggleFavorite(model.id);
@@ -32,7 +34,8 @@ function ModelCardComponent({ model, context = "folder", onChanged, trashed = fa
           <button className="round-action" onClick={(event) => { event.stopPropagation(); setMenuOpen((value) => !value); }} aria-label={t("More actions")}><MoreHorizontal size={17} /></button>
         </div>
         <span className="model-card__select">{selected ? "✓" : ""}</span>
-        {menuOpen && <div className="card-menu" onClick={(event) => event.stopPropagation()} onMouseLeave={() => setMenuOpen(false)}>{trashed ? <><button onClick={async () => { await api.restoreProject(model.id); setMenuOpen(false); onChanged?.(); }}>{t("Restore project")}</button><button className="is-danger" onClick={async () => { if (!window.confirm(t("Delete this project permanently? This cannot be undone."))) return; await api.deleteProjectPermanently(model.id); setMenuOpen(false); onChanged?.(); }}>{t("Delete permanently")}</button></> : <><button onClick={() => selectModel(model.id)}>{t("View details")}</button><button disabled={!model.primaryAssetId || model.missing} onClick={() => model.primaryAssetId && api.openAsset(model.primaryAssetId)}>{t("Open in default app")}</button><button disabled={!model.primaryAssetId || model.missing} onClick={() => model.primaryAssetId && api.revealAsset(model.primaryAssetId)}>{t("Reveal file")}</button><button onClick={async () => { await api.toggleFavorite(model.id); setMenuOpen(false); onChanged?.(); }}>{t(model.favorite ? "Remove from favorites" : "Add to favorites")}</button><button className="is-danger" onClick={async () => { if (!window.confirm(t("Move this project to Volum Trash?"))) return; await api.trashProject(model.id); setMenuOpen(false); onChanged?.(); }}>{t("Move to Trash")}</button></>}</div>}
+        {remote && availableLocally && <span className="model-card__local" title={t("Available on this Desktop")}><CloudCheck size={14} /></span>}
+        {menuOpen && <div className="card-menu" onClick={(event) => event.stopPropagation()} onMouseLeave={() => setMenuOpen(false)}>{trashed ? <><button onClick={async () => { await api.restoreProject(model.id); setMenuOpen(false); onChanged?.(); }}>{t("Restore project")}</button><button className="is-danger" onClick={async () => { if (!window.confirm(t("Delete this project permanently? This cannot be undone."))) return; await api.deleteProjectPermanently(model.id); setMenuOpen(false); onChanged?.(); }}>{t("Delete permanently")}</button></> : <><button onClick={() => selectModel(model.id)}>{t("View details")}</button><button disabled={!model.primaryAssetId || model.missing || !canOpenOriginal} onClick={() => model.primaryAssetId && api.openAsset(model.primaryAssetId)}>{t("Open in default app")}</button><button disabled={!model.primaryAssetId || model.missing || !canOpenOriginal} onClick={() => model.primaryAssetId && api.revealAsset(model.primaryAssetId)}>{t("Reveal file")}</button>{remote && localCopyMode === "selected" && onToggleLocal && <button disabled={localCopyBusy} onClick={async () => { try { await onToggleLocal(model.id, !availableLocally); setMenuOpen(false); } catch (reason) { window.alert(reason instanceof Error ? reason.message : String(reason)); } }}>{availableLocally ? <CloudCheck size={14} /> : <CloudDownload size={14} />}{t(availableLocally ? "Remove local copy" : "Keep on this Desktop")}</button>}<button onClick={async () => { await api.toggleFavorite(model.id); setMenuOpen(false); onChanged?.(); }}>{t(model.favorite ? "Remove from favorites" : "Add to favorites")}</button><button className="is-danger" onClick={async () => { if (!window.confirm(t("Move this project to Volum Trash?"))) return; await api.trashProject(model.id); setMenuOpen(false); onChanged?.(); }}>{t("Move to Trash")}</button></>}</div>}
       </div>
       <div className="model-card__copy">
         <h3>{model.displayName}</h3>

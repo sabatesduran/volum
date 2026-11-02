@@ -17,6 +17,7 @@ tauri-build = { version = "2.4.1", features = [] }
 [dependencies]
 tauri = { version = "2.8.5", features = ["tray-icon", "image-png"] }
 tauri-plugin-dialog = "2.4.0"
+tauri-plugin-fs = "2"
 tauri-plugin-log = "2.7.0"
 tauri-plugin-single-instance = "2.3.4"
 tauri-plugin-window-state = "2.4.0"
@@ -45,10 +46,12 @@ percent-encoding = "2"
 trash = "5"
 axum = "0.8"
 tower = { version = "0.5", features = ["limit", "util"] }
-tower-http = { version = "0.6", features = ["timeout"] }
+tower-http = { version = "0.6", features = ["fs", "timeout"] }
 base64 = "0.22"
 rand = "0.9"
 futures-util = "0.3"
+argon2 = "0.5"
+fs2 = "0.4"
 
 [target.'cfg(not(all(target_os = "windows", target_arch = "aarch64")))'.dependencies]
 cadrum = { version = "0.8.20", default-features = false }

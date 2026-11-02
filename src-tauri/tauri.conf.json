@@ -44,6 +44,11 @@
     "resources": {
       "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md"
     },
+    "macOS": {
+      "files": {
+        "Resources/Assets.car": "icons/macos/Assets.car"
+      }
+    },
     "createUpdaterArtifacts": true
   },
   "plugins": {

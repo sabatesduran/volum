@@ -5,7 +5,7 @@ export interface PairingPayload {
   baseUrl: string;
   secret: string;
   expiresAt: string;
-  transport: "tailscale-http";
+  transport: "tailscale-http" | "private-http" | "https";
 }
 
 export interface Credential {

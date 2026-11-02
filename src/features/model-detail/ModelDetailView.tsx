@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowLeft, Box, Check, ChevronDown, Clock3, Copy, Crosshair, ExternalLink, Eye, FileBox, FolderOpen, Globe2,
+  ArrowLeft, Box, Camera, Check, ChevronDown, Clock3, CloudCheck, CloudDownload, Copy, Crosshair, ExternalLink, Eye, FileBox, FolderOpen, Globe2,
   GitBranch, Heart, Layers3, LoaderCircle, Package, Pencil, Plus, Printer, QrCode, RotateCcw, Save, Scale, ScanSearch, Scissors, Star, Tags, Trash2, TriangleAlert, X
 } from "lucide-react";
 import { save as chooseSavePath } from "@tauri-apps/plugin-dialog";
@@ -17,6 +17,9 @@ import { ProjectDocumentationSections } from "./ProjectDocumentationSections";
 import { AddProjectFilesDialog, ConsolidateProjectDialog } from "../../components/ProjectStorageDialogs";
 import { cachedObjectUrl } from "../../lib/mediaCache";
 import { ProjectQrDialog, type ProjectQrReadiness } from "./ProjectQrDialog";
+import { useRemoteMirror } from "../mirror/useRemoteMirror";
+
+const DesktopPhotoRoom = lazy(() => import("../photo-room/DesktopPhotoRoom").then((module) => ({ default: module.DesktopPhotoRoom })));
 
 function OpenInSlicer({ assetId, disabled, applications, defaultId }: { assetId?: string; disabled: boolean; applications: SlicerApplication[]; defaultId?: string }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -157,7 +160,7 @@ function PlateThumbnail({ assetId, plate }: { assetId: string; plate: ThreeMfPla
 
 function ThreeMfInspector({ assetId, metadata, selectedPlateIndex, onSelectPlate, onShowAll }: { assetId: string; metadata: ThreeMfMetadata; selectedPlateIndex?: number; onSelectPlate: (index: number) => void; onShowAll: () => void }) {
   const plates = metadata.plates ?? [];
-  return <div className="three-mf-inspector"><dl className="metadata-list metadata-list--profile">{metadata.printer && <div><dt>{t("Printer")}</dt><dd>{metadata.printer}</dd></div>}{metadata.printProfile && <div><dt>{t("Profile")}</dt><dd>{metadata.printProfile}</dd></div>}{metadata.nozzleDiameterMm != null && <div><dt>{t("Nozzle")}</dt><dd>{formatNumber(metadata.nozzleDiameterMm)} mm</dd></div>}{metadata.layerHeightMm != null && <div><dt>{t("Layer height")}</dt><dd>{formatNumber(metadata.layerHeightMm)} mm</dd></div>}{metadata.slicer && <div><dt>{t("Created with")}</dt><dd>{metadata.slicer}{metadata.slicerVersion ? ` · ${metadata.slicerVersion}` : ""}</dd></div>}</dl>{plates.length > 0 ? <div className="plate-list"><button type="button" className={`plate-card plate-card--all ${selectedPlateIndex == null ? "is-active" : ""}`} onClick={onShowAll}><span className="plate-thumbnail plate-thumbnail--all"><Box size={20} /></span><span className="plate-card__copy"><span className="plate-card__title"><strong>{t("All plates")}</strong><span>{plural(plates.length, "{count} plate", "{count} plates")}</span></span><p>{t("Show the complete 3MF project")}</p></span></button>{plates.map((plate) => { const objectNames = plate.objectNames ?? []; return <button type="button" className={`plate-card ${selectedPlateIndex === plate.index ? "is-active" : ""}`} key={plate.index} onClick={() => onSelectPlate(plate.index)}><PlateThumbnail assetId={assetId} plate={plate} /><div className="plate-card__copy"><div className="plate-card__title"><strong>{plate.name || t("Plate {index}", { index: plate.index })}</strong><span>{plural(plate.objectCount, "{count} object", "{count} objects")}</span></div>{objectNames.length > 0 && <p>{objectNames.slice(0, 3).join(" · ")}{objectNames.length > 3 ? ` +${objectNames.length - 3}` : ""}</p>}<div className="plate-facts">{plate.printTimeSeconds != null && <span><Clock3 size={11} />{formatDuration(plate.printTimeSeconds)}</span>}{plate.filamentGrams != null && <span><Scale size={11} />{formatNumber(plate.filamentGrams, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} g</span>}{(plate.materialNames ?? []).map((material) => <span key={material}>{material}</span>)}{plate.bedType && <span>{plate.bedType}</span>}</div></div></button>; })}</div> : <p className="quiet-copy">{t("This 3MF contains a model but no plate definitions.")}</p>}</div>;
+  return <div className="three-mf-inspector"><dl className="metadata-list metadata-list--profile">{metadata.printer && <div><dt>{t("Printer")}</dt><dd>{metadata.printer}</dd></div>}{metadata.printProfile && <div><dt>{t("Profile")}</dt><dd>{metadata.printProfile}</dd></div>}{metadata.nozzleDiameterMm != null && <div><dt>{t("Nozzle")}</dt><dd>{formatNumber(metadata.nozzleDiameterMm)} mm</dd></div>}{metadata.layerHeightMm != null && <div><dt>{t("Layer height")}</dt><dd>{formatNumber(metadata.layerHeightMm)} mm</dd></div>}{metadata.slicer && <div><dt>{t("Created with")}</dt><dd>{metadata.slicer}{metadata.slicerVersion ? ` · ${metadata.slicerVersion}` : ""}</dd></div>}</dl>{plates.length > 0 ? <div className="plate-list"><button type="button" className={`plate-card plate-card--all ${selectedPlateIndex == null ? "is-active" : ""}`} onClick={onShowAll}><span className="plate-thumbnail plate-thumbnail--all"><Box size={20} /></span><span className="plate-card__copy"><span className="plate-card__title"><strong>{t("All plates")}</strong><span>{plural(plates.length, "{count} plate", "{count} plates")}</span></span><p>{t("Show the complete 3MF project")}</p></span></button>{plates.map((plate) => { const objectNames = plate.objectNames ?? []; return <button type="button" className={`plate-card ${selectedPlateIndex === plate.index ? "is-active" : ""}`} key={plate.index} onClick={() => onSelectPlate(plate.index)}><PlateThumbnail assetId={assetId} plate={plate} /><div className="plate-card__copy"><div className="plate-card__title"><strong>{t("Plate {index}", { index: plate.index })}</strong><span>{plural(plate.objectCount, "{count} object", "{count} objects")}</span></div>{objectNames.length > 0 && <p>{objectNames.slice(0, 3).join(" · ")}{objectNames.length > 3 ? ` +${objectNames.length - 3}` : ""}</p>}<div className="plate-facts">{plate.printTimeSeconds != null && <span><Clock3 size={11} />{formatDuration(plate.printTimeSeconds)}</span>}{plate.filamentGrams != null && <span><Scale size={11} />{formatNumber(plate.filamentGrams, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} g</span>}{(plate.materialNames ?? []).map((material) => <span key={material}>{material}</span>)}{plate.bedType && <span>{plate.bedType}</span>}</div></div></button>; })}</div> : <p className="quiet-copy">{t("This 3MF contains a model but no plate definitions.")}</p>}</div>;
 }
 
 export function ModelDetailView({ modelId }: { modelId: string }) {
@@ -165,7 +168,9 @@ export function ModelDetailView({ modelId }: { modelId: string }) {
   const selectModel = useAppStore((state) => state.selectModel);
   const remote = backendMode() === "remote";
   const connection = currentBackendConnection();
-  const canOpenOriginal = !remote || Boolean(currentBackendConnection()?.mirrorEnabled);
+  const mirror = useRemoteMirror();
+  const availableLocally = mirror.availableProjectIds.has(modelId);
+  const canOpenOriginal = !remote || availableLocally;
   const companion = useQuery({
     queryKey: ["companion-status"],
     queryFn: api.companionStatus,
@@ -213,6 +218,7 @@ export function ModelDetailView({ modelId }: { modelId: string }) {
   const [addingFiles, setAddingFiles] = useState(false);
   const [consolidating, setConsolidating] = useState(false);
   const [projectQrOpen, setProjectQrOpen] = useState(false);
+  const [photoRoomOpen, setPhotoRoomOpen] = useState(false);
   useEffect(() => {
     if (model) {
       setActiveAssetId(model.primaryAssetId ?? model.assets[0]?.id);
@@ -305,6 +311,10 @@ export function ModelDetailView({ modelId }: { modelId: string }) {
     try { await api.trashProject(model.id); await refreshProject(); selectModel(); }
     catch (reason) { window.alert(reason instanceof Error ? reason.message : String(reason)); }
   };
+  const toggleLocalCopy = async (keep: boolean) => {
+    try { await mirror.keepProjects([modelId], keep); }
+    catch (reason) { window.alert(reason instanceof Error ? reason.message : String(reason)); }
+  };
 
   if (isLoading) return <div className="detail-loading"><LoaderCircle className="spin" /><span>{t("Preparing project…")}</span></div>;
   if (error || !model) return <div className="empty-state"><TriangleAlert /><h2>{t("Couldn’t open this project")}</h2><p>{error instanceof Error ? error.message : t("The project may have moved.")}</p><button className="button" onClick={() => selectModel()}>{t("Back to library")}</button></div>;
@@ -314,8 +324,9 @@ export function ModelDetailView({ modelId }: { modelId: string }) {
       <section className="model-detail__stage">
         <div className="detail-toolbar">
           <button className="button button--floating" onClick={() => selectModel()}><ArrowLeft size={17} /> {t("Back")}</button>
-           <div className="detail-toolbar__right detail-toolbar__actions">
-             <button className="button button--floating button--icon" disabled={!remote && companion.isLoading} onClick={() => setProjectQrOpen(true)} aria-label={t("Open on phone")} title={t("Open on phone")}><QrCode size={16} /></button>
+            <div className="detail-toolbar__right detail-toolbar__actions">
+              <button className="button button--floating button--icon" disabled={!activeAsset} onClick={() => setPhotoRoomOpen(true)} aria-label={t("Open Photo Room")} title={t("Open Photo Room")}><Camera size={16} /></button>
+              <button className="button button--floating button--icon" disabled={!remote && companion.isLoading} onClick={() => setProjectQrOpen(true)} aria-label={t("Open on phone")} title={t("Open on phone")}><QrCode size={16} /></button>
              <button className={`button button--floating button--icon ${model.favorite ? "is-favorite" : ""}`} onClick={() => favorite.mutate()} aria-label={t("Favorite")} title={t("Favorite")}><Heart size={17} fill={model.favorite ? "currentColor" : "none"} /></button>
            </div>
         </div>
@@ -349,6 +360,8 @@ export function ModelDetailView({ modelId }: { modelId: string }) {
         <div className="primary-actions">
            <OpenInSlicer assetId={activeAsset?.id} disabled={!activeAsset || activeAsset.missing || !canOpenOriginal} applications={availableSlicers} defaultId={slicerConfig.defaultId} />
             {canOpenOriginal && <button className="button button--quiet" disabled={!activeAsset || activeAsset.missing} onClick={() => activeAsset && api.revealAsset(activeAsset.id)}><FolderOpen size={16} /> {t("Reveal")}</button>}
+            {remote && mirror.enabled && mirror.settings?.mode === "selected" && <button className="button button--quiet" disabled={mirror.busy} onClick={() => void toggleLocalCopy(!availableLocally)}>{availableLocally ? <CloudCheck size={16} /> : <CloudDownload size={16} />}{t(availableLocally ? "Remove local copy" : "Keep on this Desktop")}</button>}
+            {remote && mirror.enabled && mirror.settings?.mode === "all" && !availableLocally && <button className="button button--quiet" disabled={mirror.busy} onClick={async () => { try { await mirror.syncNow(); } catch (reason) { window.alert(reason instanceof Error ? reason.message : String(reason)); } }}><CloudDownload size={16} />{t("Download local files")}</button>}
             <button className="button button--quiet" onClick={() => setAddingFiles(true)}><Plus size={16} /> {t("Add files")}</button>
             {!remote && model.storageMode === "linked" && <button className="button button--quiet" onClick={() => setConsolidating(true)}><FolderOpen size={16} /> {t("Organize in Volum")}</button>}
             {!remote && <button className="button button--quiet" disabled={exporting || !isTauri()} onClick={() => void exportPackage()}><Package size={16} /> {t(exporting ? "Exporting…" : "Export package")}</button>}
@@ -390,6 +403,15 @@ export function ModelDetailView({ modelId }: { modelId: string }) {
           useAppStore.getState().selectView("settings");
         }}
       />}
+      {photoRoomOpen && <Suspense fallback={<div className="detail-loading"><LoaderCircle className="spin" /><span>{t("Opening Photo Room…")}</span></div>}><DesktopPhotoRoom
+        modelId={model.id}
+        modelName={model.displayName}
+        assetId={activeAsset?.id}
+        extension={activeAsset?.extension ?? model.primaryExtension}
+        revision={activeAsset?.modifiedAt}
+        plateIndex={activePlateIndex}
+        onClose={() => setPhotoRoomOpen(false)}
+      /></Suspense>}
     </div>
   );
 }

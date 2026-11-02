@@ -16,6 +16,7 @@ id_ed25519
 id_ecdsa
 dist/
 website-dist/
+server-web-dist/
 website/dist/
 target/
 src-tauri/target/
@@ -27,4 +28,14 @@ coverage/
 playwright-report/
 test-results/
 signing/
+mobile/goldie/out/
 .vercel/
+.asc/
+*.ipa
+*.xcarchive/
+website/.vitepress/cache/
+mobile/src-tauri/gen/android/**/build/
+mobile/src-tauri/gen/apple/build/
+mobile/src-tauri/gen/apple/DerivedData/
+*.apk
+*.aab

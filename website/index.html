@@ -60,6 +60,7 @@
               "Live folder watching with move detection",
               "Favorites, tags, notes, recents, and quick filters",
               "Batch project organization",
+              "Mobile Photo Room for share-ready photos and animated videos",
               "Configurable slicer launching and file reveal",
               "English, Catalan, and Spanish interfaces",
               "Signed, approval-based updates",
@@ -131,8 +132,10 @@
         <nav id="site-nav" class="site-nav" aria-label="Primary navigation" data-nav>
           <a href="#library" data-section-link>Library</a>
           <a href="#projects" data-section-link>Projects</a>
+          <a href="#companion" data-section-link>Companion</a>
           <a href="#duplicates" data-section-link>Duplicates</a>
           <a href="#privacy" data-section-link>Privacy</a>
+          <a href="/docs/">Docs</a>
           <a href="#download" data-section-link>Download</a>
         </nav>
 
@@ -204,9 +207,9 @@
           </div>
 
           <div class="library-proof reveal">
-            <article><span>01</span><h3>Browse visually</h3><p>Persistent thumbnails replace cryptic filenames with models you can recognize.</p></article>
-            <article><span>02</span><h3>Search everything</h3><p>Find projects by name, folder, format, tags, notes, dates, or saved searches.</p></article>
-            <article><span>03</span><h3>Keep files in place</h3><p>Folders stay the source of truth. Volum adds organization without locking anything in.</p></article>
+            <article><span class="feature-marker feature-marker--paper" aria-hidden="true"><i data-lucide="images"></i></span><h3>Browse visually</h3><p>Persistent thumbnails replace cryptic filenames with models you can recognize.</p></article>
+            <article><span class="feature-marker feature-marker--paper" aria-hidden="true"><i data-lucide="search"></i></span><h3>Search everything</h3><p>Find projects by name, folder, format, tags, notes, dates, or saved searches.</p></article>
+            <article><span class="feature-marker feature-marker--paper" aria-hidden="true"><i data-lucide="folder-check"></i></span><h3>Keep files in place</h3><p>Folders stay the source of truth. Volum adds organization without locking anything in.</p></article>
           </div>
 
           <figure class="wide-shot wide-shot--detail reveal">
@@ -239,15 +242,15 @@
 
             <div class="project-capabilities">
               <article class="reveal">
-                <span class="feature-number">01</span>
+                <span class="feature-marker" aria-hidden="true"><i data-lucide="layers-3"></i></span>
                 <div><h3>3MF, properly understood</h3><p>Inspect plates, objects, printer, nozzle, layer height, profile, colors, print time, and explicit sliced grams.</p></div>
               </article>
               <article class="reveal">
-                <span class="feature-number">02</span>
+                <span class="feature-marker" aria-hidden="true"><i data-lucide="cuboid"></i></span>
                 <div><h3>Native STEP and STP</h3><p>OpenCascade-backed metadata, interactive tessellation, thumbnails, and geometry analysis work across every supported platform.</p></div>
               </article>
               <article class="reveal">
-                <span class="feature-number">03</span>
+                <span class="feature-marker" aria-hidden="true"><i data-lucide="combine"></i></span>
                 <div><h3>Files that belong together</h3><p>Bundle source geometry, printable exports, plates, and versions. Choose the primary preview, split a bundle, or merge projects manually.</p></div>
               </article>
             </div>
@@ -317,36 +320,78 @@
             </div>
             <div class="feature-ledger__grid">
               <article>
-                <span>01</span>
+                <span class="feature-marker feature-marker--paper" aria-hidden="true"><i data-lucide="ruler"></i></span>
                 <h4>Useful geometry facts</h4>
                 <p>Keep dimensions, file size, modification date, surface area, volume, and triangle count beside the interactive preview.</p>
               </article>
               <article>
-                <span>02</span>
+                <span class="feature-marker feature-marker--paper" aria-hidden="true"><i data-lucide="history"></i></span>
                 <h4>Fast ways back</h4>
                 <p>Use recents, favorites, folders, quick filters, saved searches, sorting, and three grid densities to return to the right project.</p>
               </article>
               <article>
-                <span>03</span>
+                <span class="feature-marker feature-marker--paper" aria-hidden="true"><i data-lucide="list-checks"></i></span>
                 <h4>Batch organization</h4>
                 <p>Select several projects to favorite, tag, add to a manual collection, or bundle together in one action.</p>
               </article>
               <article>
-                <span>04</span>
+                <span class="feature-marker feature-marker--paper" aria-hidden="true"><i data-lucide="external-link"></i></span>
                 <h4>Slicer handoff</h4>
                 <p>Open a file in a configured slicer or its system default, then reveal it in Finder, Explorer, or your Linux file manager.</p>
               </article>
               <article>
-                <span>05</span>
+                <span class="feature-marker feature-marker--paper" aria-hidden="true"><i data-lucide="shield-check"></i></span>
                 <h4>Restore with confidence</h4>
                 <p>Validate an archive before restore, make a safety backup first, browse backup history, and retry scheduled destinations when they return.</p>
               </article>
               <article>
-                <span>06</span>
+                <span class="feature-marker feature-marker--paper" aria-hidden="true"><i data-lucide="monitor-cog"></i></span>
                 <h4>Made for your desktop</h4>
                 <p>Use English, Catalan, or Spanish; choose light, dark, or system themes; navigate by keyboard; and approve signed updates yourself.</p>
               </article>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section companion-section" id="companion">
+        <div class="section-shell companion-shell">
+          <div class="companion-copy reveal">
+            <p class="eyebrow"><span></span> Photo Room on mobile</p>
+            <h2>Your models have a <em>Photo Room.</em></h2>
+            <p>Turn a project into a polished photo or animated turntable without sending it to a cloud rendering service. Open Photo Room directly from the project, compose the shot, then share or save it in one tap.</p>
+
+            <div class="companion-points">
+              <article>
+                <span class="feature-marker" aria-hidden="true"><i data-lucide="panels-top-left"></i></span>
+                <div><h3>Format for the destination</h3><p>Switch between Square, Portrait, Landscape, and Reel / Story from a dedicated Format control.</p></div>
+              </article>
+              <article>
+                <span class="feature-marker" aria-hidden="true"><i data-lucide="image"></i></span>
+                <div><h3>Compose the scene</h3><p>Choose a background, position and rotate the model, add text, or create a smooth model animation.</p></div>
+              </article>
+              <article>
+                <span class="feature-marker" aria-hidden="true"><i data-lucide="share-2"></i></span>
+                <div><h3>Share in one tap</h3><p>Render a JPEG and open the phone’s Share / Save sheet immediately. Videos remain an explicit export.</p></div>
+              </article>
+            </div>
+
+            <a class="button button--ghost" href="/docs/companion/photo-room">Learn about Photo Room <i data-lucide="arrow-right" aria-hidden="true"></i></a>
+          </div>
+
+          <div class="companion-devices reveal reveal--delay" aria-label="Volum Companion and Photo Room on mobile">
+            <figure class="companion-device companion-device--library">
+              <img src="./assets/screenshots/mobile-library.png" alt="Volum Companion showing a visual project library" width="390" height="844" loading="lazy" />
+              <figcaption>Your library</figcaption>
+            </figure>
+            <figure class="companion-device companion-device--primary">
+              <img src="./assets/screenshots/mobile-photo-room.webp" alt="Photo Room on a phone with Format, Scene, Model, Text, and Motion controls" width="390" height="844" loading="lazy" />
+              <figcaption>Photo Room</figcaption>
+            </figure>
+            <figure class="companion-device companion-device--detail">
+              <img src="./assets/screenshots/mobile-project-detail.png" alt="A Volum project on mobile with direct View in 3D and Photo Room actions" width="390" height="844" loading="lazy" />
+              <figcaption>Direct from a project</figcaption>
+            </figure>
           </div>
         </div>
       </section>
@@ -402,9 +447,9 @@
             <h2>Three quiet steps.<br /><em>No migration project.</em></h2>
           </div>
           <ol class="workflow-list">
-            <li class="reveal"><span>01</span><div><h3>Choose your folders</h3><p>Add local disks, removable drives, or mounted folders. Volum indexes them where they are.</p></div></li>
-            <li class="reveal"><span>02</span><div><h3>Browse real projects</h3><p>Search names and metadata, explore previews, open a smart collection, or review duplicates.</p></div></li>
-            <li class="reveal"><span>03</span><div><h3>Open in your slicer</h3><p>Launch Bambu Studio, OrcaSlicer, PrusaSlicer, Cura, or your system default—and reveal the source file whenever you need it.</p></div></li>
+            <li class="reveal"><span class="feature-marker" aria-hidden="true"><i data-lucide="folder-plus"></i></span><div><h3>Choose your folders</h3><p>Add local disks, removable drives, or mounted folders. Volum indexes them where they are.</p></div></li>
+            <li class="reveal"><span class="feature-marker" aria-hidden="true"><i data-lucide="layout-grid"></i></span><div><h3>Browse real projects</h3><p>Search names and metadata, explore previews, open a smart collection, or review duplicates.</p></div></li>
+            <li class="reveal"><span class="feature-marker" aria-hidden="true"><i data-lucide="send"></i></span><div><h3>Open in your slicer</h3><p>Launch Bambu Studio, OrcaSlicer, PrusaSlicer, Cura, or your system default—and reveal the source file whenever you need it.</p></div></li>
           </ol>
         </div>
       </section>
@@ -433,9 +478,9 @@
               <em>Portable ZIP</em>
             </header>
             <ol>
-              <li><span>01</span><div><strong>Validate the archive</strong><p>Checksums, structure, and bounded contents are verified before restore begins.</p></div></li>
-              <li><span>02</span><div><strong>Protect the current state</strong><p>Volum makes a safety backup of its existing app data before replacing anything.</p></div></li>
-              <li><span>03</span><div><strong>Restore, restart, reconnect</strong><p>The app restarts into the restored library, and folders that moved can be reconnected without losing metadata.</p></div></li>
+              <li><span class="feature-marker" aria-hidden="true"><i data-lucide="file-check-2"></i></span><div><strong>Validate the archive</strong><p>Checksums, structure, and bounded contents are verified before restore begins.</p></div></li>
+              <li><span class="feature-marker" aria-hidden="true"><i data-lucide="shield"></i></span><div><strong>Protect the current state</strong><p>Volum makes a safety backup of its existing app data before replacing anything.</p></div></li>
+              <li><span class="feature-marker" aria-hidden="true"><i data-lucide="refresh-cw"></i></span><div><strong>Restore, restart, reconnect</strong><p>The app restarts into the restored library, and folders that moved can be reconnected without losing metadata.</p></div></li>
             </ol>
             <footer>
               <span class="backup-status"><i></i> Destination unavailable</span>
@@ -596,6 +641,7 @@
         <p>Free, private, local-first, and built for makers.</p>
         <div class="footer-links">
           <a href="#download" data-download data-download-platform="all" data-download-architecture="choose" data-download-location="footer">Download</a>
+          <a href="/docs/">Documentation</a>
           <a href="https://github.com/sabatesduran/volum" rel="noreferrer" data-github-location="footer">GitHub <i class="inline-icon" data-lucide="arrow-up-right" aria-hidden="true"></i></a>
           <a href="https://ko-fi.com/didacdev" rel="noreferrer" data-support-location="footer">Support on Ko-fi <i class="inline-icon" data-lucide="heart" aria-hidden="true"></i></a>
           <a href="https://github.com/sabatesduran/volum/blob/main/SECURITY.md" rel="noreferrer">Security</a>

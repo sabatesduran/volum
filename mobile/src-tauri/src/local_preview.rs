@@ -383,7 +383,7 @@ fn model_bounds(mesh: &Mesh) -> Option<Bounds3> {
     Bounds3::from_points(
         mesh.triangles
             .iter()
-            .flat_map(|triangle| triangle)
+            .flatten()
             .filter_map(|index| mesh.vertices.get(*index).copied()),
     )
 }

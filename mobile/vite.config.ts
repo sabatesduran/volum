@@ -5,6 +5,7 @@ const host = process.env.TAURI_DEV_HOST;
 
 export default defineConfig({
   plugins: [react()],
+  resolve: { dedupe: ["react", "react-dom", "three"] },
   clearScreen: false,
   test: {
     exclude: [...configDefaults.exclude, "visual-tests/**"],

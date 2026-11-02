@@ -45,6 +45,36 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      - run: npm run webapp:build
+
+  website:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
+  server-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - name: Build volumd image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: volum-server:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   rust:
     runs-on: macos-latest

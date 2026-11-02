@@ -8,7 +8,7 @@ export function ErrorState({ error, onRetry, retrying = false }: { error: unknow
     <span className="error-state__icon">{connectionError ? <WifiOff /> : <CircleAlert />}</span>
     <strong>{t(connectionError ? "Could not connect to Volum Desktop" : "Could not load Volum")}</strong>
     <p>{connectionError
-      ? t("Check that Tailscale is connected on both devices, Volum Desktop is open, and Companion Access is on.")
+      ? t("Check that the selected private network or HTTPS address is reachable, Volum Desktop is open, and Companion Access is on.")
       : localizedError(error)}</p>
     <button className="button button--primary error-state__retry" disabled={retrying} onClick={onRetry}>
       {retrying ? <LoaderCircle className="spin" /> : <RefreshCw />}

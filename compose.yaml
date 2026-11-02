@@ -9,11 +9,13 @@ services:
       - "43821:43821"
     environment:
       VOLUM_BIND: "0.0.0.0:43821"
-      # Set this to the Tailscale IP or MagicDNS origin clients can reach.
+      # Set this to a private HTTP origin or trusted HTTPS origin clients can reach.
       # Example: http://volum-nas.example.ts.net:43821
-      VOLUM_PUBLIC_URL: "${VOLUM_PUBLIC_URL:?Set VOLUM_PUBLIC_URL to the Tailscale or HTTPS origin clients can reach}"
+      VOLUM_PUBLIC_URL: "${VOLUM_PUBLIC_URL:?Set VOLUM_PUBLIC_URL to the private HTTP or trusted HTTPS origin clients can reach}"
       VOLUM_ORGANIZATION_WRITES: "${VOLUM_ORGANIZATION_WRITES:-true}"
       VOLUM_PRINT_PAIRING: "${VOLUM_PRINT_PAIRING:-false}"
+      VOLUM_WEB_ENABLED: "${VOLUM_WEB_ENABLED:-true}"
+      VOLUM_ADMIN_PASSWORD: "${VOLUM_ADMIN_PASSWORD:-}"
     volumes:
       - volum-config:/config
       - volum-library:/library

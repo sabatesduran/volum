@@ -20,15 +20,12 @@
     <key>LSSupportsOpeningDocumentsInPlace</key>
     <true/>
     <key>NSCameraUsageDescription</key>
-    <string>Volum scans pairing codes and captures workshop photos for your projects.</string>
+    <string>Volum scans pairing and project codes and captures workshop photos you choose to add to a project.</string>
     <key>NSPhotoLibraryUsageDescription</key>
     <string>Volum lets you attach selected photos to projects in your private library.</string>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>Volum connects to your desktop through your private Tailscale network.</string>
-    <key>NSAppTransportSecurity</key>
-    <dict>
-      <key>NSAllowsArbitraryLoads</key>
-      <true/>
-    </dict>
+    <string>Volum connects directly to your desktop through your chosen private network or HTTPS.</string>
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
   </dict>
 </plist>

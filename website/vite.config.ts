@@ -14,6 +14,18 @@ export default defineConfig({
       handler: (html) => html.replaceAll("__VOLUM_VERSION__", packageMetadata.version)
     }
   }],
+  server: {
+    proxy: {
+      "/docs": {
+        target: "http://127.0.0.1:5174",
+        changeOrigin: false,
+        ws: true
+      }
+    }
+  },
+  preview: {
+    proxy: {}
+  },
   build: {
     assetsInlineLimit: 0,
     outDir: fileURLToPath(new URL("./dist", import.meta.url)),

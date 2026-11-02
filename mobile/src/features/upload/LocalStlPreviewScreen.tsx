@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
   Box as BoxIcon,
+  Sparkles,
   Check,
   CircleAlert,
   Crosshair,
@@ -21,11 +22,13 @@ import { formatBytes, formatNumber } from "../../lib/format";
 import { localizedError, t, useLanguage } from "../../lib/i18n";
 import { previewLocalStl, type LocalStlFile, type LocalStlPreview } from "../../lib/localStl";
 import { notifyCompletion } from "../../lib/notifications";
+import { isDemoCredential } from "../../lib/demo";
 import { cancelUpload, requestJson, uploadProjectFile } from "../../lib/transport";
 import type { CompanionPage, Credential, ProjectSummary, ServerStatus, UploadProgress } from "../../types";
 
 type Destination = "new" | "existing";
 const MobileModelViewer = lazy(() => import("../../components/MobileModelViewer").then((module) => ({ default: module.MobileModelViewer })));
+const MobilePhotoRoom = lazy(() => import("../photo-room/MobilePhotoRoom").then((module) => ({ default: module.MobilePhotoRoom })));
 
 export function LocalStlPreviewScreen({
   file,
@@ -48,7 +51,7 @@ export function LocalStlPreviewScreen({
 }) {
   useLanguage();
   const queryClient = useQueryClient();
-  const pairedCredential = credential;
+  const pairedCredential = credential && !isDemoCredential(credential) ? credential : undefined;
   const [preview, setPreview] = useState<LocalStlPreview>();
   const [previewError, setPreviewError] = useState("");
   const [previewing, setPreviewing] = useState(true);
@@ -70,6 +73,7 @@ export function LocalStlPreviewScreen({
   const [uploadId, setUploadId] = useState("");
   const [canceling, setCanceling] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [photoRoomOpen, setPhotoRoomOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -236,6 +240,8 @@ export function LocalStlPreviewScreen({
     setResetSignal((value) => value + 1);
   };
 
+  if (photoRoomOpen && preview) return <Suspense fallback={<div className="center-state" role="status"><LoaderCircle className="spin" /></div>}><MobilePhotoRoom title={file.filename.replace(/\.stl$/i, "")} localPayload={preview.payload} onClose={() => setPhotoRoomOpen(false)} /></Suspense>;
+
   return <main className="local-stl-screen">
     <header className="local-stl-header">
       <button className="round-button" aria-label={t("Discard STL")} disabled={uploading} onClick={onDiscard}><ArrowLeft /></button>
@@ -250,6 +256,7 @@ export function LocalStlPreviewScreen({
           ? <div className="local-stl-stage__state" role="status"><LoaderCircle className="spin" /><strong>{t("Building preview on this device…")}</strong><span>{t("The STL stays private while Volum prepares the viewer.")}</span></div>
           : <div className="local-stl-stage__state is-error" role="alert"><CircleAlert /><strong>{t("Preview unavailable")}</strong><span>{previewError || t("This STL could not be previewed on this device.")}</span><small>{t("The original file is still ready to save to Volum Desktop.")}</small></div>}
       {preview && <button className="local-stl-reset" aria-label={t("Reset 3D view")} onClick={() => setResetSignal((value) => value + 1)}><RotateCcw /></button>}
+      {preview && <button className="local-stl-photo-room" aria-label={t("Open Photo Room")} onClick={() => setPhotoRoomOpen(true)}><Sparkles /></button>}
       {preview && preview.objects.length > 0 && <button className="local-stl-objects-button" aria-label={t("Open object list")} onClick={() => setObjectsOpen(true)}><Layers3 /><span>{preview.objects.length === 1 ? t("1 object") : t("{count} objects", { count: preview.objects.length })}</span></button>}
       {preview && !selectedObject && <div className="viewer-hint">{preview.objects.length ? t("Tap an object · Drag to rotate") : t("Drag to rotate · Pinch to zoom")}</div>}
     </section>

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { photoRoomTranslations } from "../../../shared/photo-room/i18n";
 import { localizedError, localizedErrorFallbackKeys, missingTranslationKeys, setLanguage } from "./i18n";
 
 const modules = import.meta.glob("../**/*.tsx", {
@@ -18,7 +19,13 @@ const dynamicInterfaceKeys = [
   "ready", "pending", "failed", "printable", "source", "reference", "version",
   "duplicate", "geometry", "manual", "3mf", "web",
 ];
-const interfaceKeys = [...literalKeys, ...dynamicInterfaceKeys, ...localizedErrorFallbackKeys];
+const interfaceKeys = [
+  ...literalKeys,
+  ...dynamicInterfaceKeys,
+  ...localizedErrorFallbackKeys,
+  ...Object.keys(photoRoomTranslations.ca),
+  "Connect to Volum Desktop before adding this photo to the project.",
+];
 
 describe("mobile localization", () => {
   it("covers every literal Catalan interface key", () => {

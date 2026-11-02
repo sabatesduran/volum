@@ -597,11 +597,13 @@ fn parse_3mf_archive<R: Read + Seek>(
             emit_3mf_object(
                 &parts,
                 &project,
-                &root_path,
-                item.object_id,
-                viewer_object_id,
-                item.transform,
-                None,
+                ThreeMfObjectInstance {
+                    part_path: &root_path,
+                    object_id: item.object_id,
+                    viewer_object_id,
+                    transform: item.transform,
+                    inherited_color: None,
+                },
                 &mut target,
             )?;
             finish_viewer_object(target.output, viewer_object_id, triangle_start, object_name)?;
@@ -622,11 +624,13 @@ fn parse_3mf_archive<R: Read + Seek>(
                     emit_3mf_object(
                         &parts,
                         &project,
-                        path,
-                        object_id,
-                        viewer_object_id,
-                        Transform::identity(),
-                        None,
+                        ThreeMfObjectInstance {
+                            part_path: path,
+                            object_id,
+                            viewer_object_id,
+                            transform: Transform::identity(),
+                            inherited_color: None,
+                        },
                         &mut target,
                     )?;
                     finish_viewer_object(
@@ -1421,16 +1425,27 @@ struct ThreeMfEmitTarget<'a> {
     face_colors: bool,
 }
 
-fn emit_3mf_object(
-    parts: &HashMap<String, ThreeMfPart>,
-    project: &ThreeMfProject,
-    part_path: &str,
+struct ThreeMfObjectInstance<'a> {
+    part_path: &'a str,
     object_id: u32,
     viewer_object_id: u32,
     transform: Transform,
     inherited_color: Option<[u8; 3]>,
+}
+
+fn emit_3mf_object(
+    parts: &HashMap<String, ThreeMfPart>,
+    project: &ThreeMfProject,
+    instance: ThreeMfObjectInstance<'_>,
     target: &mut ThreeMfEmitTarget<'_>,
 ) -> Result<(), String> {
+    let ThreeMfObjectInstance {
+        part_path,
+        object_id,
+        viewer_object_id,
+        transform,
+        inherited_color,
+    } = instance;
     let key = (part_path.to_string(), object_id);
     if !target.stack.insert(key.clone()) {
         return Err("3MF contains a component cycle".into());
@@ -1546,11 +1561,13 @@ fn emit_3mf_object(
         emit_3mf_object(
             parts,
             project,
-            component_path,
-            component.object_id,
-            viewer_object_id,
-            transform.then(component.transform),
-            color,
+            ThreeMfObjectInstance {
+                part_path: component_path,
+                object_id: component.object_id,
+                viewer_object_id,
+                transform: transform.then(component.transform),
+                inherited_color: color,
+            },
             target,
         )?;
     }
@@ -2135,10 +2152,7 @@ mod tests {
             (bounds.max.x, bounds.max.y, bounds.max.z),
             (30.0, 50.0, 9.0)
         );
-        assert!(mesh
-            .triangle_kinds
-            .iter()
-            .any(|kind| *kind == TRIANGLE_KIND_PLATE_SURFACE));
+        assert!(mesh.triangle_kinds.contains(&TRIANGLE_KIND_PLATE_SURFACE));
         let plate_vertices = mesh.vertices.iter().skip(3).collect::<Vec<_>>();
         assert!(plate_vertices.iter().all(|vertex| vertex.z < 7.0));
         let plate_min_x = plate_vertices

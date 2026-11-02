@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, Check, ChevronDown, FolderPlus, Grid2X2, HardDrive, LoaderCircle, Pencil, Plus, Rows3, ScanSearch, Sparkles, Trash2, TriangleAlert } from "lucide-react";
+import { ArrowRight, Check, ChevronDown, CloudCheck, CloudDownload, FolderPlus, Grid2X2, HardDrive, LoaderCircle, Pencil, Plus, Rows3, ScanSearch, Sparkles, Trash2, TriangleAlert } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "../../app/store";
 import { ModelGrid } from "../../components/ModelGrid";
@@ -10,6 +10,7 @@ import { api, backendMode, isTauri } from "../../lib/tauri/api";
 import type { Density, LibraryRoot, ModelQuery, ModelSort } from "../../types";
 import { plural, t } from "../../lib/i18n";
 import { useShallow } from "zustand/react/shallow";
+import { useRemoteMirror } from "../mirror/useRemoteMirror";
 
 const sortOptions: Array<[ModelSort, string]> = [
   ["modified", "Recently modified"],
@@ -66,6 +67,7 @@ export function LibraryView({ onNewCollection, onNewProject, roots }: { onNewCol
   const [addingFolder, setAddingFolder] = useState(false);
   const [folderError, setFolderError] = useState("");
   const remote = backendMode() === "remote";
+  const mirror = useRemoteMirror();
   const { search, view, selectedFolderId, selectedCollectionId, selectedSavedSearchId, selectView, selectFolder, selectCollection, formatFilter, availabilityFilter, tagFilter, dateField, dateFrom, dateTo, modelSort, setModelSort } = useAppStore(useShallow((state) => ({ search: state.search, view: state.view, selectedFolderId: state.selectedFolderId, selectedCollectionId: state.selectedCollectionId, selectedSavedSearchId: state.selectedSavedSearchId, selectView: state.selectView, selectFolder: state.selectFolder, selectCollection: state.selectCollection, formatFilter: state.formatFilter, availabilityFilter: state.availabilityFilter, tagFilter: state.tagFilter, dateField: state.dateField, dateFrom: state.dateFrom, dateTo: state.dateTo, modelSort: state.modelSort, setModelSort: state.setModelSort })));
   const debouncedSearch = useDebouncedValue(search, 90);
   const { data: folders = [] } = useQuery({ queryKey: ["folders"], queryFn: () => api.folders() });
@@ -124,6 +126,18 @@ export function LibraryView({ onNewCollection, onNewProject, roots }: { onNewCol
   });
   const duplicateGroups = duplicateQuery.data?.pages.flatMap((page) => page.items) ?? [];
   const invalidate = useCallback(() => { void queryClient.invalidateQueries({ queryKey: ["models"] }); }, [queryClient]);
+  const scopeButton = (kind: "folder" | "collection", id?: string) => {
+    if (!remote || !id || !mirror.enabled) return null;
+    if (mirror.settings?.mode === "all") return <span className="status-pill status-pill--online"><CloudCheck size={13} />{t("Kept locally")}</span>;
+    const selected = kind === "folder" ? mirror.settings?.folderIds.includes(id) : mirror.settings?.collectionIds.includes(id);
+    return <button className="button button--quiet" disabled={mirror.busy || !mirror.settings} onClick={async () => { try { await mirror.keepScope(kind, id, !selected); } catch (reason) { window.alert(reason instanceof Error ? reason.message : String(reason)); } }}>{selected ? <CloudCheck size={15} /> : <CloudDownload size={15} />}{t(selected ? "Stop keeping this view locally" : "Keep this view on this Desktop")}</button>;
+  };
+  const mirrorGridProps = remote && mirror.enabled ? {
+    availableLocalProjectIds: mirror.availableProjectIds,
+    localCopyMode: mirror.settings?.mode,
+    localCopyBusy: mirror.busy,
+    onToggleLocal: (projectId: string, keep: boolean) => mirror.keepProjects([projectId], keep),
+  } : {};
   const addFolder = async () => {
     if (addingFolder) return;
     setAddingFolder(true);
@@ -154,8 +168,8 @@ export function LibraryView({ onNewCollection, onNewProject, roots }: { onNewCol
           {renderFolders()}
         </aside>
         <section className="content-view content-view--grid">
-          <header className="view-header"><div><div className="eyebrow">{t("3D Projects / {folder}", { folder: selectedFolder?.relativePath ?? t("All folders") })}</div><h1>{selectedFolder?.name ?? t("Folders")}</h1><p>{t("{count} projects in this location", { count: total })}</p></div><div className="view-header__controls"><SortControl value={modelSort} onChange={setModelSort} /><DensityControl /></div></header>
-          <ModelGrid models={models} loading={isLoading} {...pagination} onChanged={invalidate} /><SelectionBar />
+          <header className="view-header"><div><div className="eyebrow">{t("3D Projects / {folder}", { folder: selectedFolder?.relativePath ?? t("All folders") })}</div><h1>{selectedFolder?.name ?? t("Folders")}</h1><p>{t("{count} projects in this location", { count: total })}</p></div><div className="view-header__controls">{scopeButton("folder", selectedFolderId)}<SortControl value={modelSort} onChange={setModelSort} /><DensityControl /></div></header>
+          <ModelGrid models={models} loading={isLoading} {...pagination} onChanged={invalidate} {...mirrorGridProps} /><SelectionBar />
         </section>
       </div>
     );
@@ -180,9 +194,9 @@ export function LibraryView({ onNewCollection, onNewProject, roots }: { onNewCol
   const firstUseEmpty = view === "library" && !search && !formatFilter && !availabilityFilter && !tagFilter && !dateFrom && !dateTo && !isLoading && total === 0 && roots.every((root) => root.modelCount === 0);
   return (
     <section className={`content-view content-view--grid ${view === "library" && !search ? "library-home" : ""}`}>
-      <header className="view-header"><div><div className="eyebrow">{view === "library" ? t("Local 3D project library") : t(view === "favorites" ? "Favorites" : view === "recent" ? "Recent" : view === "saved" ? "Saved search" : "Collections")}</div><h1>{title}</h1><p>{subtitle}</p></div><div className="view-header__controls">{view === "saved" && selectedSavedSearch && <><button className="icon-button" title={t("Rename saved search")} aria-label={t("Rename saved search")} onClick={async () => { const name = window.prompt(t("Name this search"), selectedSavedSearch.name); if (!name?.trim()) return; await api.saveSavedSearch({ id: selectedSavedSearch.id, name: name.trim(), query: selectedSavedSearch.query }); await queryClient.invalidateQueries({ queryKey: ["saved-searches"] }); }}><Pencil size={15} /></button><button className="icon-button" title={t("Delete saved search")} aria-label={t("Delete saved search")} onClick={async () => { await api.deleteSavedSearch(selectedSavedSearch.id); await queryClient.invalidateQueries({ queryKey: ["saved-searches"] }); selectView("library"); }}><Trash2 size={16} /></button></>}<SortControl value={modelSort} onChange={setModelSort} /><DensityControl /></div></header>
+      <header className="view-header"><div><div className="eyebrow">{view === "library" ? t("Local 3D project library") : t(view === "favorites" ? "Favorites" : view === "recent" ? "Recent" : view === "saved" ? "Saved search" : "Collections")}</div><h1>{title}</h1><p>{subtitle}</p></div><div className="view-header__controls">{view === "collections" && scopeButton("collection", selectedCollectionId)}{view === "saved" && selectedSavedSearch && <><button className="icon-button" title={t("Rename saved search")} aria-label={t("Rename saved search")} onClick={async () => { const name = window.prompt(t("Name this search"), selectedSavedSearch.name); if (!name?.trim()) return; await api.saveSavedSearch({ id: selectedSavedSearch.id, name: name.trim(), query: selectedSavedSearch.query }); await queryClient.invalidateQueries({ queryKey: ["saved-searches"] }); }}><Pencil size={15} /></button><button className="icon-button" title={t("Delete saved search")} aria-label={t("Delete saved search")} onClick={async () => { await api.deleteSavedSearch(selectedSavedSearch.id); await queryClient.invalidateQueries({ queryKey: ["saved-searches"] }); selectView("library"); }}><Trash2 size={16} /></button></>}<SortControl value={modelSort} onChange={setModelSort} /><DensityControl /></div></header>
       {view === "library" && !search && collections.length > 0 && <div className="home-collections"><div className="section-heading"><h2>{t("Collections")}</h2><button onClick={() => useAppStore.getState().selectView("collections")}>{t("View all")} <ArrowRight size={14} /></button></div><div className="home-collection-row">{collections.slice(0, 4).map((collection) => <button key={collection.id} onClick={() => selectCollection(collection.id)}><span style={{ background: collection.color }}>{collection.symbol.slice(0, 1).toUpperCase()}</span><div><strong>{collection.name}</strong><small>{plural(collection.modelCount, "{count} project", "{count} projects")}</small></div></button>)}</div><div className="section-heading section-heading--models"><h2>{sortLabel(modelSort)}</h2><span>{t("{count} total", { count: total })}</span></div></div>}
-      {firstUseEmpty ? <FirstLibraryState roots={roots} addingFolder={addingFolder} error={folderError} onAddFolder={() => void addFolder()} onNewProject={onNewProject} remote={remote} /> : <ModelGrid models={models} loading={isLoading} {...pagination} context={view === "recent" ? "date" : search ? "format" : "folder"} onChanged={invalidate} trashed={view === "trash"} />}{view !== "trash" && !firstUseEmpty && <SelectionBar />}
+      {firstUseEmpty ? <FirstLibraryState roots={roots} addingFolder={addingFolder} error={folderError} onAddFolder={() => void addFolder()} onNewProject={onNewProject} remote={remote} /> : <ModelGrid models={models} loading={isLoading} {...pagination} context={view === "recent" ? "date" : search ? "format" : "folder"} onChanged={invalidate} trashed={view === "trash"} {...mirrorGridProps} />}{view !== "trash" && !firstUseEmpty && <SelectionBar />}
     </section>
   );
 }

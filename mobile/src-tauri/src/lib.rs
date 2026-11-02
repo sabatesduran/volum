@@ -29,7 +29,10 @@ const MAX_LOCAL_PREVIEW_BYTES: u64 = 100 * 1024 * 1024;
 const MEDIA_ENVELOPE_MAGIC: &[u8; 4] = b"VMC1";
 const LOCAL_PREVIEW_ENVELOPE_MAGIC: &[u8; 4] = b"VLP1";
 #[cfg(target_os = "ios")]
-const VAULT_KEYRING_SERVICE: &str = "dev.didac.volum.companion.vault";
+const VAULT_KEYRING_SERVICE: &str = "com.dsd.volum.companion.vault";
+// Read once to preserve beta credentials created before the canonical bundle ID migration.
+#[cfg(target_os = "ios")]
+const LEGACY_VAULT_KEYRING_SERVICE: &str = "dev.didac.volum.companion.vault";
 #[cfg(target_os = "ios")]
 const VAULT_KEYRING_USER: &str = "stronghold-password";
 
@@ -141,7 +144,7 @@ async fn companion_json_request(
     request: CompanionRequest,
     state: tauri::State<'_, MobileState>,
 ) -> Result<CompanionResponse, String> {
-    let url = validated_url(&request.base_url, &request.path)?;
+    let url = validated_url(&request.base_url, &request.path).await?;
     let method = request
         .method
         .as_deref()
@@ -207,7 +210,7 @@ async fn companion_media_request(
     if request.body.is_some() {
         return Err("Media requests must be read-only".into());
     }
-    let url = validated_url(&request.base_url, &request.path)?;
+    let url = validated_url(&request.base_url, &request.path).await?;
     let mut builder = state.client.get(url);
     if let Some(token) = request.token.as_deref() {
         builder = builder.bearer_auth(token);
@@ -547,7 +550,7 @@ async fn companion_upload_file(
     if request.project_id.is_some() == request.project_name.is_some() {
         return Err("Choose an existing project or enter a name for a new project".into());
     }
-    let mut url = validated_url(&request.base_url, "/api/v1/uploads")?;
+    let mut url = validated_url(&request.base_url, "/api/v1/uploads").await?;
     {
         let mut query = url.query_pairs_mut();
         query.append_pair("filename", &filename);
@@ -595,7 +598,7 @@ async fn companion_upload_photo(
     if request.caption.chars().count() > 500 || request.if_unmodified_since.is_empty() {
         return Err("Refresh the project and enter a shorter photo caption".into());
     }
-    let mut url = validated_url(&request.base_url, "/")?;
+    let mut url = validated_url(&request.base_url, "/").await?;
     url.path_segments_mut()
         .map_err(|_| "The project photo upload path is invalid".to_string())?
         .clear()
@@ -933,12 +936,30 @@ fn platform_vault_password(legacy: Option<&str>) -> Result<String, String> {
     match entry.get_password() {
         Ok(password) => Ok(password),
         Err(keyring::Error::NoEntry) => {
-            let password = legacy
+            let legacy_entry =
+                keyring::Entry::new(LEGACY_VAULT_KEYRING_SERVICE, VAULT_KEYRING_USER).map_err(
+                    |error| format!("Could not access the legacy iOS Keychain: {error}"),
+                )?;
+            let keyring_legacy = match legacy_entry.get_password() {
+                Ok(password) => Some(password),
+                Err(keyring::Error::NoEntry) => None,
+                Err(error) => {
+                    return Err(format!(
+                        "Could not read the legacy vault key from Keychain: {error}"
+                    ));
+                }
+            };
+            let password = keyring_legacy
+                .as_deref()
+                .or(legacy)
                 .map(str::to_owned)
                 .unwrap_or_else(random_vault_password);
             entry
                 .set_password(&password)
                 .map_err(|error| format!("Could not protect the vault key in Keychain: {error}"))?;
+            if keyring_legacy.is_some() {
+                let _ = legacy_entry.delete_credential();
+            }
             Ok(password)
         }
         Err(error) => Err(format!(
@@ -985,8 +1006,8 @@ fn platform_vault_password(legacy: Option<&str>) -> Result<String, String> {
     Ok(password)
 }
 
-fn validated_url(base_url: &str, path: &str) -> Result<reqwest::Url, String> {
-    let base = reqwest::Url::parse(base_url).map_err(|_| "The Tailnet address is invalid")?;
+async fn validated_url(base_url: &str, path: &str) -> Result<reqwest::Url, String> {
+    let base = reqwest::Url::parse(base_url).map_err(|_| "The server address is invalid")?;
     if !matches!(base.scheme(), "http" | "https")
         || !base.username().is_empty()
         || base.password().is_some()
@@ -994,26 +1015,53 @@ fn validated_url(base_url: &str, path: &str) -> Result<reqwest::Url, String> {
         || base.fragment().is_some()
         || base.path() != "/"
     {
-        return Err("The Tailnet address is invalid".into());
+        return Err("The server address is invalid".into());
     }
     let host = base
         .host_str()
         .unwrap_or_default()
         .trim_start_matches('[')
         .trim_end_matches(']');
-    let is_tailnet = match host.parse::<IpAddr>() {
+    let is_private = match host.parse::<IpAddr>() {
         Ok(IpAddr::V4(ip)) => {
             let octets = ip.octets();
-            octets[0] == 100 && (64..=127).contains(&octets[1])
+            ip.is_private()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || (octets[0] == 100 && (64..=127).contains(&octets[1]))
         }
         Ok(IpAddr::V6(ip)) => {
             let segments = ip.segments();
-            segments[0] == 0xfd7a && segments[1] == 0x115c && segments[2] == 0xa1e0
+            ip.is_loopback()
+                || ip.is_unique_local()
+                || ip.is_unicast_link_local()
+                || (segments[0] == 0xfd7a && segments[1] == 0x115c && segments[2] == 0xa1e0)
         }
-        Err(_) => host.ends_with(".ts.net"),
+        Err(_)
+            if host.eq_ignore_ascii_case("localhost")
+                || host.ends_with(".local")
+                || host.ends_with(".ts.net") =>
+        {
+            true
+        }
+        Err(_) if base.scheme() == "https" => false,
+        Err(_) => {
+            let port = base.port_or_known_default().unwrap_or(43821);
+            let addresses = tokio::net::lookup_host((host, port))
+                .await
+                .map_err(|_| "The private server address could not be resolved".to_string())?
+                .collect::<Vec<_>>();
+            !addresses.is_empty()
+                && addresses
+                    .iter()
+                    .all(|address| is_private_transport_ip(address.ip()))
+        }
     };
-    if !is_tailnet {
-        return Err("Volum Companion only connects to Tailscale addresses".into());
+    if base.scheme() == "http" && !is_private {
+        return Err(
+            "Plain HTTP is allowed only on a private network or VPN. Use HTTPS for other servers."
+                .into(),
+        );
     }
     if !path.starts_with('/') || path.starts_with("//") || path.contains(['\\', '\r', '\n']) {
         return Err("The companion request path is invalid".into());
@@ -1022,11 +1070,30 @@ fn validated_url(base_url: &str, path: &str) -> Result<reqwest::Url, String> {
         .map_err(|_| "The companion request path is invalid".into())
 }
 
+fn is_private_transport_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => {
+            let octets = ip.octets();
+            ip.is_private()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+        }
+        IpAddr::V6(ip) => {
+            let segments = ip.segments();
+            ip.is_loopback()
+                || ip.is_unique_local()
+                || ip.is_unicast_link_local()
+                || (segments[0] == 0xfd7a && segments[1] == 0x115c && segments[2] == 0xa1e0)
+        }
+    }
+}
+
 fn friendly_network_error(error: &reqwest::Error) -> String {
     if error.is_timeout() {
         "Volum Desktop did not respond. Check that it is open and Companion Access is on.".into()
     } else if error.is_connect() {
-        "Could not reach Volum Desktop through Tailscale.".into()
+        "Could not reach the Volum server through the selected network.".into()
     } else {
         "The connection to Volum Desktop failed.".into()
     }
@@ -1075,11 +1142,13 @@ pub fn run() {
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(3))
         .timeout(std::time::Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .expect("could not initialize companion networking");
     let upload_client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(8))
         .timeout(std::time::Duration::from_secs(15 * 60))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .expect("could not initialize companion uploads");
     let builder = tauri::Builder::default()
@@ -1152,32 +1221,61 @@ pub fn run() {
 mod tests {
     use super::*;
 
-    #[test]
-    fn allows_cgnat_tailnet_addresses() {
-        assert!(validated_url("http://100.64.0.1:43821", "/api/v1/status").is_ok());
+    #[tokio::test]
+    async fn allows_cgnat_tailnet_addresses() {
+        assert!(validated_url("http://100.64.0.1:43821", "/api/v1/status")
+            .await
+            .is_ok());
     }
 
-    #[test]
-    fn rejects_lan_and_public_addresses() {
-        assert!(validated_url("http://192.168.1.2:43821", "/api/v1/status").is_err());
-        assert!(validated_url("https://example.com", "/api/v1/status").is_err());
+    #[tokio::test]
+    async fn allows_private_http_and_any_trusted_https_origin() {
+        assert!(validated_url("http://192.168.1.2:43821", "/api/v1/status")
+            .await
+            .is_ok());
+        assert!(validated_url("http://10.8.0.2:43821", "/api/v1/status")
+            .await
+            .is_ok());
+        assert!(validated_url("https://example.com", "/api/v1/status")
+            .await
+            .is_ok());
+        assert!(validated_url("http://203.0.113.8:43821", "/api/v1/status")
+            .await
+            .is_err());
     }
 
-    #[test]
-    fn allows_tailnet_ipv6_and_magic_dns() {
-        assert!(validated_url("http://[fd7a:115c:a1e0::1]:43821", "/api/v1/status").is_ok());
+    #[tokio::test]
+    async fn allows_tailnet_ipv6_and_magic_dns() {
+        assert!(
+            validated_url("http://[fd7a:115c:a1e0::1]:43821", "/api/v1/status")
+                .await
+                .is_ok()
+        );
         assert!(validated_url(
             "http://volum-desktop.example.ts.net:43821",
             "/api/v1/status"
         )
+        .await
         .is_ok());
     }
 
-    #[test]
-    fn rejects_credentials_and_authority_replacement() {
-        assert!(validated_url("http://user:password@100.64.0.1:43821", "/api/v1/status").is_err());
-        assert!(validated_url("http://100.64.0.1:43821", "//example.com/status").is_err());
-        assert!(validated_url("http://100.64.0.1:43821", "/\\example.com/status").is_err());
+    #[tokio::test]
+    async fn rejects_credentials_and_authority_replacement() {
+        assert!(
+            validated_url("http://user:password@100.64.0.1:43821", "/api/v1/status")
+                .await
+                .is_err()
+        );
+        assert!(
+            validated_url("http://100.64.0.1:43821", "//example.com/status")
+                .await
+                .is_err()
+        );
+        assert!(
+            validated_url("http://100.64.0.1:43821", "/\\example.com/status")
+                .await
+                .is_err()
+        );
     }
 
     #[test]

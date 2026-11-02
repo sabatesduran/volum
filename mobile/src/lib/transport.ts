@@ -2,6 +2,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import { appCacheDir, join } from "@tauri-apps/api/path";
 import { remove, writeFile } from "@tauri-apps/plugin-fs";
 import type { Credential, PairingPayload, ProjectDocumentation, UploadProgress, UploadResult } from "../types";
+import { demoJsonResponse, demoMediaEnvelope, isDemoCredential } from "./demo";
 
 interface NativeResponse {
   status: number;
@@ -20,7 +21,7 @@ export class CompanionError extends Error {
 }
 
 const CONNECTION_ERROR_MESSAGES = new Set([
-  "Could not reach Volum Desktop through Tailscale.",
+  "Could not reach the Volum server through the selected network.",
   "Volum Desktop did not respond. Check that it is open and Companion Access is on.",
   "The connection to Volum Desktop failed.",
 ]);
@@ -52,22 +53,42 @@ async function nativeJson<T>(baseUrl: string, path: string, token?: string, body
 }
 
 export async function pairWithDesktop(payload: PairingPayload): Promise<Credential> {
+  const baseUrl = normalizeServerUrl(payload.baseUrl);
+  const identity = await nativeJson<{ serverId: string; protocolMin: number; protocolMax: number }>(baseUrl, "/identity");
+  if (identity.serverId !== payload.serverId || identity.protocolMin > 1 || identity.protocolMax < 1) {
+    throw new CompanionError("This address belongs to a different or incompatible Volum server.");
+  }
   const platform = /android/i.test(navigator.userAgent) ? "Android" : /iphone|ipad/i.test(navigator.userAgent) ? "iOS" : "Companion";
   const result = await nativeJson<{ serverId: string; deviceId: string; token: string; protocolVersion: number }>(
-    payload.baseUrl,
+    baseUrl,
     "/pair",
     undefined,
     { secret: payload.secret, deviceName: deviceName(), platform }
   );
   if (result.serverId !== payload.serverId || result.protocolVersion !== 1) throw new CompanionError("This Volum Desktop identity changed during pairing.");
-  return { serverId: result.serverId, serverName: payload.serverName, baseUrl: payload.baseUrl, deviceId: result.deviceId, token: result.token };
+  return { serverId: result.serverId, serverName: payload.serverName, baseUrl, deviceId: result.deviceId, token: result.token };
 }
 
-export function requestJson<T>(credential: Credential, path: string): Promise<T> {
+export async function verifyServerIdentity(baseUrl: string, expectedServerId: string) {
+  const normalized = normalizeServerUrl(baseUrl);
+  const identity = await nativeJson<{ serverId: string; protocolMin: number; protocolMax: number }>(normalized, "/identity");
+  if (identity.serverId !== expectedServerId || identity.protocolMin > 1 || identity.protocolMax < 1) {
+    throw new CompanionError("That address belongs to a different Volum server.");
+  }
+  return normalized;
+}
+
+export async function requestJson<T>(credential: Credential, path: string): Promise<T> {
+  if (isDemoCredential(credential)) {
+    const response = demoJsonResponse(path);
+    if (response === undefined) throw new CompanionError("This item is not available in the demo library.", 404, "not_found");
+    return response as T;
+  }
   return nativeJson<T>(credential.baseUrl, path, credential.token, undefined, "GET");
 }
 
 export function mutateJson<T>(credential: Credential, path: string, method: Exclude<JsonMethod, "GET">, body?: unknown): Promise<T> {
+  if (isDemoCredential(credential)) return Promise.reject(new CompanionError("The demo library is read-only.", 403, "demo_read_only"));
   return nativeJson<T>(credential.baseUrl, path, credential.token, body, method);
 }
 
@@ -99,6 +120,7 @@ export async function requestMediaResponse(
   path: string,
   ifNoneMatch?: string,
 ): Promise<MediaResponse> {
+  if (isDemoCredential(credential)) return parseMediaEnvelope(demoMediaEnvelope(path));
   const envelope = await invoke<ArrayBuffer>("companion_media_request", {
     request: {
       baseUrl: credential.baseUrl,
@@ -146,6 +168,7 @@ export async function uploadProjectFile(
   onProgress: (progress: UploadProgress) => void,
   uploadId: string,
 ): Promise<UploadResult> {
+  if (isDemoCredential(credential)) throw new CompanionError("The demo library is read-only.", 403, "demo_read_only");
   const progress = new Channel<UploadProgress>();
   progress.onmessage = onProgress;
   return invoke<UploadResult>("companion_upload_file", {
@@ -170,6 +193,7 @@ export async function uploadProjectPhoto(
   onProgress: (progress: UploadProgress) => void,
   uploadId: string,
 ): Promise<ProjectDocumentation> {
+  if (isDemoCredential(credential)) throw new CompanionError("The demo library is read-only.", 403, "demo_read_only");
   if (file.size <= 0 || file.size > 25 * 1024 * 1024) throw new CompanionError("Project photos must be non-empty and at most 25 MB.");
   const extension = photoExtension(file);
   const originalBase = file.name.replace(/\.[^.]+$/, "").trim().slice(0, 140) || "workshop-photo";
@@ -203,17 +227,32 @@ export function cancelUpload(uploadId: string): Promise<boolean> {
 
 export function normalizeServerUrl(value: string): string {
   const input = value.trim();
-  if (!input) throw new CompanionError("Enter your Volum Desktop Tailnet address.");
+  if (!input) throw new CompanionError("Enter the Volum server address.");
   let url: URL;
   const hasScheme = /^https?:\/\//i.test(input);
   const rawIpv6 = !hasScheme && !input.startsWith("[") && (input.match(/:/g)?.length ?? 0) > 1;
-  try { url = new URL(hasScheme ? input : rawIpv6 ? `http://[${input}]` : `http://${input}`); }
-  catch { throw new CompanionError("That Tailnet address is not valid."); }
+  const bracketedIpv6 = !hasScheme && /^\[[0-9a-f:]+\](?::\d+)?$/i.test(input);
+  const privateIpv4 = /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/.test(input);
+  const localName = /(?:\.local|\.ts\.net)$/i.test(input);
+  try { url = new URL(hasScheme ? input : rawIpv6 ? `http://[${input}]` : bracketedIpv6 || privateIpv4 || localName ? `http://${input}` : `https://${input}`); }
+  catch { throw new CompanionError("That server address is not valid."); }
   if (url.username || url.password || url.search || url.hash || (url.pathname && url.pathname !== "/")) {
-    throw new CompanionError("Enter only the Volum Desktop Tailnet address.");
+    throw new CompanionError("Enter only the Volum server origin, without a path, query, or credentials.");
   }
-  url.port = "43821";
+  if (!url.port && url.protocol === "http:") url.port = "43821";
   return url.origin;
+}
+
+export function transportForServerUrl(value: string, original?: PairingPayload): PairingPayload["transport"] {
+  const baseUrl = normalizeServerUrl(value);
+  if (baseUrl.startsWith("https://")) return "https";
+  if (original?.transport === "tailscale-http" && baseUrl === normalizeServerUrl(original.baseUrl)) return "tailscale-http";
+  return "private-http";
+}
+
+export function pairingPayloadWithAddress(payload: PairingPayload, value: string): PairingPayload {
+  const baseUrl = normalizeServerUrl(value);
+  return { ...payload, baseUrl, transport: transportForServerUrl(baseUrl, payload) };
 }
 
 export function filenameFromFilePath(value: string): string {
@@ -229,7 +268,7 @@ export function parsePairingPayload(value: string): PairingPayload {
   let payload: Partial<PairingPayload>;
   try { payload = JSON.parse(value) as Partial<PairingPayload>; }
   catch { throw new CompanionError("That is not a Volum pairing code."); }
-  if (payload.version !== 1 || payload.transport !== "tailscale-http" || !payload.serverId || !payload.serverName || !payload.baseUrl || !payload.secret || !payload.expiresAt) {
+  if (payload.version !== 1 || !["tailscale-http", "private-http", "https"].includes(String(payload.transport)) || !payload.serverId || !payload.serverName || !payload.baseUrl || !payload.secret || !payload.expiresAt) {
     throw new CompanionError("That is not a compatible Volum pairing code.");
   }
   if (Date.parse(payload.expiresAt) <= Date.now()) throw new CompanionError("This pairing code has expired. Create a new one on Volum Desktop.");

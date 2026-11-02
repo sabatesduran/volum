@@ -1,4 +1,4 @@
-package dev.didac.volum.companion
+package com.dsd.volum.companion
 
 import android.content.Context
 import android.os.Bundle

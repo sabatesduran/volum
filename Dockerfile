@@ -5,7 +5,9 @@ COPY package.json package-lock.json ./
 RUN npm ci
 COPY index.html tsconfig.json vite.config.ts ./
 COPY src ./src
-RUN npm run build
+COPY shared ./shared
+COPY server-web ./server-web
+RUN npm run build && npm run webapp:build
 
 FROM rust:1-bookworm AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -19,6 +21,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
+COPY THIRD_PARTY_NOTICES.md ./THIRD_PARTY_NOTICES.md
+COPY src/assets/volum-icon-transparent.png ./src/assets/volum-icon-transparent.png
 COPY src-tauri ./src-tauri
 COPY --from=web /src/dist ./dist
 RUN cargo build --locked --release --manifest-path src-tauri/Cargo.toml --bin volumd
@@ -37,10 +41,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && mkdir -p /config /library \
     && chown -R volum:volum /config /library
 COPY --from=builder /src/src-tauri/target/release/volumd /usr/local/bin/volumd
+COPY --from=web /src/server-web-dist /usr/share/volum/web
 USER volum
 ENV VOLUM_CONFIG_DIR=/config \
     VOLUM_LIBRARY_DIR=/library \
     VOLUM_BIND=0.0.0.0:43821 \
+    VOLUM_WEB_ENABLED=true \
+    VOLUM_WEB_DIR=/usr/share/volum/web \
     VOLUM_ORGANIZATION_WRITES=true
 VOLUME ["/config", "/library"]
 EXPOSE 43821

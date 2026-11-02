@@ -689,6 +689,7 @@ mod tests {
                     platform: "iOS".into(),
                     paired_at: "2026-10-20T12:00:00Z".into(),
                     last_seen_at: Some("2026-10-29T11:59:00Z".into()),
+                    role: "client".into(),
                 },
                 CompanionDevice {
                     id: "tablet".into(),
@@ -696,9 +697,14 @@ mod tests {
                     platform: "iOS".into(),
                     paired_at: "2026-10-20T12:00:00Z".into(),
                     last_seen_at: Some("2026-10-29T10:00:00Z".into()),
+                    role: "client".into(),
                 },
             ],
             organization_writes: false,
+            network_mode: "automatic".into(),
+            bind_address: None,
+            public_url: None,
+            transport: Some("tailscale-http".into()),
             last_error: None,
         };
         assert_eq!(

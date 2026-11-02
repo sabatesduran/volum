@@ -19,6 +19,7 @@ import { UploadScreen } from "./features/upload/UploadScreen";
 import { clearCredential, loadCredential, saveCredential } from "./lib/credentials";
 import { clearOfflineProjects } from "./lib/offline";
 import { clearMediaCache } from "./lib/mediaCache";
+import { demoCredential, isDemoCredential } from "./lib/demo";
 import { localizedError, t, useLanguage } from "./lib/i18n";
 import {
   removeLocalStl,
@@ -27,21 +28,36 @@ import {
   takeOpenedStls,
   type LocalStlFile,
 } from "./lib/localStl";
-import { filenameFromFilePath, pairWithDesktop, parsePairingPayload, requestJson } from "./lib/transport";
-import type { Credential, ServerStatus } from "./types";
+import { filenameFromFilePath, pairWithDesktop, pairingPayloadWithAddress, parsePairingPayload, requestJson, transportForServerUrl, verifyServerIdentity } from "./lib/transport";
+import type { Credential, PairingPayload, ServerStatus } from "./types";
 
-export function PairingScreen({ onPaired, onCancel }: { onPaired: (credential: Credential) => void; onCancel?: () => void }) {
+export function PairingScreen({ onPaired, onDemo, onCancel }: { onPaired: (credential: Credential) => void; onDemo: () => void; onCancel?: () => void }) {
   const [manual, setManual] = useState(false);
   const [payloadText, setPayloadText] = useState("");
   const [busy, setBusy] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState("");
+  const [pendingPayload, setPendingPayload] = useState<PairingPayload>();
+  const [serverAddress, setServerAddress] = useState("");
+  const [acceptPrivateHttp, setAcceptPrivateHttp] = useState(false);
   const scanCanceled = useRef(false);
 
-  const connect = async (value: string) => {
-    setBusy(true); setError("");
+  const prepareConnection = (value: string) => {
     try {
       const payload = parsePairingPayload(value);
+      setPendingPayload(payload);
+      setServerAddress(payload.baseUrl);
+      setAcceptPrivateHttp(false);
+      setError("");
+    } catch (reason) {
+      setError(localizedError(reason));
+    }
+  };
+  const connect = async () => {
+    if (!pendingPayload) return;
+    setBusy(true); setError("");
+    try {
+      const payload = pairingPayloadWithAddress(pendingPayload, serverAddress);
       const credential = await pairWithDesktop(payload);
       await saveCredential(credential);
       onPaired(credential);
@@ -59,7 +75,7 @@ export function PairingScreen({ onPaired, onCancel }: { onPaired: (credential: C
       const result = await scan({ formats: [Format.QRCode], cameraDirection: "back", windowed: true });
       if (scanCanceled.current) return;
       setScanning(false);
-      await connect(result.content);
+       prepareConnection(result.content);
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : String(reason);
       if (!scanCanceled.current && !/cancel/i.test(message)) setError(localizedError(reason));
@@ -73,7 +89,6 @@ export function PairingScreen({ onPaired, onCancel }: { onPaired: (credential: C
 
   return <main className="pairing-screen">
     {onCancel && <button className="pairing-cancel round-button" aria-label={t("Back to STL preview")} onClick={onCancel}><X /></button>}
-    <header><Brand /><span className="companion-label">{t("MOBILE")}</span></header>
     <section className="pairing-intro">
       <div className="pairing-icon-stage" aria-hidden="true"><span /><span /><img src={volumIcon} alt="" /></div>
       <div className="eyebrow">{t("Your private 3D library")}</div>
@@ -82,13 +97,27 @@ export function PairingScreen({ onPaired, onCancel }: { onPaired: (credential: C
     </section>
     <section className="pairing-card">
       <div className="pairing-card__heading"><span><QrCode /></span><div><strong>{t("Connect to Volum Desktop")}</strong><p>{t("Open Settings → Companion Access on your Mac or PC.")}</p></div></div>
-      {manual ? <div className="manual-pairing">
+      {pendingPayload ? <div className="pairing-review">
+        <div className="pairing-review__server"><strong>{pendingPayload.serverName}</strong><span>{t("Verify the address before connecting")}</span></div>
+        <label><span>{t("Server address")}</span><input value={serverAddress} disabled={busy} autoCapitalize="off" autoCorrect="off" onChange={(event) => { setServerAddress(event.target.value); setAcceptPrivateHttp(false); }} /></label>
+        {(() => {
+          try {
+            const transport = transportForServerUrl(serverAddress, pendingPayload);
+            if (transport === "https") return <div className="connection-security is-secure"><ShieldCheck />{t("HTTPS protects this connection.")}</div>;
+            if (transport === "tailscale-http") return <div className="connection-security is-secure"><ShieldCheck />{t("Tailscale protects this private connection.")}</div>;
+            return <label className="private-http-confirm"><input type="checkbox" checked={acceptPrivateHttp} onChange={(event) => setAcceptPrivateHttp(event.target.checked)} /><span><strong>{t("Trust this private HTTP connection")}</strong><small>{t("Volum will rely on your private network or VPN for encryption. Public HTTP is blocked.")}</small></span></label>;
+          } catch { return <div className="connection-security is-error"><CircleAlert />{t("Enter a valid server origin.")}</div>; }
+        })()}
+        <button className="button button--primary button--large" disabled={busy || (() => { try { return transportForServerUrl(serverAddress, pendingPayload) === "private-http" && !acceptPrivateHttp; } catch { return true; } })()} onClick={() => void connect()}>{busy ? <LoaderCircle className="spin" /> : <Wifi />}{t("Verify and connect")}</button>
+        <button className="text-button" disabled={busy} onClick={() => setPendingPayload(undefined)}>{t("Scan a different code")}</button>
+      </div> : manual ? <div className="manual-pairing">
         <label><span>{t("Pairing data")}</span><textarea value={payloadText} onChange={(event) => setPayloadText(event.target.value)} placeholder={t("Paste from Volum Desktop")} autoCapitalize="off" autoCorrect="off" /></label>
-        <button className="button button--primary button--large" disabled={busy || !payloadText.trim()} onClick={() => void connect(payloadText)}>{busy ? <LoaderCircle className="spin" /> : <Wifi />}{t("Connect securely")}</button>
+        <button className="button button--primary button--large" disabled={busy || !payloadText.trim()} onClick={() => prepareConnection(payloadText)}><Wifi />{t("Review connection")}</button>
         <button className="text-button" onClick={() => setManual(false)}>{t("Use the camera instead")}</button>
       </div> : <div className="pairing-actions">
         <button className="button button--primary button--large" disabled={busy || scanning} onClick={() => void scanCode()}>{busy || scanning ? <LoaderCircle className="spin" /> : <QrCode />}{t("Scan desktop code")}</button>
         <button className="text-button" disabled={scanning} onClick={() => setManual(true)}>{t("Enter pairing data manually")}</button>
+        <button id="store-demo" className="demo-button" disabled={scanning} onClick={onDemo}><LibraryBig />{t("Explore the demo library")}</button>
       </div>}
       {error && <div className="error-banner" role="alert"><CircleAlert size={17} /><span>{error}</span></div>}
       <footer><ShieldCheck size={15} /><span><strong>{t("Private by design")}</strong>{t("No account, cloud, or public relay.")}</span></footer>
@@ -123,11 +152,11 @@ export function CompanionApp({ credential, initialProjectId, onInitialProjectOpe
   const canWrite = Boolean(status.data?.capabilities.organizationWrites);
   if (projectId) return <ProjectDetailScreen key={projectId} credential={credential} id={projectId} canWrite={canWrite} onBack={() => setProjectId(undefined)} onOpen={setProjectId} />;
   const chooseTab = (next: Tab) => { setTab(next); if (next !== "library") setCollectionId(undefined); };
-  return <div className="app-shell">
+  return <div className={`app-shell ${isDemoCredential(credential) ? "is-demo" : ""}`}>
     {tab === "collections" ? <CollectionsScreen credential={credential} canWrite={canWrite} onSelect={(id) => { setCollectionId(id); setTab("library"); }} onOpen={setProjectId} /> : tab === "upload" ? <UploadScreen credential={credential} photosEnabled={Boolean(status.data?.capabilities.photoUploads)} onOpen={setProjectId} onPreviewStl={onPreviewStl} /> : tab === "settings" ? <SettingsScreen credential={credential} status={status.data} onCredentialChange={onCredentialChange} onRefresh={() => status.refetch()} onUnpair={onUnpair} /> : <LibraryScreen credential={credential} tab={tab} selectedCollection={collectionId} onCollection={setCollectionId} onOpen={setProjectId} />}
     <nav className="bottom-nav">{([
       ["library", "Library", LibraryBig], ["favorites", "Favorites", Heart], ["upload", "Capture", Camera], ["collections", "Collections", Boxes], ["settings", "Settings", Settings2]
-    ] as Array<[Tab, string, typeof LibraryBig]>).map(([id, label, Icon]) => <button key={id} className={tab === id ? "is-active" : ""} onClick={() => chooseTab(id)}><Icon size={20} fill={id === "favorites" && tab === id ? "currentColor" : "none"} /><span>{t(label)}</span></button>)}</nav>
+    ] as Array<[Tab, string, typeof LibraryBig]>).map(([id, label, Icon]) => <button id={`nav-${id}`} key={id} className={tab === id ? "is-active" : ""} onClick={() => chooseTab(id)}><Icon size={20} fill={id === "favorites" && tab === id ? "currentColor" : "none"} /><span>{t(label)}</span></button>)}</nav>
   </div>;
 }
 
@@ -135,8 +164,9 @@ export function App() {
   useLanguage();
   const queryClient = useQueryClient();
   const [credential, setCredential] = useState<Credential>();
+  const [unverifiedCredential, setUnverifiedCredential] = useState<Credential>();
+  const [verificationError, setVerificationError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [startupError, setStartupError] = useState("");
   const [localFile, setLocalFile] = useState<LocalStlFile>();
   const localFileRef = useRef<LocalStlFile | undefined>(undefined);
   const [stagingLocalFile, setStagingLocalFile] = useState(false);
@@ -145,9 +175,39 @@ export function App() {
   const [resumeLocalSave, setResumeLocalSave] = useState(false);
   const [initialProjectId, setInitialProjectId] = useState<string>();
   const drainRunning = useRef(false);
-  useEffect(() => {
-    void loadCredential().then(setCredential).catch((reason) => setStartupError(localizedError(reason))).finally(() => setLoading(false));
+  const verifySavedCredential = useCallback(async (saved: Credential) => {
+    setLoading(true); setVerificationError("");
+    try {
+      const baseUrl = isDemoCredential(saved)
+        ? saved.baseUrl
+        : await verifyServerIdentity(saved.baseUrl, saved.serverId);
+      const verified = { ...saved, baseUrl };
+      setUnverifiedCredential(undefined);
+      setCredential(verified);
+    } catch (reason) {
+      setCredential(undefined);
+      setUnverifiedCredential(saved);
+      setVerificationError(localizedError(reason));
+    } finally { setLoading(false); }
   }, []);
+  useEffect(() => {
+    void loadCredential()
+      .then((saved) => saved ? verifySavedCredential(saved) : undefined)
+      .catch((reason) => setVerificationError(localizedError(reason)))
+      .finally(() => setLoading(false));
+  }, [verifySavedCredential]);
+  const forgetUnverifiedCredential = async () => {
+    const saved = unverifiedCredential;
+    if (saved) {
+      await Promise.allSettled([
+        clearOfflineProjects(saved.serverId),
+        clearMediaCache(saved.serverId),
+      ]);
+    }
+    await clearCredential();
+    setUnverifiedCredential(undefined);
+    setVerificationError("");
+  };
   const replaceLocalFile = useCallback((next: LocalStlFile) => {
     const previous = localFileRef.current;
     localFileRef.current = next;
@@ -224,6 +284,11 @@ export function App() {
     };
   }, [replaceLocalFile]);
   const unpair = async () => {
+    if (credential && isDemoCredential(credential)) {
+      queryClient.clear();
+      setCredential(undefined);
+      return;
+    }
     if (!window.confirm(t("Unpair this device and remove its cached credentials?"))) return;
     let cacheError = "";
     if (credential) {
@@ -245,6 +310,7 @@ export function App() {
   } else if (localFile && pairingForLocalFile) {
     content = <PairingScreen
       onPaired={(next) => { setCredential(next); setPairingForLocalFile(false); }}
+      onDemo={() => undefined}
       onCancel={() => { setPairingForLocalFile(false); setResumeLocalSave(false); }}
     />;
   } else if (localFile) {
@@ -260,12 +326,12 @@ export function App() {
     />;
   } else if (loading) {
     content = <main className="launch-screen"><Brand /><LoaderCircle className="spin" /></main>;
-  } else if (startupError) {
-    content = <main className="launch-screen"><Brand /><div className="error-banner" role="alert"><CircleAlert />{startupError}</div></main>;
+  } else if (unverifiedCredential) {
+    content = <main className="launch-screen identity-verification-error"><Brand /><CircleAlert /><strong>{t("Server identity could not be verified")}</strong><span>{verificationError}</span><button className="button button--primary" disabled={loading} onClick={() => void verifySavedCredential(unverifiedCredential)}>{loading ? <LoaderCircle className="spin" /> : <Wifi />}{t("Try again")}</button><button className="text-button" disabled={loading} onClick={() => void forgetUnverifiedCredential()}>{t("Forget saved server")}</button></main>;
   } else {
     content = credential
       ? <CompanionApp credential={credential} initialProjectId={initialProjectId} onInitialProjectOpened={() => setInitialProjectId(undefined)} onCredentialChange={setCredential} onUnpair={() => void unpair()} onPreviewStl={previewSelectedStl} />
-      : <PairingScreen onPaired={setCredential} />;
+      : <PairingScreen onPaired={setCredential} onDemo={() => setCredential(demoCredential)} />;
   }
   return <>{content}{incomingError && <div className="sheet-scrim"><section className="mobile-sheet incoming-file-error" role="alertdialog" aria-modal="true"><header><div><span className="eyebrow">{t("OPEN STL")}</span><h2>{t("This file could not be opened")}</h2></div><button className="round-button" aria-label={t("Close")} onClick={() => setIncomingError("")}><X /></button></header><div className="error-banner"><CircleAlert />{incomingError}</div><button className="button button--primary button--large sheet-submit" onClick={() => setIncomingError("")}>{t("Continue")}</button></section></div>}</>;
 }

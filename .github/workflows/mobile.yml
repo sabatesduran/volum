@@ -4,11 +4,13 @@ on:
   pull_request:
     paths:
       - "mobile/**"
+      - "shared/**"
       - ".github/workflows/mobile.yml"
   push:
     branches: [main]
     paths:
       - "mobile/**"
+      - "shared/**"
       - ".github/workflows/mobile.yml"
 
 permissions:
@@ -32,6 +34,7 @@ jobs:
           cache: npm
           cache-dependency-path: mobile/package-lock.json
       - run: npm ci
+      - run: npm test
       - run: npm run build
 
   visual:
@@ -98,6 +101,28 @@ jobs:
           workspaces: mobile/src-tauri
       - run: sdkmanager "platforms;android-37" "build-tools;37.0.0" "ndk;28.2.13676358"
       - run: npm ci
-      - run: npm run tauri -- android build --debug --target aarch64 --apk
+      - run: npm run tauri -- android build --target aarch64 --apk
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+
+  ios:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: mobile/src-tauri
+      - run: npm ci
+      - name: Build iOS simulator app without signing
+        run: npm run tauri -- ios build --debug --target aarch64-sim --ci --no-sign --archive-only

@@ -5,13 +5,14 @@ use crate::{
         Material, MaterialInput, ModelDetail, ModelQuery, ModelSummary, Page, ProjectDocumentation,
         RelatedModel, SavedSearch, SavedSearchInput, Tag, TagInput, WebSource,
     },
-    indexing, project_docs, project_storage,
+    indexing, library_migration, project_docs, project_storage,
     state::AppState,
+    web_admin::WebAdminState,
 };
 use axum::{
-    body::Body,
-    extract::{DefaultBodyLimit, Path, Query, Request, State},
-    http::{header, HeaderMap, HeaderValue, StatusCode},
+    body::{Body, Bytes},
+    extract::{ConnectInfo, DefaultBodyLimit, Path, Query, Request, State},
+    http::{header, HeaderMap, HeaderName, HeaderValue, Method, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{delete, get, post, put},
@@ -24,6 +25,7 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use std::{
+    collections::HashSet,
     convert::Infallible,
     io::{Read, SeekFrom},
     net::{IpAddr, SocketAddr},
@@ -40,7 +42,10 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use tower::limit::ConcurrencyLimitLayer;
-use tower_http::timeout::TimeoutLayer;
+use tower_http::{
+    services::{ServeDir, ServeFile},
+    timeout::TimeoutLayer,
+};
 use uuid::Uuid;
 
 const DEFAULT_PORT: u16 = 43_821;
@@ -53,6 +58,9 @@ const MAX_UPLOAD_BYTES: u64 = 500 * 1024 * 1024;
 const MAX_PHOTO_UPLOAD_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_UPLOAD_FILENAME_CHARS: usize = 180;
 const MAX_MUTATION_BODY_BYTES: usize = 128 * 1024;
+const MAX_SYNC_SELECTION_ITEMS: usize = 10_000;
+const MAX_SYNC_SELECTION_SCOPES: usize = 256;
+const MAX_SYNC_SELECTION_ID_CHARS: usize = 200;
 const MAX_VIEWER_MESH_BYTES: usize = 30 * 1024 * 1024;
 const MAX_CONCURRENT_REQUESTS: usize = 128;
 const REQUEST_TIMEOUT_SECONDS: u64 = 15 * 60;
@@ -85,6 +93,7 @@ struct ControllerInner {
 struct PairingSession {
     secret: String,
     expires_at: DateTime<Utc>,
+    role: String,
 }
 
 struct RunningServer {
@@ -104,6 +113,12 @@ struct CompanionConfig {
     devices: Vec<DeviceRecord>,
     #[serde(default)]
     organization_writes: bool,
+    #[serde(default = "default_network_mode")]
+    network_mode: String,
+    #[serde(default)]
+    bind_address: Option<String>,
+    #[serde(default)]
+    public_url: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -115,6 +130,10 @@ struct DeviceRecord {
     token_hash: String,
     paired_at: String,
     last_seen_at: Option<String>,
+    #[serde(default = "default_device_role")]
+    role: String,
+    #[serde(default)]
+    migration_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -125,6 +144,7 @@ pub struct CompanionDevice {
     pub platform: String,
     pub paired_at: String,
     pub last_seen_at: Option<String>,
+    pub role: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -139,6 +159,10 @@ pub struct CompanionStatus {
     pub port: u16,
     pub devices: Vec<CompanionDevice>,
     pub organization_writes: bool,
+    pub network_mode: String,
+    pub bind_address: Option<String>,
+    pub public_url: Option<String>,
+    pub transport: Option<String>,
     pub last_error: Option<String>,
 }
 
@@ -150,6 +174,7 @@ pub struct CompanionPairingInfo {
     pub base_url: String,
     pub secret: String,
     pub expires_at: String,
+    pub transport: String,
     pub qr_payload: String,
 }
 
@@ -158,6 +183,8 @@ pub(crate) struct HeadlessServerOptions {
     pub bind: SocketAddr,
     pub public_url: String,
     pub organization_writes: bool,
+    pub web_admin: Option<WebAdminState>,
+    pub web_dir: Option<PathBuf>,
 }
 
 #[derive(Clone)]
@@ -167,6 +194,8 @@ struct ApiState {
     controller: Arc<Mutex<ControllerInner>>,
     upload_slot: Arc<Semaphore>,
     viewer_slot: Arc<Semaphore>,
+    migration_lock: Arc<Mutex<()>>,
+    web_admin: Option<WebAdminState>,
 }
 
 #[derive(Debug, Serialize)]
@@ -213,10 +242,43 @@ struct PairRequest {
     platform: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct MigrationOffsetQuery {
+    offset: u64,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PairResponse {
     server_id: String,
+    device_id: String,
+    token: String,
+    protocol_version: u32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WebLoginRequest {
+    password: String,
+    device_name: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WebBootstrapResponse {
+    configured: bool,
+    server_id: String,
+    server_name: String,
+    public_url: String,
+    secure_transport: bool,
+    protocol_version: u32,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WebLoginResponse {
+    server_id: String,
+    server_name: String,
     device_id: String,
     token: String,
     protocol_version: u32,
@@ -426,6 +488,19 @@ struct SyncAsset {
     modified_at: String,
     content_hash: Option<String>,
     mirror_path: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SelectiveSyncManifestRequest {
+    #[serde(default)]
+    project_ids: Vec<String>,
+    #[serde(default)]
+    excluded_project_ids: Vec<String>,
+    #[serde(default)]
+    folder_ids: Vec<String>,
+    #[serde(default)]
+    collection_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -724,6 +799,33 @@ impl ApiError {
             retryable: false,
         }
     }
+
+    fn migration(error: String) -> Self {
+        let (status, code, retryable) = if error.contains("already contains")
+            || error.contains("already active")
+            || error.contains("current state")
+            || error.contains("before activating")
+        {
+            (StatusCode::CONFLICT, "migration_conflict", false)
+        } else if error.contains("unavailable") || error.contains("missing") {
+            (StatusCode::NOT_FOUND, "migration_item_missing", true)
+        } else if error.contains("invalid")
+            || error.contains("unsupported")
+            || error.contains("unsafe")
+            || error.contains("exceeds")
+            || error.contains("duplicate")
+        {
+            (StatusCode::BAD_REQUEST, "invalid_migration", false)
+        } else {
+            (StatusCode::UNPROCESSABLE_ENTITY, "migration_failed", true)
+        };
+        Self {
+            status,
+            code,
+            message: error,
+            retryable,
+        }
+    }
 }
 
 impl IntoResponse for ApiError {
@@ -794,19 +896,42 @@ impl CompanionController {
         if let Some(server) = stale_server {
             let _ = server.task.await;
         }
-        let network = match tokio::task::spawn_blocking(discover_tailnet).await {
-            Ok(Ok(network)) => network,
-            Ok(Err(error)) => return self.fail_start(error).await,
-            Err(error) => return self.fail_start(error.to_string()).await,
+        let config = self.inner.lock().await.config.clone();
+        let (ip, dns_name, public_url) = if config.network_mode == "custom" {
+            let bind_address = config
+                .bind_address
+                .as_deref()
+                .ok_or_else(|| "Choose a private address for Companion Access".to_string())?;
+            let ip = parse_private_bind_address(bind_address)?;
+            let public_url = validate_public_url(
+                config
+                    .public_url
+                    .as_deref()
+                    .ok_or_else(|| "Enter the address clients will use".to_string())?,
+            )
+            .await?;
+            (ip, None, Some(public_url))
+        } else {
+            let network = match tokio::task::spawn_blocking(discover_tailnet).await {
+                Ok(Ok(network)) => network,
+                Ok(Err(error)) => return self.fail_start(error).await,
+                Err(error) => return self.fail_start(error.to_string()).await,
+            };
+            let ip: IpAddr = network
+                .ip
+                .parse()
+                .map_err(|_| "Tailscale returned an invalid address".to_string())?;
+            (ip, network.dns_name, None)
         };
-        let ip: IpAddr = network
-            .ip
-            .parse()
-            .map_err(|_| "Tailscale returned an invalid address".to_string())?;
-        let preferred_port = self.inner.lock().await.config.port;
+        let preferred_port = config.port;
         let mut listener = None;
         let mut selected_port = preferred_port;
-        for port in preferred_port..=preferred_port.saturating_add(9) {
+        let last_port = if config.network_mode == "custom" {
+            preferred_port
+        } else {
+            preferred_port.saturating_add(9)
+        };
+        for port in preferred_port..=last_port {
             match tokio::net::TcpListener::bind(SocketAddr::new(ip, port)).await {
                 Ok(bound) => {
                     selected_port = port;
@@ -816,7 +941,7 @@ impl CompanionController {
                 Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => continue,
                 Err(error) => {
                     return self
-                        .fail_start(format!("Could not bind to Tailscale: {error}"))
+                        .fail_start(format!("Could not bind Companion Access: {error}"))
                         .await
                 }
             }
@@ -829,15 +954,17 @@ impl CompanionController {
                     .await
             }
         };
-        let base_url = format_base_url(ip, selected_port);
+        let base_url = public_url.unwrap_or_else(|| format_base_url(ip, selected_port));
         let state = ApiState {
             library: self.library.clone(),
             app: self.app.clone(),
             controller: self.inner.clone(),
             upload_slot: Arc::new(Semaphore::new(1)),
             viewer_slot: Arc::new(Semaphore::new(1)),
+            migration_lock: Arc::new(Mutex::new(())),
+            web_admin: None,
         };
-        let router = companion_router(state);
+        let router = companion_router(state, None);
         let cancellation = CancellationToken::new();
         let shutdown = cancellation.clone();
         {
@@ -847,8 +974,8 @@ impl CompanionController {
             }
             inner.config.port = selected_port;
             persist_config(&inner.config_path, &inner.config)?;
-            inner.tailnet_ip = Some(network.ip);
-            inner.dns_name = network.dns_name;
+            inner.tailnet_ip = (inner.config.network_mode == "automatic").then(|| ip.to_string());
+            inner.dns_name = dns_name;
             inner.base_url = Some(base_url);
             inner.last_error = None;
             inner.headless = false;
@@ -891,7 +1018,7 @@ impl CompanionController {
         let local_addr = listener
             .local_addr()
             .map_err(|error| format!("Could not inspect the volumd listener: {error}"))?;
-        let base_url = normalize_public_url(&options.public_url)?;
+        let base_url = validate_public_url(&options.public_url).await?;
         {
             let mut inner = self.inner.lock().await;
             inner.config.enabled = true;
@@ -914,15 +1041,20 @@ impl CompanionController {
             controller: self.inner.clone(),
             upload_slot: Arc::new(Semaphore::new(1)),
             viewer_slot: Arc::new(Semaphore::new(1)),
+            migration_lock: Arc::new(Mutex::new(())),
+            web_admin: options.web_admin,
         };
-        let router = companion_router(state);
+        let router = companion_router(state, options.web_dir);
         let cancellation = CancellationToken::new();
         let shutdown = cancellation.clone();
         let controller = self.inner.clone();
         let task = tokio::spawn(async move {
-            if let Err(error) = axum::serve(listener, router)
-                .with_graceful_shutdown(shutdown.cancelled_owned())
-                .await
+            if let Err(error) = axum::serve(
+                listener,
+                router.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(shutdown.cancelled_owned())
+            .await
             {
                 log::error!("volumd stopped: {error}");
                 controller.lock().await.last_error = Some("volumd stopped unexpectedly".into());
@@ -960,7 +1092,7 @@ impl CompanionController {
         }
     }
 
-    async fn set_enabled(&self, enabled: bool) -> CompanionResult<CompanionStatus> {
+    pub(crate) async fn set_enabled(&self, enabled: bool) -> CompanionResult<CompanionStatus> {
         {
             let mut inner = self.inner.lock().await;
             inner.config.enabled = enabled;
@@ -990,11 +1122,21 @@ impl CompanionController {
             port: inner.config.port,
             devices: inner.config.devices.iter().map(public_device).collect(),
             organization_writes: inner.config.organization_writes,
+            network_mode: inner.config.network_mode.clone(),
+            bind_address: inner.config.bind_address.clone(),
+            public_url: inner.config.public_url.clone(),
+            transport: inner
+                .base_url
+                .as_deref()
+                .map(|value| transport_for_url(value).to_string()),
             last_error: inner.last_error.clone(),
         }
     }
 
-    async fn set_organization_writes(&self, enabled: bool) -> CompanionResult<CompanionStatus> {
+    pub(crate) async fn set_organization_writes(
+        &self,
+        enabled: bool,
+    ) -> CompanionResult<CompanionStatus> {
         let mut inner = self.inner.lock().await;
         inner.config.organization_writes = enabled;
         persist_config(&inner.config_path, &inner.config)?;
@@ -1002,41 +1144,61 @@ impl CompanionController {
         Ok(self.status().await)
     }
 
+    async fn set_network(
+        &self,
+        mode: &str,
+        bind_address: Option<String>,
+        public_url: Option<String>,
+    ) -> CompanionResult<CompanionStatus> {
+        if !matches!(mode, "automatic" | "custom") {
+            return Err("The Companion Access network mode is invalid".into());
+        }
+        let (bind_address, public_url) = if mode == "custom" {
+            let bind = bind_address
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| "Choose a private address for Companion Access".to_string())?;
+            parse_private_bind_address(bind)?;
+            let public = public_url
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| "Enter the address clients will use".to_string())?;
+            let normalized = validate_public_url(public).await?;
+            (Some(bind.to_string()), Some(normalized))
+        } else {
+            (None, None)
+        };
+        let enabled = {
+            let mut inner = self.inner.lock().await;
+            inner.config.network_mode = mode.to_string();
+            inner.config.bind_address = bind_address;
+            inner.config.public_url = public_url;
+            inner.last_error = None;
+            persist_config(&inner.config_path, &inner.config)?;
+            inner.config.enabled
+        };
+        if enabled {
+            self.stop().await;
+            let _ = self.start().await;
+        }
+        Ok(self.status().await)
+    }
+
     pub(crate) async fn create_pairing(&self) -> CompanionResult<CompanionPairingInfo> {
         let mut inner = self.inner.lock().await;
-        let base_url = inner
-            .base_url
-            .clone()
-            .ok_or_else(|| "Companion Access is not running on Tailscale".to_string())?;
-        let secret = random_secret();
-        let expires_at = Utc::now() + chrono::Duration::seconds(PAIRING_LIFETIME_SECONDS);
-        let server_name = inner
-            .dns_name
-            .as_deref()
-            .and_then(|name| name.split('.').next())
-            .unwrap_or("Volum Desktop")
-            .to_string();
-        let payload = serde_json::json!({
-            "version": PROTOCOL_VERSION,
-            "serverId": inner.config.server_id,
-            "serverName": server_name,
-            "baseUrl": base_url,
-            "secret": secret,
-            "expiresAt": expires_at.to_rfc3339(),
-            "transport": "tailscale-http"
-        });
-        inner.pairing = Some(PairingSession {
-            secret: secret.clone(),
-            expires_at,
-        });
-        Ok(CompanionPairingInfo {
-            server_id: inner.config.server_id.clone(),
-            server_name,
-            base_url,
-            secret,
-            expires_at: expires_at.to_rfc3339(),
-            qr_payload: payload.to_string(),
-        })
+        create_pairing_locked(&mut inner, "client")
+    }
+
+    pub(crate) async fn revoke_web_admin_devices(&self) -> CompanionResult<()> {
+        let mut inner = self.inner.lock().await;
+        let previous = inner.config.devices.len();
+        inner.config.devices.retain(|device| device.role != "admin");
+        if previous != inner.config.devices.len() {
+            persist_config(&inner.config_path, &inner.config)?;
+        }
+        Ok(())
     }
 
     async fn revoke_device(&self, device_id: &str) -> CompanionResult<CompanionStatus> {
@@ -1076,6 +1238,18 @@ pub async fn set_companion_organization_writes(
 }
 
 #[tauri::command]
+pub async fn set_companion_network(
+    mode: String,
+    bind_address: Option<String>,
+    public_url: Option<String>,
+    controller: tauri::State<'_, CompanionController>,
+) -> CompanionResult<CompanionStatus> {
+    controller
+        .set_network(&mode, bind_address, public_url)
+        .await
+}
+
+#[tauri::command]
 pub async fn create_companion_pairing(
     controller: tauri::State<'_, CompanionController>,
 ) -> CompanionResult<CompanionPairingInfo> {
@@ -1090,7 +1264,7 @@ pub async fn revoke_companion_device(
     controller.revoke_device(&device_id).await
 }
 
-fn companion_router(state: ApiState) -> Router {
+fn companion_router(state: ApiState, web_dir: Option<PathBuf>) -> Router {
     let protected = Router::new()
         .route("/api/v1/status", get(api_status))
         .route(
@@ -1170,7 +1344,12 @@ fn companion_router(state: ApiState) -> Router {
         .route("/api/v1/duplicates/stats", get(duplicate_stats))
         .route("/api/v1/duplicates", get(duplicate_groups))
         .route("/api/v1/web-sources", get(list_web_sources))
-        .route("/api/v1/sync/manifest", get(sync_manifest))
+        .route(
+            "/api/v1/sync/manifest",
+            get(sync_manifest)
+                .post(selective_sync_manifest)
+                .layer(DefaultBodyLimit::max(MAX_MUTATION_BODY_BYTES)),
+        )
         .route("/api/v1/sync/changes", get(sync_changes))
         .route(
             "/api/v1/collections",
@@ -1225,7 +1404,44 @@ fn companion_router(state: ApiState) -> Router {
             post(upload_project_file).layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES as usize)),
         )
         .layer(middleware::from_fn_with_state(state.clone(), require_auth));
-    Router::new()
+    let migrations = Router::new()
+        .route("/api/v1/migrations/preflight", get(migration_preflight))
+        .route(
+            "/api/v1/migrations",
+            post(create_library_migration).layer(DefaultBodyLimit::max(
+                library_migration::MAX_MIGRATION_MANIFEST_BYTES,
+            )),
+        )
+        .route("/api/v1/migrations/{id}", get(get_library_migration))
+        .route(
+            "/api/v1/migrations/{id}/files/{file_id}",
+            get(get_library_migration_file)
+                .put(upload_library_migration_file)
+                .layer(DefaultBodyLimit::max(
+                    library_migration::MAX_MIGRATION_CHUNK_BYTES,
+                )),
+        )
+        .route(
+            "/api/v1/migrations/{id}/verify",
+            post(verify_library_migration),
+        )
+        .route(
+            "/api/v1/migrations/{id}/activate",
+            post(activate_library_migration),
+        )
+        .route(
+            "/api/v1/migrations/{id}/finish",
+            post(finish_library_migration),
+        )
+        .route(
+            "/api/v1/migrations/{id}/cancel",
+            post(cancel_library_migration),
+        )
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            require_migration,
+        ));
+    let mut router = Router::new()
         .route("/healthz", get(health))
         .route("/identity", get(identity))
         .route(
@@ -1238,12 +1454,38 @@ fn companion_router(state: ApiState) -> Router {
                 )),
         )
         .merge(protected)
+        .merge(migrations);
+    if state.web_admin.is_some() {
+        let web_admin = Router::new()
+            .route("/api/v1/admin/devices", get(list_admin_devices))
+            .route("/api/v1/admin/devices/{id}", delete(revoke_admin_device))
+            .route("/api/v1/admin/pairings", post(create_admin_pairing))
+            .route(
+                "/api/v1/admin/migration-pairings",
+                post(create_admin_migration_pairing),
+            )
+            .route("/api/v1/web/logout", post(web_logout))
+            .layer(middleware::from_fn_with_state(state.clone(), require_admin));
+        router = router
+            .route("/api/v1/web/bootstrap", get(web_bootstrap))
+            .route(
+                "/api/v1/web/login",
+                post(web_login).layer(DefaultBodyLimit::max(MAX_PAIRING_BODY_BYTES)),
+            )
+            .merge(web_admin);
+    }
+    if let Some(directory) = web_dir {
+        let index = directory.join("index.html");
+        router = router.fallback_service(ServeDir::new(directory).fallback(ServeFile::new(index)));
+    }
+    let router = router
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
             Duration::from_secs(REQUEST_TIMEOUT_SECONDS),
         ))
         .layer(ConcurrencyLimitLayer::new(MAX_CONCURRENT_REQUESTS))
-        .with_state(state)
+        .layer(middleware::from_fn(add_security_headers));
+    router.with_state::<()>(state)
 }
 
 async fn health() -> &'static str {
@@ -1258,6 +1500,200 @@ async fn identity(State(state): State<ApiState>) -> Json<ServerIdentity> {
         protocol_min: PROTOCOL_VERSION,
         protocol_max: PROTOCOL_VERSION,
     })
+}
+
+async fn web_bootstrap(
+    State(state): State<ApiState>,
+) -> Result<Json<WebBootstrapResponse>, ApiError> {
+    let admin = state.web_admin.as_ref().ok_or_else(|| ApiError {
+        status: StatusCode::NOT_FOUND,
+        code: "web_unavailable",
+        message: "The Volum web application is not enabled.".into(),
+        retryable: false,
+    })?;
+    let inner = state.controller.lock().await;
+    let public_url = inner.base_url.clone().unwrap_or_default();
+    Ok(Json(WebBootstrapResponse {
+        configured: admin.configured(),
+        server_id: inner.config.server_id.clone(),
+        server_name: server_name(&inner),
+        secure_transport: public_url.starts_with("https://"),
+        public_url,
+        protocol_version: PROTOCOL_VERSION,
+    }))
+}
+
+async fn web_login(
+    ConnectInfo(address): ConnectInfo<SocketAddr>,
+    State(state): State<ApiState>,
+    Json(request): Json<WebLoginRequest>,
+) -> Result<Json<WebLoginResponse>, ApiError> {
+    let admin = state.web_admin.clone().ok_or_else(|| ApiError {
+        status: StatusCode::NOT_FOUND,
+        code: "web_unavailable",
+        message: "The Volum web application is not enabled.".into(),
+        retryable: false,
+    })?;
+    if !admin.configured() {
+        return Err(ApiError {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            code: "admin_not_configured",
+            message: "Set VOLUM_ADMIN_PASSWORD and restart volumd before signing in.".into(),
+            retryable: false,
+        });
+    }
+    if admin.login_permitted(address.ip()).await.is_err() {
+        return Err(ApiError {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            code: "login_throttled",
+            message: "Too many sign-in attempts. Wait a minute and try again.".into(),
+            retryable: true,
+        });
+    }
+    let device_name = request.device_name.trim();
+    if device_name.is_empty()
+        || device_name.chars().count() > 80
+        || device_name.chars().any(char::is_control)
+        || request.password.len() > 4096
+    {
+        return Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "invalid_login",
+            message: "Enter valid administrator details.".into(),
+            retryable: false,
+        });
+    }
+    let password = request.password;
+    let verifier = admin.clone();
+    let verified = tokio::task::spawn_blocking(move || verifier.verify(&password))
+        .await
+        .unwrap_or(false);
+    if !verified {
+        admin.record_failure(address.ip()).await;
+        return Err(ApiError::unauthorized(
+            "The administrator password is not correct.",
+        ));
+    }
+    admin.record_success(address.ip()).await;
+
+    let token = random_secret();
+    let device_id = Uuid::new_v4().to_string();
+    let mut inner = state.controller.lock().await;
+    inner.config.devices.push(DeviceRecord {
+        id: device_id.clone(),
+        name: device_name.to_string(),
+        platform: "Web".into(),
+        token_hash: token_hash(&token),
+        paired_at: Utc::now().to_rfc3339(),
+        last_seen_at: None,
+        role: "admin".into(),
+        migration_id: None,
+    });
+    if persist_config(&inner.config_path, &inner.config).is_err() {
+        inner.config.devices.pop();
+        return Err(ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "login_failed",
+            message: "Volum could not save this browser session.".into(),
+            retryable: true,
+        });
+    }
+    Ok(Json(WebLoginResponse {
+        server_id: inner.config.server_id.clone(),
+        server_name: server_name(&inner),
+        device_id,
+        token,
+        protocol_version: PROTOCOL_VERSION,
+    }))
+}
+
+async fn list_admin_devices(State(state): State<ApiState>) -> Json<Vec<CompanionDevice>> {
+    let inner = state.controller.lock().await;
+    Json(inner.config.devices.iter().map(public_device).collect())
+}
+
+async fn create_admin_pairing(
+    State(state): State<ApiState>,
+) -> Result<Json<CompanionPairingInfo>, ApiError> {
+    let mut inner = state.controller.lock().await;
+    create_pairing_locked(&mut inner, "client")
+        .map(Json)
+        .map_err(ApiError::from_library)
+}
+
+async fn create_admin_migration_pairing(
+    State(state): State<ApiState>,
+) -> Result<Json<CompanionPairingInfo>, ApiError> {
+    let mut inner = state.controller.lock().await;
+    create_pairing_locked(&mut inner, "migration")
+        .map(Json)
+        .map_err(ApiError::from_library)
+}
+
+async fn revoke_admin_device(
+    State(state): State<ApiState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let mut inner = state.controller.lock().await;
+    let previous = inner.config.devices.len();
+    inner.config.devices.retain(|device| device.id != id);
+    if previous == inner.config.devices.len() {
+        return Err(ApiError {
+            status: StatusCode::NOT_FOUND,
+            code: "device_not_found",
+            message: "The paired device no longer exists.".into(),
+            retryable: false,
+        });
+    }
+    persist_config(&inner.config_path, &inner.config).map_err(ApiError::from_library)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn web_logout(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    let token = bearer_token(&headers)
+        .ok_or_else(|| ApiError::unauthorized("This browser is not signed in."))?;
+    let requested_hash = token_hash(token);
+    let mut inner = state.controller.lock().await;
+    inner
+        .config
+        .devices
+        .retain(|device| device.token_hash != requested_hash);
+    persist_config(&inner.config_path, &inner.config).map_err(ApiError::from_library)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn add_security_headers(request: Request, next: Next) -> Response {
+    let private_response = request.uri().path().starts_with("/api/")
+        || matches!(request.uri().path(), "/identity" | "/pair");
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert(
+        HeaderName::from_static("content-security-policy"),
+        HeaderValue::from_static("default-src 'self'; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; connect-src 'self'; script-src 'self'; font-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"),
+    );
+    headers.insert(
+        HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        HeaderName::from_static("x-frame-options"),
+        HeaderValue::from_static("DENY"),
+    );
+    headers.insert(
+        HeaderName::from_static("referrer-policy"),
+        HeaderValue::from_static("no-referrer"),
+    );
+    headers.insert(
+        HeaderName::from_static("permissions-policy"),
+        HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
+    );
+    if private_response {
+        headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    }
+    response
 }
 
 async fn pair(
@@ -1299,6 +1735,7 @@ async fn pair(
     }
     let token = random_secret();
     let device_id = Uuid::new_v4().to_string();
+    let role = pairing.role.clone();
     inner.config.devices.push(DeviceRecord {
         id: device_id.clone(),
         name: device_name.to_string(),
@@ -1306,6 +1743,8 @@ async fn pair(
         token_hash: token_hash(&token),
         paired_at: Utc::now().to_rfc3339(),
         last_seen_at: None,
+        role,
+        migration_id: None,
     });
     if persist_config(&inner.config_path, &inner.config).is_err() {
         inner.config.devices.pop();
@@ -1330,12 +1769,61 @@ async fn require_auth(
     request: Request,
     next: Next,
 ) -> Result<Response, ApiError> {
-    let token = request
-        .headers()
+    authorize_headers(&state, request.headers(), None).await?;
+    Ok(next.run(request).await)
+}
+
+async fn require_admin(
+    State(state): State<ApiState>,
+    request: Request,
+    next: Next,
+) -> Result<Response, ApiError> {
+    authorize_headers(&state, request.headers(), Some("admin")).await?;
+    Ok(next.run(request).await)
+}
+
+async fn require_migration(
+    State(state): State<ApiState>,
+    request: Request,
+    next: Next,
+) -> Result<Response, ApiError> {
+    let path = request.uri().path();
+    let migration_id = if request.method() == Method::GET {
+        path.strip_prefix("/api/v1/migrations/")
+    } else if request.method() == Method::POST {
+        path.strip_prefix("/api/v1/migrations/")
+            .and_then(|path| path.strip_suffix("/finish"))
+    } else {
+        None
+    };
+    let allow_completed_client = migration_id.is_some_and(|id| Uuid::parse_str(id).is_ok());
+    authorize_headers(
+        &state,
+        request.headers(),
+        Some(if allow_completed_client {
+            "migration-or-client"
+        } else {
+            "migration"
+        }),
+    )
+    .await?;
+    Ok(next.run(request).await)
+}
+
+fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    headers
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "))
         .filter(|value| !value.is_empty())
+}
+
+async fn authorize_headers(
+    state: &ApiState,
+    headers: &HeaderMap,
+    required_role: Option<&str>,
+) -> Result<(), ApiError> {
+    let token = bearer_token(headers)
         .ok_or_else(|| ApiError::unauthorized("Pair this device with Volum Desktop."))?;
     let requested_hash = token_hash(token);
     let mut inner = state.controller.lock().await;
@@ -1350,6 +1838,37 @@ async fn require_auth(
             "This device is not paired or has been revoked.",
         ));
     };
+    if required_role.is_none() && device.role == "migration" {
+        return Err(ApiError {
+            status: StatusCode::FORBIDDEN,
+            code: "migration_scope_only",
+            message: "This temporary token can be used only for the library migration.".into(),
+            retryable: false,
+        });
+    }
+    let role_matches = match required_role {
+        None => device.role != "migration",
+        Some("migration-or-client") => matches!(device.role.as_str(), "migration" | "client"),
+        Some(role) => device.role == role,
+    };
+    if !role_matches {
+        let migration_required = matches!(required_role, Some("migration" | "migration-or-client"));
+        return Err(ApiError {
+            status: StatusCode::FORBIDDEN,
+            code: if migration_required {
+                "migration_token_required"
+            } else {
+                "administrator_required"
+            },
+            message: if migration_required {
+                "Create and use a one-time library migration code from the Volum administrator."
+                    .into()
+            } else {
+                "Sign in as the Volum administrator to manage devices.".into()
+            },
+            retryable: false,
+        });
+    }
     let should_persist = device
         .last_seen_at
         .as_deref()
@@ -1364,7 +1883,260 @@ async fn require_auth(
         let _ = persist_config(&inner.config_path, &inner.config);
     }
     drop(inner);
-    Ok(next.run(request).await)
+    Ok(())
+}
+
+async fn require_headless_migration(state: &ApiState) -> Result<(), ApiError> {
+    if state.controller.lock().await.headless {
+        Ok(())
+    } else {
+        Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "nas_migration_required",
+            message:
+                "Library migration targets a dedicated volumd server, not another Desktop host."
+                    .into(),
+            retryable: false,
+        })
+    }
+}
+
+fn migration_bearer_hash(headers: &HeaderMap) -> Result<String, ApiError> {
+    bearer_token(headers)
+        .map(token_hash)
+        .ok_or_else(|| ApiError::unauthorized("The migration token is missing."))
+}
+
+async fn check_migration_job_claim(
+    state: &ApiState,
+    headers: &HeaderMap,
+    migration_id: &str,
+) -> Result<String, ApiError> {
+    let requested_hash = migration_bearer_hash(headers)?;
+    let inner = state.controller.lock().await;
+    let device = inner
+        .config
+        .devices
+        .iter()
+        .find(|device| device.token_hash == requested_hash && device.role == "migration")
+        .ok_or_else(|| ApiError::unauthorized("The migration device is no longer paired."))?;
+    if device
+        .migration_id
+        .as_deref()
+        .is_some_and(|claimed| claimed != migration_id)
+        || inner.config.devices.iter().any(|candidate| {
+            candidate.token_hash != requested_hash
+                && candidate.migration_id.as_deref() == Some(migration_id)
+        })
+    {
+        return Err(ApiError {
+            status: StatusCode::FORBIDDEN,
+            code: "migration_job_forbidden",
+            message: "This transfer code belongs to another library migration.".into(),
+            retryable: false,
+        });
+    }
+    Ok(requested_hash)
+}
+
+async fn claim_migration_job(
+    state: &ApiState,
+    token_hash: &str,
+    migration_id: &str,
+) -> Result<(), ApiError> {
+    let mut inner = state.controller.lock().await;
+    let device = inner
+        .config
+        .devices
+        .iter_mut()
+        .find(|device| device.token_hash == token_hash && device.role == "migration")
+        .ok_or_else(|| ApiError::unauthorized("The migration device is no longer paired."))?;
+    device.migration_id = Some(migration_id.to_string());
+    persist_config(&inner.config_path, &inner.config).map_err(ApiError::migration)
+}
+
+async fn require_migration_job_owner(
+    state: &ApiState,
+    headers: &HeaderMap,
+    migration_id: &str,
+    allow_completed_client: bool,
+) -> Result<String, ApiError> {
+    let requested_hash = migration_bearer_hash(headers)?;
+    let inner = state.controller.lock().await;
+    let owns_job = inner.config.devices.iter().any(|device| {
+        device.token_hash == requested_hash
+            && (device.role == "migration" || (allow_completed_client && device.role == "client"))
+            && device.migration_id.as_deref() == Some(migration_id)
+    });
+    if !owns_job {
+        return Err(ApiError {
+            status: StatusCode::FORBIDDEN,
+            code: "migration_job_forbidden",
+            message: "This transfer code does not own the requested library migration.".into(),
+            retryable: false,
+        });
+    }
+    Ok(requested_hash)
+}
+
+async fn migration_preflight(
+    State(state): State<ApiState>,
+) -> Result<Json<library_migration::MigrationServerPreflight>, ApiError> {
+    require_headless_migration(&state).await?;
+    library_migration::server_preflight(&state.library)
+        .await
+        .map(Json)
+        .map_err(ApiError::migration)
+}
+
+async fn create_library_migration(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Json(manifest): Json<library_migration::MigrationManifest>,
+) -> Result<Json<library_migration::MigrationJobStatus>, ApiError> {
+    require_headless_migration(&state).await?;
+    let _guard = state.migration_lock.lock().await;
+    let migration_id = manifest.id.clone();
+    let requested_hash = check_migration_job_claim(&state, &headers, &migration_id).await?;
+    let status = library_migration::create_server_job(manifest, &state.library)
+        .await
+        .map_err(ApiError::migration)?;
+    claim_migration_job(&state, &requested_hash, &migration_id).await?;
+    Ok(Json(status))
+}
+
+async fn get_library_migration(
+    State(state): State<ApiState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<library_migration::MigrationJobStatus>, ApiError> {
+    require_headless_migration(&state).await?;
+    require_migration_job_owner(&state, &headers, &id, true).await?;
+    library_migration::get_server_job(&state.library.data_dir, &id)
+        .map(Json)
+        .map_err(ApiError::migration)
+}
+
+async fn get_library_migration_file(
+    State(state): State<ApiState>,
+    Path((id, file_id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Json<library_migration::MigrationUploadStatus>, ApiError> {
+    require_headless_migration(&state).await?;
+    require_migration_job_owner(&state, &headers, &id, false).await?;
+    library_migration::server_upload_status(&state.library.data_dir, &id, &file_id)
+        .map(Json)
+        .map_err(ApiError::migration)
+}
+
+async fn upload_library_migration_file(
+    State(state): State<ApiState>,
+    Path((id, file_id)): Path<(String, String)>,
+    Query(query): Query<MigrationOffsetQuery>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<library_migration::MigrationUploadStatus>, ApiError> {
+    require_headless_migration(&state).await?;
+    require_migration_job_owner(&state, &headers, &id, false).await?;
+    let _guard = state.migration_lock.lock().await;
+    library_migration::append_server_chunk(
+        &state.library.data_dir,
+        &id,
+        &file_id,
+        query.offset,
+        &body,
+    )
+    .map(Json)
+    .map_err(ApiError::migration)
+}
+
+async fn verify_library_migration(
+    State(state): State<ApiState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<library_migration::MigrationJobStatus>, ApiError> {
+    require_headless_migration(&state).await?;
+    require_migration_job_owner(&state, &headers, &id, false).await?;
+    let data_dir = state.library.data_dir.clone();
+    let task_id = id.clone();
+    let lock = state.migration_lock.clone();
+    tokio::spawn(async move {
+        let _guard = lock.lock().await;
+        if let Err(error) = library_migration::verify_server_job(&data_dir, &task_id).await {
+            log::warn!("Library migration verification failed: {error}");
+        }
+    });
+    tokio::task::yield_now().await;
+    library_migration::get_server_job(&state.library.data_dir, &id)
+        .map(Json)
+        .map_err(ApiError::migration)
+}
+
+async fn activate_library_migration(
+    State(state): State<ApiState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<library_migration::MigrationJobStatus>, ApiError> {
+    require_headless_migration(&state).await?;
+    require_migration_job_owner(&state, &headers, &id, false).await?;
+    let status = {
+        let _guard = state.migration_lock.lock().await;
+        library_migration::prepare_server_activation(&state.library.data_dir, &id)
+            .map_err(ApiError::migration)?
+    };
+    #[cfg(not(test))]
+    tokio::spawn(async {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        std::process::exit(0);
+    });
+    Ok(Json(status))
+}
+
+async fn finish_library_migration(
+    State(state): State<ApiState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<library_migration::MigrationJobStatus>, ApiError> {
+    require_headless_migration(&state).await?;
+    let requested_hash = require_migration_job_owner(&state, &headers, &id, true).await?;
+    let status = library_migration::get_server_job(&state.library.data_dir, &id)
+        .map_err(ApiError::migration)?;
+    if status.state != "complete" {
+        return Err(ApiError::conflict(
+            "The NAS must finish activating before the migration device becomes a normal client.",
+        ));
+    }
+    let mut inner = state.controller.lock().await;
+    let device = inner
+        .config
+        .devices
+        .iter_mut()
+        .find(|device| device.token_hash == requested_hash)
+        .ok_or_else(|| ApiError::unauthorized("The migration device is no longer paired."))?;
+    if device.role == "client" {
+        return Ok(Json(status));
+    }
+    if device.role != "migration" {
+        return Err(ApiError::unauthorized(
+            "This token does not own the migration.",
+        ));
+    }
+    device.role = "client".into();
+    persist_config(&inner.config_path, &inner.config).map_err(ApiError::migration)?;
+    Ok(Json(status))
+}
+
+async fn cancel_library_migration(
+    State(state): State<ApiState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<library_migration::MigrationJobStatus>, ApiError> {
+    require_headless_migration(&state).await?;
+    require_migration_job_owner(&state, &headers, &id, false).await?;
+    let _guard = state.migration_lock.lock().await;
+    library_migration::cancel_server_job(&state.library.data_dir, &id)
+        .map(Json)
+        .map_err(ApiError::migration)
 }
 
 async fn api_status(State(state): State<ApiState>) -> Result<Json<ServerStatus>, ApiError> {
@@ -2593,11 +3365,115 @@ async fn list_roots(State(state): State<ApiState>) -> Result<Json<Vec<CompanionR
 }
 
 async fn sync_manifest(State(state): State<ApiState>) -> Result<Json<SyncManifest>, ApiError> {
+    build_sync_manifest(&state, None).await.map(Json)
+}
+
+async fn selective_sync_manifest(
+    State(state): State<ApiState>,
+    Json(request): Json<SelectiveSyncManifestRequest>,
+) -> Result<Json<SyncManifest>, ApiError> {
+    validate_sync_selection(&request)?;
+    let mut project_ids = request.project_ids.into_iter().collect::<HashSet<_>>();
+    for folder_id in request.folder_ids {
+        project_ids.extend(
+            project_ids_for_sync_scope(
+                ModelQuery {
+                    folder_id: Some(folder_id),
+                    ..ModelQuery::default()
+                },
+                &state.library,
+            )
+            .await?,
+        );
+    }
+    for collection_id in request.collection_ids {
+        project_ids.extend(
+            project_ids_for_sync_scope(
+                ModelQuery {
+                    collection_id: Some(collection_id),
+                    ..ModelQuery::default()
+                },
+                &state.library,
+            )
+            .await?,
+        );
+    }
+    for project_id in request.excluded_project_ids {
+        project_ids.remove(&project_id);
+    }
+    build_sync_manifest(&state, Some(&project_ids))
+        .await
+        .map(Json)
+}
+
+fn validate_sync_selection(request: &SelectiveSyncManifestRequest) -> Result<(), ApiError> {
+    let ids = request
+        .project_ids
+        .iter()
+        .chain(&request.excluded_project_ids)
+        .chain(&request.folder_ids)
+        .chain(&request.collection_ids)
+        .collect::<Vec<_>>();
+    if ids.len() > MAX_SYNC_SELECTION_ITEMS
+        || request.folder_ids.len() + request.collection_ids.len() > MAX_SYNC_SELECTION_SCOPES
+        || ids
+            .iter()
+            .any(|id| id.trim().is_empty() || id.chars().count() > MAX_SYNC_SELECTION_ID_CHARS)
+    {
+        return Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "invalid_request",
+            message: "The local-copy selection is invalid or too large.".into(),
+            retryable: false,
+        });
+    }
+    Ok(())
+}
+
+async fn project_ids_for_sync_scope(
+    mut query: ModelQuery,
+    state: &AppState,
+) -> Result<HashSet<String>, ApiError> {
+    query.limit = Some(500);
+    query.sort = Some("name".into());
+    query.trashed = Some(false);
+    let mut ids = HashSet::new();
+    loop {
+        let page = commands::list_models_impl(query.clone(), state)
+            .await
+            .map_err(ApiError::from_library)?;
+        ids.extend(page.items.into_iter().map(|project| project.id));
+        let Some(cursor) = page.next_cursor else {
+            break;
+        };
+        query.cursor = Some(cursor);
+    }
+    Ok(ids)
+}
+
+async fn build_sync_manifest(
+    state: &ApiState,
+    project_ids: Option<&HashSet<String>>,
+) -> Result<SyncManifest, ApiError> {
     let cursor: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(sequence), 0) FROM sync_changes")
         .fetch_one(&state.library.pool)
         .await
         .map_err(|error| ApiError::from_library(error.to_string()))?;
-    let rows = sqlx::query("SELECT a.id, ma.model_id project_id, m.display_name project_name, a.filename, a.byte_size, a.modified_at, a.content_hash FROM assets a JOIN model_assets ma ON ma.asset_id = a.id JOIN models m ON m.id = ma.model_id WHERE a.missing_since IS NULL AND m.trashed_at IS NULL ORDER BY lower(m.display_name), lower(a.filename), a.id")
+    let selected_json = project_ids
+        .map(|ids| serde_json::to_string(&ids.iter().collect::<Vec<_>>()))
+        .transpose()
+        .map_err(|error| ApiError::from_library(error.to_string()))?;
+    let project_filter = if project_ids.is_some() {
+        " AND ma.model_id IN (SELECT value FROM json_each(?))"
+    } else {
+        ""
+    };
+    let statement = format!("SELECT a.id, ma.model_id project_id, m.display_name project_name, a.filename, a.byte_size, a.modified_at, a.content_hash FROM assets a JOIN model_assets ma ON ma.asset_id = a.id JOIN models m ON m.id = ma.model_id WHERE a.missing_since IS NULL AND m.trashed_at IS NULL{project_filter} ORDER BY lower(m.display_name), lower(a.filename), a.id");
+    let mut query = sqlx::query(&statement);
+    if let Some(selected_json) = selected_json {
+        query = query.bind(selected_json);
+    }
+    let rows = query
         .fetch_all(&state.library.pool)
         .await
         .map_err(|error| ApiError::from_library(error.to_string()))?;
@@ -2621,11 +3497,11 @@ async fn sync_manifest(State(state): State<ApiState>) -> Result<Json<SyncManifes
         })
         .collect();
     let server_id = state.controller.lock().await.config.server_id.clone();
-    Ok(Json(SyncManifest {
+    Ok(SyncManifest {
         server_id,
         cursor,
         assets,
-    }))
+    })
 }
 
 async fn sync_changes(
@@ -3356,6 +4232,93 @@ fn discover_tailnet() -> CompanionResult<TailnetInfo> {
     Ok(TailnetInfo { ip, dns_name })
 }
 
+fn default_network_mode() -> String {
+    "automatic".into()
+}
+
+fn is_private_transport_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => {
+            let octets = ip.octets();
+            ip.is_private()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+        }
+        IpAddr::V6(ip) => ip.is_loopback() || ip.is_unique_local() || ip.is_unicast_link_local(),
+    }
+}
+
+fn parse_private_bind_address(value: &str) -> CompanionResult<IpAddr> {
+    let ip = value
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .parse::<IpAddr>()
+        .map_err(|_| "The listener address must be an IP address on this computer".to_string())?;
+    if !is_private_transport_ip(ip) {
+        return Err("Companion Access can listen only on a private network address".into());
+    }
+    Ok(ip)
+}
+
+async fn validate_public_url(value: &str) -> CompanionResult<String> {
+    let normalized = normalize_public_url(value)?;
+    let url = reqwest::Url::parse(&normalized).map_err(|error| error.to_string())?;
+    if url.scheme() == "https" {
+        return Ok(normalized);
+    }
+    let host = url.host_str().unwrap_or_default();
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        if is_private_transport_ip(ip) {
+            return Ok(normalized);
+        }
+        return Err("Plain HTTP is allowed only on private network addresses".into());
+    }
+    let port = url.port_or_known_default().unwrap_or(DEFAULT_PORT);
+    let addresses = tokio::net::lookup_host((host, port))
+        .await
+        .map_err(|_| "The Companion Access address could not be resolved".to_string())?
+        .collect::<Vec<_>>();
+    if addresses.is_empty()
+        || addresses
+            .iter()
+            .any(|address| !is_private_transport_ip(address.ip()))
+    {
+        return Err(
+            "Plain HTTP is allowed only when the server name resolves to a private address".into(),
+        );
+    }
+    Ok(normalized)
+}
+
+fn transport_for_url(value: &str) -> &'static str {
+    if value.starts_with("https://") {
+        "https"
+    } else if reqwest::Url::parse(value)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_string))
+        .is_some_and(|host| {
+            host.ends_with(".ts.net")
+                || host.parse::<IpAddr>().is_ok_and(|ip| match ip {
+                    IpAddr::V4(ip) => {
+                        let octets = ip.octets();
+                        octets[0] == 100 && (64..=127).contains(&octets[1])
+                    }
+                    IpAddr::V6(ip) => {
+                        let segments = ip.segments();
+                        segments[0] == 0xfd7a && segments[1] == 0x115c && segments[2] == 0xa1e0
+                    }
+                })
+        })
+    {
+        "tailscale-http"
+    } else {
+        "private-http"
+    }
+}
+
 fn load_config(path: &FilePath) -> CompanionResult<CompanionConfig> {
     if !path.exists() {
         let config = CompanionConfig {
@@ -3364,6 +4327,9 @@ fn load_config(path: &FilePath) -> CompanionResult<CompanionConfig> {
             port: DEFAULT_PORT,
             devices: Vec::new(),
             organization_writes: false,
+            network_mode: default_network_mode(),
+            bind_address: None,
+            public_url: None,
         };
         persist_config(path, &config)?;
         return Ok(config);
@@ -3403,6 +4369,44 @@ fn persist_config(path: &FilePath, config: &CompanionConfig) -> CompanionResult<
     Ok(())
 }
 
+fn create_pairing_locked(
+    inner: &mut ControllerInner,
+    role: &str,
+) -> CompanionResult<CompanionPairingInfo> {
+    let base_url = inner
+        .base_url
+        .clone()
+        .ok_or_else(|| "Companion Access is not running".to_string())?;
+    let secret = random_secret();
+    let expires_at = Utc::now() + chrono::Duration::seconds(PAIRING_LIFETIME_SECONDS);
+    let server_name = server_name(inner);
+    let transport = transport_for_url(&base_url);
+    let payload = serde_json::json!({
+        "version": PROTOCOL_VERSION,
+        "serverId": inner.config.server_id,
+        "serverName": server_name,
+        "baseUrl": base_url,
+        "secret": secret,
+        "expiresAt": expires_at.to_rfc3339(),
+        "transport": transport,
+        "purpose": if role == "migration" { "library-migration" } else { "client" }
+    });
+    inner.pairing = Some(PairingSession {
+        secret: secret.clone(),
+        expires_at,
+        role: role.to_string(),
+    });
+    Ok(CompanionPairingInfo {
+        server_id: inner.config.server_id.clone(),
+        server_name,
+        base_url,
+        secret,
+        expires_at: expires_at.to_rfc3339(),
+        transport: transport.to_string(),
+        qr_payload: payload.to_string(),
+    })
+}
+
 fn random_secret() -> String {
     let mut bytes = [0_u8; 32];
     rand::rng().fill_bytes(&mut bytes);
@@ -3420,7 +4424,12 @@ fn public_device(device: &DeviceRecord) -> CompanionDevice {
         platform: device.platform.clone(),
         paired_at: device.paired_at.clone(),
         last_seen_at: device.last_seen_at.clone(),
+        role: device.role.clone(),
     }
+}
+
+fn default_device_role() -> String {
+    "client".into()
 }
 
 fn server_name(inner: &ControllerInner) -> String {
@@ -3497,6 +4506,33 @@ mod tests {
         let hash = token_hash(&token);
         assert_ne!(token, hash);
         assert_eq!(hash.len(), 64);
+    }
+
+    #[test]
+    fn custom_listeners_accept_only_private_addresses() {
+        assert!(parse_private_bind_address("192.168.1.20").is_ok());
+        assert!(parse_private_bind_address("10.8.0.2").is_ok());
+        assert!(parse_private_bind_address("100.64.0.8").is_ok());
+        assert!(parse_private_bind_address("fd00::20").is_ok());
+        assert!(parse_private_bind_address("203.0.113.8").is_err());
+        assert!(parse_private_bind_address("0.0.0.0").is_err());
+    }
+
+    #[test]
+    fn pairing_transport_preserves_tailscale_and_classifies_new_routes() {
+        assert_eq!(
+            transport_for_url("http://100.64.0.8:43821"),
+            "tailscale-http"
+        );
+        assert_eq!(
+            transport_for_url("http://volum.example.ts.net:43821"),
+            "tailscale-http"
+        );
+        assert_eq!(
+            transport_for_url("http://192.168.1.20:43821"),
+            "private-http"
+        );
+        assert_eq!(transport_for_url("https://volum.example.com"), "https");
     }
 
     #[test]
@@ -3595,6 +4631,9 @@ mod tests {
                 port: DEFAULT_PORT,
                 devices: Vec::new(),
                 organization_writes: true,
+                network_mode: default_network_mode(),
+                bind_address: None,
+                public_url: None,
             },
             config_path: directory.path().join("companion.json"),
             pairing: None,
@@ -3611,6 +4650,8 @@ mod tests {
             controller: Arc::new(Mutex::new(inner)),
             upload_slot: Arc::new(Semaphore::new(1)),
             viewer_slot: Arc::new(Semaphore::new(1)),
+            migration_lock: Arc::new(Mutex::new(())),
+            web_admin: None,
         };
         (directory, state)
     }
@@ -3631,8 +4672,142 @@ mod tests {
                 token_hash: token_hash(&token),
                 paired_at: "2026-01-01T00:00:00Z".into(),
                 last_seen_at: None,
+                role: "client".into(),
+                migration_id: None,
             });
         (directory, state, token)
+    }
+
+    #[tokio::test]
+    async fn web_administrator_can_create_pairings_and_clients_cannot() {
+        let (_directory, mut state) = mutation_test_state().await;
+        state.web_admin = Some(crate::web_admin::WebAdminState::for_test(
+            "correct horse battery staple",
+        ));
+        {
+            let mut inner = state.controller.lock().await;
+            inner.base_url = Some("http://192.168.1.20:43821".into());
+            inner.headless = true;
+        }
+        let router = companion_router(state.clone(), None);
+        let mut login_request = Request::builder()
+            .method(axum::http::Method::POST)
+            .uri("/api/v1/web/login")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                serde_json::json!({
+                    "password": "correct horse battery staple",
+                    "deviceName": "Test browser"
+                })
+                .to_string(),
+            ))
+            .unwrap();
+        login_request.extensions_mut().insert(ConnectInfo(
+            "192.168.1.12:54321".parse::<SocketAddr>().unwrap(),
+        ));
+        let login_response = router.clone().oneshot(login_request).await.unwrap();
+        assert_eq!(login_response.status(), StatusCode::OK);
+        assert_eq!(login_response.headers()[header::CACHE_CONTROL], "no-store");
+        let login_bytes = axum::body::to_bytes(login_response.into_body(), 32 * 1024)
+            .await
+            .unwrap();
+        let login: serde_json::Value = serde_json::from_slice(&login_bytes).unwrap();
+        let admin_token = login["token"].as_str().unwrap();
+
+        let pairing_response = router
+            .clone()
+            .oneshot(authenticated_request(
+                axum::http::Method::POST,
+                "/api/v1/admin/pairings",
+                admin_token,
+                Body::empty(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(pairing_response.status(), StatusCode::OK);
+        let pairing_bytes = axum::body::to_bytes(pairing_response.into_body(), 32 * 1024)
+            .await
+            .unwrap();
+        let pairing: serde_json::Value = serde_json::from_slice(&pairing_bytes).unwrap();
+        assert_eq!(pairing["serverName"], "Volum Server");
+        assert!(pairing["qrPayload"].as_str().unwrap().contains("secret"));
+
+        let migration_pairing_response = router
+            .clone()
+            .oneshot(authenticated_request(
+                axum::http::Method::POST,
+                "/api/v1/admin/migration-pairings",
+                admin_token,
+                Body::empty(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(migration_pairing_response.status(), StatusCode::OK);
+        let migration_pairing_bytes =
+            axum::body::to_bytes(migration_pairing_response.into_body(), 32 * 1024)
+                .await
+                .unwrap();
+        let migration_pairing: serde_json::Value =
+            serde_json::from_slice(&migration_pairing_bytes).unwrap();
+        let migration_payload: serde_json::Value =
+            serde_json::from_str(migration_pairing["qrPayload"].as_str().unwrap()).unwrap();
+        assert_eq!(migration_payload["purpose"], "library-migration");
+        let pair_migration = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(axum::http::Method::POST)
+                    .uri("/pair")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "secret": migration_payload["secret"],
+                            "deviceName": "Migrating Desktop",
+                            "platform": "desktop"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(pair_migration.status(), StatusCode::OK);
+        assert!(state
+            .controller
+            .lock()
+            .await
+            .config
+            .devices
+            .iter()
+            .any(|device| device.name == "Migrating Desktop" && device.role == "migration"));
+
+        let client_token = random_secret();
+        state
+            .controller
+            .lock()
+            .await
+            .config
+            .devices
+            .push(DeviceRecord {
+                id: "client".into(),
+                name: "Phone".into(),
+                platform: "iOS".into(),
+                token_hash: token_hash(&client_token),
+                paired_at: Utc::now().to_rfc3339(),
+                last_seen_at: None,
+                role: "client".into(),
+                migration_id: None,
+            });
+        let forbidden = router
+            .oneshot(authenticated_request(
+                axum::http::Method::POST,
+                "/api/v1/admin/pairings",
+                &client_token,
+                Body::empty(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
     }
 
     fn authenticated_request(
@@ -3648,6 +4823,331 @@ mod tests {
             .header(header::CONTENT_TYPE, "application/json")
             .body(body)
             .unwrap()
+    }
+
+    async fn response_error_code(response: Response) -> String {
+        response_json(response).await["error"]["code"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    async fn response_json(response: Response) -> serde_json::Value {
+        let bytes = axum::body::to_bytes(response.into_body(), 32 * 1024)
+            .await
+            .unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn client_tokens_cannot_use_the_migration_api() {
+        let (_directory, state, token) = authenticated_test_state().await;
+        state.controller.lock().await.headless = true;
+        let response = companion_router(state, None)
+            .oneshot(authenticated_request(
+                axum::http::Method::GET,
+                "/api/v1/migrations/preflight",
+                &token,
+                Body::empty(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(
+            response_error_code(response).await,
+            "migration_token_required"
+        );
+    }
+
+    #[tokio::test]
+    async fn migration_tokens_cannot_use_the_normal_api() {
+        let (_directory, state) = mutation_test_state().await;
+        let token = random_secret();
+        {
+            let mut inner = state.controller.lock().await;
+            inner.headless = true;
+            inner.config.devices.push(DeviceRecord {
+                id: "migration-device".into(),
+                name: "Migrating Desktop".into(),
+                platform: "desktop".into(),
+                token_hash: token_hash(&token),
+                paired_at: Utc::now().to_rfc3339(),
+                last_seen_at: None,
+                role: "migration".into(),
+                migration_id: None,
+            });
+        }
+        let response = companion_router(state, None)
+            .oneshot(authenticated_request(
+                axum::http::Method::GET,
+                "/api/v1/status",
+                &token,
+                Body::empty(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(response_error_code(response).await, "migration_scope_only");
+    }
+
+    #[tokio::test]
+    async fn creating_a_migration_job_binds_it_to_the_temporary_token() {
+        let (directory, state) = mutation_test_state().await;
+        sqlx::query("DELETE FROM models")
+            .execute(&state.library.pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE library_roots SET root_kind = 'managed'")
+            .execute(&state.library.pool)
+            .await
+            .unwrap();
+        std::fs::create_dir_all(directory.path().join("library")).unwrap();
+        let token = random_secret();
+        let other_token = random_secret();
+        {
+            let mut inner = state.controller.lock().await;
+            inner.headless = true;
+            for (id, value) in [("migration-device", &token), ("other-device", &other_token)] {
+                inner.config.devices.push(DeviceRecord {
+                    id: id.into(),
+                    name: id.into(),
+                    platform: "desktop".into(),
+                    token_hash: token_hash(value),
+                    paired_at: Utc::now().to_rfc3339(),
+                    last_seen_at: None,
+                    role: "migration".into(),
+                    migration_id: None,
+                });
+            }
+        }
+        let schema_version: i64 =
+            sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM _sqlx_migrations")
+                .fetch_one(&state.library.pool)
+                .await
+                .unwrap();
+        let migration_id = Uuid::new_v4().to_string();
+        let manifest = serde_json::json!({
+            "formatVersion": library_migration::MIGRATION_FORMAT_VERSION,
+            "id": migration_id,
+            "createdAt": Utc::now().to_rfc3339(),
+            "schemaVersion": schema_version,
+            "allowMissing": false,
+            "stats": {
+                "projects": 0,
+                "files": 0,
+                "photos": 0,
+                "collections": 0,
+                "tags": 0,
+                "linkedProjects": 0,
+                "managedProjects": 0,
+                "missingFiles": 0,
+                "totalBytes": 0
+            },
+            "files": [{
+                "id": "database",
+                "kind": "database",
+                "relativePath": "database/volum.sqlite3",
+                "byteSize": 0,
+                "blake3": "0".repeat(64),
+                "missing": false
+            }]
+        });
+        let router = companion_router(state.clone(), None);
+        let created = router
+            .clone()
+            .oneshot(authenticated_request(
+                axum::http::Method::POST,
+                "/api/v1/migrations",
+                &token,
+                Body::from(manifest.to_string()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(created.status(), StatusCode::OK);
+        assert!(state
+            .controller
+            .lock()
+            .await
+            .config
+            .devices
+            .iter()
+            .any(|device| device.token_hash == token_hash(&token)
+                && device.migration_id.as_deref() == Some(migration_id.as_str())));
+
+        let unrelated = router
+            .clone()
+            .oneshot(authenticated_request(
+                axum::http::Method::GET,
+                &format!("/api/v1/migrations/{migration_id}"),
+                &other_token,
+                Body::empty(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(unrelated.status(), StatusCode::FORBIDDEN);
+        assert_eq!(
+            response_error_code(unrelated).await,
+            "migration_job_forbidden"
+        );
+
+        let cancelled = router
+            .oneshot(authenticated_request(
+                axum::http::Method::POST,
+                &format!("/api/v1/migrations/{migration_id}/cancel"),
+                &token,
+                Body::empty(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(cancelled.status(), StatusCode::OK);
+        let cancelled_body = response_json(cancelled).await;
+        assert_eq!(cancelled_body["state"], "cancelled");
+    }
+
+    #[tokio::test]
+    async fn finishing_a_complete_migration_promotes_its_token_to_client() {
+        let (_directory, state) = mutation_test_state().await;
+        let token = random_secret();
+        let other_token = random_secret();
+        let migration_id = Uuid::new_v4().to_string();
+        {
+            let mut inner = state.controller.lock().await;
+            inner.headless = true;
+            inner.config.devices.push(DeviceRecord {
+                id: "migration-device".into(),
+                name: "Migrating Desktop".into(),
+                platform: "desktop".into(),
+                token_hash: token_hash(&token),
+                paired_at: Utc::now().to_rfc3339(),
+                last_seen_at: None,
+                role: "migration".into(),
+                migration_id: Some(migration_id.clone()),
+            });
+            inner.config.devices.push(DeviceRecord {
+                id: "other-migration-device".into(),
+                name: "Another Desktop".into(),
+                platform: "desktop".into(),
+                token_hash: token_hash(&other_token),
+                paired_at: Utc::now().to_rfc3339(),
+                last_seen_at: None,
+                role: "migration".into(),
+                migration_id: None,
+            });
+        }
+        let job_directory = state
+            .library
+            .data_dir
+            .join("library-migrations")
+            .join(&migration_id);
+        std::fs::create_dir_all(&job_directory).unwrap();
+        let timestamp = Utc::now().to_rfc3339();
+        std::fs::write(
+            job_directory.join("job.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "manifest": {
+                    "formatVersion": 1,
+                    "id": migration_id,
+                    "createdAt": timestamp,
+                    "schemaVersion": 1,
+                    "allowMissing": false,
+                    "stats": {
+                        "projects": 0,
+                        "files": 0,
+                        "photos": 0,
+                        "collections": 0,
+                        "tags": 0,
+                        "linkedProjects": 0,
+                        "managedProjects": 0,
+                        "missingFiles": 0,
+                        "totalBytes": 0
+                    },
+                    "files": []
+                },
+                "state": "complete",
+                "targetLibraryPath": state.library.data_dir.join("library"),
+                "createdAt": timestamp,
+                "updatedAt": timestamp,
+                "completedAt": timestamp,
+                "error": null
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let router = companion_router(state.clone(), None);
+        let unrelated_finish = router
+            .clone()
+            .oneshot(authenticated_request(
+                axum::http::Method::POST,
+                &format!("/api/v1/migrations/{migration_id}/finish"),
+                &other_token,
+                Body::empty(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(unrelated_finish.status(), StatusCode::FORBIDDEN);
+        assert_eq!(
+            response_error_code(unrelated_finish).await,
+            "migration_job_forbidden"
+        );
+
+        let finish = router
+            .clone()
+            .oneshot(authenticated_request(
+                axum::http::Method::POST,
+                &format!("/api/v1/migrations/{migration_id}/finish"),
+                &token,
+                Body::empty(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(finish.status(), StatusCode::OK);
+        let promoted_role = state
+            .controller
+            .lock()
+            .await
+            .config
+            .devices
+            .iter()
+            .find(|device| device.id == "migration-device")
+            .unwrap()
+            .role
+            .clone();
+        assert_eq!(promoted_role, "client");
+
+        let completion_proof = router
+            .clone()
+            .oneshot(authenticated_request(
+                axum::http::Method::GET,
+                &format!("/api/v1/migrations/{migration_id}"),
+                &token,
+                Body::empty(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(completion_proof.status(), StatusCode::OK);
+        let repeated_finish = router
+            .clone()
+            .oneshot(authenticated_request(
+                axum::http::Method::POST,
+                &format!("/api/v1/migrations/{migration_id}/finish"),
+                &token,
+                Body::empty(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(repeated_finish.status(), StatusCode::OK);
+
+        let normal_api = router
+            .oneshot(authenticated_request(
+                axum::http::Method::GET,
+                "/api/v1/status",
+                &token,
+                Body::empty(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(normal_api.status(), StatusCode::OK);
     }
 
     async fn add_test_asset(directory: &tempfile::TempDir, state: &ApiState) -> Vec<u8> {
@@ -3671,7 +5171,7 @@ mod tests {
     async fn sync_manifest_never_exposes_server_paths() {
         let (directory, state, token) = authenticated_test_state().await;
         add_test_asset(&directory, &state).await;
-        let response = companion_router(state)
+        let response = companion_router(state, None)
             .oneshot(authenticated_request(
                 axum::http::Method::GET,
                 "/api/v1/sync/manifest",
@@ -3695,10 +5195,99 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn selective_sync_manifest_applies_project_choices_and_exclusions() {
+        let (directory, state, token) = authenticated_test_state().await;
+        add_test_asset(&directory, &state).await;
+        state.controller.lock().await.config.organization_writes = false;
+        let router = companion_router(state, None);
+        let selected = router
+            .clone()
+            .oneshot(authenticated_request(
+                axum::http::Method::POST,
+                "/api/v1/sync/manifest",
+                &token,
+                Body::from(r#"{"projectIds":["project"]}"#),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(selected.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(selected.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let manifest: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(manifest["assets"].as_array().unwrap().len(), 1);
+
+        let excluded = router
+            .oneshot(authenticated_request(
+                axum::http::Method::POST,
+                "/api/v1/sync/manifest",
+                &token,
+                Body::from(r#"{"projectIds":["project"],"excludedProjectIds":["project"]}"#),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(excluded.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(excluded.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let manifest: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(manifest["assets"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn selective_sync_scopes_follow_nested_folders_and_smart_collections() {
+        let (_directory, state) = mutation_test_state().await;
+        let timestamp = "2026-01-01T00:00:00Z";
+        sqlx::query("INSERT INTO folders (id, root_id, parent_id, relative_path, name, status) VALUES ('parent', 'root', 'folder', 'Parent', 'Parent', 'available'), ('child', 'root', 'parent', 'Parent/Child', 'Child', 'available')")
+            .execute(&state.library.pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO models (id, folder_id, display_name, grouping_key, favorite, added_at, updated_at) VALUES ('nested', 'child', 'Nested project', 'nested', 1, ?, ?)")
+            .bind(timestamp)
+            .bind(timestamp)
+            .execute(&state.library.pool)
+            .await
+            .unwrap();
+        let folder_projects = project_ids_for_sync_scope(
+            ModelQuery {
+                folder_id: Some("parent".into()),
+                ..ModelQuery::default()
+            },
+            &state.library,
+        )
+        .await
+        .unwrap();
+        assert_eq!(folder_projects, HashSet::from(["nested".to_string()]));
+
+        let rule = serde_json::json!({
+            "version": 2,
+            "matchMode": "all",
+            "rules": [{ "field": "favorite", "operator": "is", "value": true }]
+        });
+        sqlx::query("INSERT INTO collections (id, name, symbol, color, sort_order, created_at, updated_at, kind, rule_json) VALUES ('smart', 'Favorites', 'star', '#ff5a36', 0, ?, ?, 'smart', ?)")
+            .bind(timestamp)
+            .bind(timestamp)
+            .bind(rule.to_string())
+            .execute(&state.library.pool)
+            .await
+            .unwrap();
+        let smart_projects = project_ids_for_sync_scope(
+            ModelQuery {
+                collection_id: Some("smart".into()),
+                ..ModelQuery::default()
+            },
+            &state.library,
+        )
+        .await
+        .unwrap();
+        assert_eq!(smart_projects, HashSet::from(["nested".to_string()]));
+    }
+
+    #[tokio::test]
     async fn original_asset_downloads_support_head_range_etag_and_hashing() {
         let (directory, state, token) = authenticated_test_state().await;
         let bytes = add_test_asset(&directory, &state).await;
-        let router = companion_router(state.clone());
+        let router = companion_router(state.clone(), None);
         let full = router
             .clone()
             .oneshot(authenticated_request(
@@ -3796,7 +5385,7 @@ mod tests {
             .header(header::CONTENT_LENGTH, replacement.len().to_string())
             .body(Body::from(replacement.clone()))
             .unwrap();
-        let router = companion_router(state.clone());
+        let router = companion_router(state.clone(), None);
         let response = router.clone().oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
@@ -3828,7 +5417,7 @@ mod tests {
     #[tokio::test]
     async fn router_applies_write_scope_downgrades_without_blocking_reads() {
         let (_directory, state, token) = authenticated_test_state().await;
-        let router = companion_router(state.clone());
+        let router = companion_router(state.clone(), None);
         let initial = router
             .clone()
             .oneshot(authenticated_request(
@@ -3897,7 +5486,7 @@ mod tests {
     #[tokio::test]
     async fn router_rejects_a_token_immediately_after_revocation() {
         let (_directory, state, token) = authenticated_test_state().await;
-        let router = companion_router(state.clone());
+        let router = companion_router(state.clone(), None);
         let before = router
             .clone()
             .oneshot(authenticated_request(
@@ -4091,6 +5680,7 @@ mod tests {
         state.controller.lock().await.pairing = Some(PairingSession {
             secret: "valid-pairing-secret".into(),
             expires_at: Utc::now() + chrono::Duration::minutes(5),
+            role: "client".into(),
         });
 
         for _ in 0..12 {

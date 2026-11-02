@@ -13,6 +13,8 @@ settingGroups:
       PRODUCT_NAME: Volum
       PRODUCT_BUNDLE_IDENTIFIER: com.dsd.volum.companion
       DEVELOPMENT_TEAM: $(APPLE_DEVELOPMENT_TEAM)
+      CURRENT_PROJECT_VERSION: 3
+      MARKETING_VERSION: 1.0.0
 targetTemplates:
   app:
     type: application
@@ -46,10 +48,17 @@ targets:
       path: volum-companion_iOS/Info.plist
       properties:
         LSRequiresIPhoneOS: true
-        NSCameraUsageDescription: Volum scans the one-time pairing code shown on your desktop.
-        NSLocalNetworkUsageDescription: Volum connects to your desktop through your private Tailscale network.
-        NSAppTransportSecurity:
-          NSAllowsArbitraryLoads: true
+        NSCameraUsageDescription: Volum scans pairing and project codes and captures workshop photos you choose to add to a project.
+        NSPhotoLibraryUsageDescription: Volum lets you attach selected photos to projects in your private library.
+        NSLocalNetworkUsageDescription: Volum connects directly to your desktop through your chosen private network or HTTPS.
+        ITSAppUsesNonExemptEncryption: false
+        LSSupportsOpeningDocumentsInPlace: true
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: STL model
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - public.standard-tesselated-geometry-format
         UILaunchStoryboardName: LaunchScreen
         UIRequiredDeviceCapabilities: [arm64, metal]
         UISupportedInterfaceOrientations:
@@ -61,8 +70,8 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        CFBundleShortVersionString: 0.1.0
-        CFBundleVersion: "0.1.0"
+        CFBundleShortVersionString: 1.0.0
+        CFBundleVersion: "3"
     entitlements:
       path: volum-companion_iOS/volum-companion_iOS.entitlements
     scheme:
@@ -78,6 +87,14 @@ targets:
         LIBRARY_SEARCH_PATHS[arch=arm64]: $(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)
         ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: true
         EXCLUDED_ARCHS[sdk=iphoneos*]: x86_64
+      configs:
+        debug:
+          CODE_SIGN_IDENTITY: Apple Development
+          CODE_SIGN_STYLE: Automatic
+        release:
+          CODE_SIGN_IDENTITY: Apple Distribution
+          CODE_SIGN_STYLE: Manual
+          PROVISIONING_PROFILE_SPECIFIER: Volum App Store Distribution 2026
       groups: [app]
     dependencies:
       - framework: libapp.a
@@ -91,6 +108,7 @@ targets:
       - sdk: WebKit.framework
     preBuildScripts:
       - script: |
+          if [ "${VOLUM_USE_PREBUILT_RUST:-0}" = "1" ]; then exit 0; fi
           npm run -- tauri ios xcode-script -v --platform "${PLATFORM_DISPLAY_NAME:?}" --sdk-root "${SDKROOT:?}" --framework-search-paths "${FRAMEWORK_SEARCH_PATHS:?}" --header-search-paths "${HEADER_SEARCH_PATHS:?}" --gcc-preprocessor-definitions "${GCC_PREPROCESSOR_DEFINITIONS:-}" --configuration "${CONFIGURATION:?}" ${FORCE_COLOR} ${ARCHS:?}
         name: Build Rust Code
         basedOnDependencyAnalysis: false

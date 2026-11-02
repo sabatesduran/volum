@@ -3,7 +3,7 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
-    net::IpAddr,
+    net::{IpAddr, ToSocketAddrs},
     path::{Component, Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -15,6 +15,9 @@ use tokio_util::io::ReaderStream;
 const KEYRING_SERVICE: &str = "dev.didac.volum.remote";
 const MAX_JSON_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BINARY_BYTES: usize = 64 * 1024 * 1024;
+const MAX_MIRROR_SELECTION_ITEMS: usize = 10_000;
+const MAX_MIRROR_SELECTION_SCOPES: usize = 256;
+const MAX_MIRROR_SELECTION_ID_CHARS: usize = 200;
 
 type RemoteResult<T> = Result<T, String>;
 
@@ -23,6 +26,7 @@ pub struct RemoteController {
     inner: Arc<Mutex<RemoteInner>>,
     client: reqwest::Client,
     sync_lock: Arc<Mutex<()>>,
+    verified_endpoint: Arc<Mutex<Option<VerifiedEndpoint>>>,
     #[cfg(test)]
     test_token: Arc<Mutex<Option<String>>>,
 }
@@ -32,6 +36,12 @@ struct RemoteInner {
     path: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VerifiedEndpoint {
+    server_id: String,
+    base_url: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BackendConfig {
@@ -39,6 +49,8 @@ struct BackendConfig {
     mode: String,
     remote: Option<RemoteEndpoint>,
     mirror: Option<MirrorConfig>,
+    #[serde(default)]
+    retired_local: Option<RetiredLocalLibrary>,
 }
 
 impl Default for BackendConfig {
@@ -47,8 +59,17 @@ impl Default for BackendConfig {
             mode: default_mode(),
             remote: None,
             mirror: None,
+            retired_local: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RetiredLocalLibrary {
+    migration_id: String,
+    server_id: String,
+    retired_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,8 +87,25 @@ struct MirrorConfig {
     path: String,
     #[serde(default)]
     enabled: bool,
+    #[serde(default = "default_mirror_mode")]
+    mode: String,
+    #[serde(default)]
+    selection: MirrorSelection,
     last_sync_at: Option<String>,
     last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MirrorSelection {
+    #[serde(default)]
+    project_ids: Vec<String>,
+    #[serde(default)]
+    excluded_project_ids: Vec<String>,
+    #[serde(default)]
+    folder_ids: Vec<String>,
+    #[serde(default)]
+    collection_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -130,11 +168,49 @@ pub struct MirrorSyncReport {
 #[serde(rename_all = "camelCase")]
 pub struct MirroredAsset {
     id: String,
+    project_id: String,
     project_name: String,
     filename: String,
     byte_size: u64,
     modified_at: String,
     mirror_path: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MirroredProject {
+    project_id: String,
+    project_name: String,
+    asset_count: usize,
+    available_asset_count: usize,
+    byte_size: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteMirrorSettings {
+    enabled: bool,
+    path: Option<String>,
+    mode: String,
+    project_ids: Vec<String>,
+    excluded_project_ids: Vec<String>,
+    folder_ids: Vec<String>,
+    collection_ids: Vec<String>,
+    last_sync_at: Option<String>,
+    last_error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MirrorSelectionInput {
+    #[serde(default)]
+    project_ids: Vec<String>,
+    #[serde(default)]
+    excluded_project_ids: Vec<String>,
+    #[serde(default)]
+    folder_ids: Vec<String>,
+    #[serde(default)]
+    collection_ids: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -153,6 +229,8 @@ pub struct PairingPayload {
     secret: String,
     expires_at: String,
     transport: String,
+    #[serde(default)]
+    purpose: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -183,8 +261,11 @@ pub struct BackendConnectionStatus {
     base_url: Option<String>,
     mirror_enabled: bool,
     mirror_path: Option<String>,
+    mirror_mode: Option<String>,
     last_sync_at: Option<String>,
     last_error: Option<String>,
+    local_library_retired: bool,
+    migration_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -227,6 +308,7 @@ impl RemoteController {
             inner: Arc::new(Mutex::new(RemoteInner { config, path })),
             client,
             sync_lock: Arc::new(Mutex::new(())),
+            verified_endpoint: Arc::new(Mutex::new(None)),
             #[cfg(test)]
             test_token: Arc::new(Mutex::new(None)),
         })
@@ -263,6 +345,7 @@ impl RemoteController {
             .remote
             .clone()
             .ok_or_else(|| "No remote Volum server is configured".to_string())?;
+        self.verify_endpoint_identity(&endpoint).await?;
         #[cfg(test)]
         if let Some(token) = self.test_token.lock().await.clone() {
             return Ok((endpoint, token));
@@ -272,6 +355,36 @@ impl RemoteController {
             .await
             .map_err(|error| error.to_string())??;
         Ok((endpoint, token))
+    }
+
+    async fn verify_endpoint_identity(&self, endpoint: &RemoteEndpoint) -> RemoteResult<()> {
+        let expected = VerifiedEndpoint {
+            server_id: endpoint.server_id.clone(),
+            base_url: endpoint.base_url.clone(),
+        };
+        if self.verified_endpoint.lock().await.as_ref() == Some(&expected) {
+            return Ok(());
+        }
+        let identity_url = validated_url(&endpoint.base_url, "/identity")?;
+        let identity = self
+            .client
+            .get(identity_url)
+            .send()
+            .await
+            .map_err(friendly_network_error)?
+            .error_for_status()
+            .map_err(|_| "The Volum server identity could not be verified".to_string())?
+            .json::<IdentityResponse>()
+            .await
+            .map_err(|_| "The Volum server returned an unreadable identity".to_string())?;
+        if identity.server_id != endpoint.server_id
+            || identity.protocol_min > 1
+            || identity.protocol_max < 1
+        {
+            return Err("The configured address belongs to a different or incompatible Volum server. No access token was sent.".into());
+        }
+        *self.verified_endpoint.lock().await = Some(expected);
+        Ok(())
     }
 
     async fn status(&self) -> BackendConnectionStatus {
@@ -296,10 +409,47 @@ impl RemoteController {
     }
 
     async fn connect(&self, payload_json: &str) -> RemoteResult<BackendConnectionStatus> {
+        self.connect_with_purpose(payload_json, false).await
+    }
+
+    async fn connect_with_purpose(
+        &self,
+        payload_json: &str,
+        migration: bool,
+    ) -> RemoteResult<BackendConnectionStatus> {
         let payload: PairingPayload = serde_json::from_str(payload_json.trim())
             .map_err(|_| "Paste a complete Volum pairing payload".to_string())?;
+        let migration_payload = payload.purpose.as_deref() == Some("library-migration");
+        if migration != migration_payload {
+            return Err(if migration {
+                "Create a transfer code from Move a Desktop library in the NAS administrator".into()
+            } else {
+                "Use this transfer code in Move this library to a NAS, not normal device pairing"
+                    .into()
+            });
+        }
+        {
+            let inner = self.inner.lock().await;
+            if !migration && crate::library_migration::has_pending_client_migration(&inner.path) {
+                return Err(
+                    "Resume or abandon the pending library migration before pairing another server"
+                        .into(),
+                );
+            }
+            if let Some(retired) = inner.config.retired_local.as_ref() {
+                if migration {
+                    return Err("This Desktop library is already retired. Restore it before starting another migration".into());
+                }
+                if retired.server_id != payload.server_id {
+                    return Err("This Desktop holds a rollback copy for its canonical NAS and cannot be paired with another server".into());
+                }
+            }
+        }
         if payload.version != 1
-            || payload.transport != "tailscale-http"
+            || !matches!(
+                payload.transport.as_str(),
+                "tailscale-http" | "private-http" | "https"
+            )
             || payload.server_id.trim().is_empty()
             || payload.secret.trim().is_empty()
         {
@@ -330,6 +480,10 @@ impl RemoteController {
         {
             return Err("The Volum server identity or protocol changed during pairing".into());
         }
+        *self.verified_endpoint.lock().await = Some(VerifiedEndpoint {
+            server_id: payload.server_id.clone(),
+            base_url: base_url.clone(),
+        });
         let pair_url = validated_url(&base_url, "/pair")?;
         let response = self
             .client
@@ -387,6 +541,9 @@ impl RemoteController {
 
     async fn use_local(&self) -> RemoteResult<BackendConnectionStatus> {
         let mut inner = self.inner.lock().await;
+        if inner.config.retired_local.is_some() {
+            return Err("This Desktop library was retired after moving it to the NAS. Use the canonical NAS library or follow the migration rollback guide.".into());
+        }
         inner.config.mode = "local".into();
         persist_config(&inner.path, &inner.config)?;
         Ok(status_from_config(&inner.config, false, None))
@@ -405,6 +562,9 @@ impl RemoteController {
     }
 
     async fn forget_remote(&self) -> RemoteResult<BackendConnectionStatus> {
+        if self.inner.lock().await.config.retired_local.is_some() {
+            return Err("The canonical NAS server cannot be forgotten while this Desktop holds its migration rollback copy.".into());
+        }
         let server_id = self
             .inner
             .lock()
@@ -421,6 +581,7 @@ impl RemoteController {
         inner.config.remote = None;
         inner.config.mirror = None;
         persist_config(&inner.path, &inner.config)?;
+        *self.verified_endpoint.lock().await = None;
         Ok(status_from_config(&inner.config, false, None))
     }
 
@@ -476,16 +637,161 @@ impl RemoteController {
             .map_err(|_| "The Volum server returned an unreadable response".into())
     }
 
+    pub(crate) async fn pair_for_migration(&self, payload_json: &str) -> RemoteResult<String> {
+        self.connect_with_purpose(payload_json, true).await?;
+        let mut inner = self.inner.lock().await;
+        let server_id = inner
+            .config
+            .remote
+            .as_ref()
+            .ok_or_else(|| "The migrated NAS server is not configured".to_string())?
+            .server_id
+            .clone();
+        inner.config.mode = "local".into();
+        persist_config(&inner.path, &inner.config)?;
+        Ok(server_id)
+    }
+
+    pub(crate) async fn assert_migration_target(&self, server_id: &str) -> RemoteResult<()> {
+        let endpoint = self
+            .inner
+            .lock()
+            .await
+            .config
+            .remote
+            .clone()
+            .ok_or_else(|| "The migration NAS is no longer configured".to_string())?;
+        if endpoint.server_id != server_id {
+            return Err("The pending migration belongs to a different NAS. Reconnect that NAS or abandon the migration safely.".into());
+        }
+        self.verify_endpoint_identity(&endpoint).await
+    }
+
+    pub(crate) async fn migration_json(
+        &self,
+        path: &str,
+        method: &str,
+        body: Option<&serde_json::Value>,
+    ) -> RemoteResult<serde_json::Value> {
+        let (endpoint, token) = self.endpoint_and_token().await?;
+        self.send_json(&endpoint, &token, path, method, body).await
+    }
+
+    pub(crate) async fn migration_upload_chunk(
+        &self,
+        migration_id: &str,
+        file_id: &str,
+        offset: u64,
+        bytes: &[u8],
+    ) -> RemoteResult<()> {
+        let (endpoint, token) = self.endpoint_and_token().await?;
+        let path = format!("/api/v1/migrations/{migration_id}/files/{file_id}?offset={offset}");
+        let url = validated_url(&endpoint.base_url, &path)?;
+        let response = self
+            .client
+            .put(url)
+            .bearer_auth(token)
+            .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+            .body(bytes.to_vec())
+            .send()
+            .await
+            .map_err(friendly_network_error)?;
+        let status = response.status();
+        let body = response
+            .bytes()
+            .await
+            .map_err(|_| "The NAS returned an unreadable migration response".to_string())?;
+        if !status.is_success() {
+            return Err(api_error_message(
+                &body,
+                &format!("The NAS returned {status}"),
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn migration_status(
+        &self,
+        migration_id: &str,
+    ) -> RemoteResult<crate::library_migration::MigrationJobStatus> {
+        let value = self
+            .migration_json(&format!("/api/v1/migrations/{migration_id}"), "GET", None)
+            .await?;
+        serde_json::from_value(value)
+            .map_err(|_| "The NAS returned an unreadable migration status".into())
+    }
+
+    pub(crate) async fn retire_local_library(
+        &self,
+        migration_id: &str,
+        expected_server_id: &str,
+    ) -> RemoteResult<BackendConnectionStatus> {
+        {
+            let mut inner = self.inner.lock().await;
+            let server_id = inner
+                .config
+                .remote
+                .as_ref()
+                .ok_or_else(|| "The migrated NAS server is not configured".to_string())?
+                .server_id
+                .clone();
+            if server_id != expected_server_id {
+                return Err("The completed migration belongs to a different NAS".into());
+            }
+            inner.config.mode = "remote".into();
+            inner.config.retired_local = Some(RetiredLocalLibrary {
+                migration_id: migration_id.to_string(),
+                server_id,
+                retired_at: Utc::now().to_rfc3339(),
+            });
+            persist_config(&inner.path, &inner.config)?;
+        }
+        Ok(self.status().await)
+    }
+
+    pub(crate) async fn restore_retired_local_library(
+        &self,
+    ) -> RemoteResult<BackendConnectionStatus> {
+        let mut inner = self.inner.lock().await;
+        if inner.config.retired_local.is_none() {
+            return Err("This Desktop does not have a retired migration library".into());
+        }
+        inner.config.retired_local = None;
+        inner.config.mode = "local".into();
+        persist_config(&inner.path, &inner.config)?;
+        Ok(status_from_config(&inner.config, false, None))
+    }
+
+    pub(crate) async fn restore_migration_local_mode(
+        &self,
+    ) -> RemoteResult<BackendConnectionStatus> {
+        let mut inner = self.inner.lock().await;
+        if inner.config.retired_local.is_some() {
+            return Err(
+                "A retired Desktop library cannot be reactivated by abandoning a migration".into(),
+            );
+        }
+        inner.config.mode = "local".into();
+        persist_config(&inner.path, &inner.config)?;
+        Ok(status_from_config(&inner.config, false, None))
+    }
+
     async fn configure_mirror(
         &self,
         path: Option<String>,
         enabled: bool,
+        mode: Option<String>,
     ) -> RemoteResult<BackendConnectionStatus> {
         let mut inner = self.inner.lock().await;
         if inner.config.remote.is_none() {
             return Err("Pair this Desktop with a Volum server before enabling a mirror".into());
         }
         if enabled {
+            let previous = inner.config.mirror.clone();
+            let mode = mode
+                .or_else(|| previous.as_ref().map(|value| value.mode.clone()))
+                .unwrap_or_else(default_mirror_mode);
+            validate_mirror_mode(&mode)?;
             let selected = PathBuf::from(
                 path.as_deref()
                     .or_else(|| {
@@ -515,9 +821,12 @@ impl RemoteController {
             inner.config.mirror = Some(MirrorConfig {
                 path: canonical.to_string_lossy().to_string(),
                 enabled: true,
-                last_sync_at: inner
-                    .config
-                    .mirror
+                mode,
+                selection: previous
+                    .as_ref()
+                    .map(|value| value.selection.clone())
+                    .unwrap_or_default(),
+                last_sync_at: previous
                     .as_ref()
                     .and_then(|value| value.last_sync_at.clone()),
                 last_error: None,
@@ -532,6 +841,94 @@ impl RemoteController {
             inner.config.mode == "remote",
             None,
         ))
+    }
+
+    async fn mirror_settings(&self) -> RemoteMirrorSettings {
+        let inner = self.inner.lock().await;
+        let mirror = inner.config.mirror.as_ref();
+        let selection = mirror
+            .map(|value| value.selection.clone())
+            .unwrap_or_default();
+        RemoteMirrorSettings {
+            enabled: mirror.is_some_and(|value| value.enabled),
+            path: mirror.map(|value| value.path.clone()),
+            mode: mirror
+                .map(|value| value.mode.clone())
+                .unwrap_or_else(default_mirror_mode),
+            project_ids: selection.project_ids,
+            excluded_project_ids: selection.excluded_project_ids,
+            folder_ids: selection.folder_ids,
+            collection_ids: selection.collection_ids,
+            last_sync_at: mirror.and_then(|value| value.last_sync_at.clone()),
+            last_error: mirror.and_then(|value| value.last_error.clone()),
+        }
+    }
+
+    async fn set_mirror_mode(&self, mode: &str) -> RemoteResult<RemoteMirrorSettings> {
+        validate_mirror_mode(mode)?;
+        let (mirror, path) = {
+            let inner = self.inner.lock().await;
+            let mirror = inner
+                .config
+                .mirror
+                .clone()
+                .ok_or_else(|| "Choose a folder for local project files first".to_string())?;
+            (mirror.clone(), inner.path.clone())
+        };
+        let mut seeded_project_ids = Vec::new();
+        if mode == "selected"
+            && mirror.mode == "all"
+            && mirror.selection.project_ids.is_empty()
+            && mirror.selection.folder_ids.is_empty()
+            && mirror.selection.collection_ids.is_empty()
+        {
+            let root = PathBuf::from(&mirror.path)
+                .canonicalize()
+                .map_err(|_| "The local project-files folder is unavailable".to_string())?;
+            let manifest_path = checked_relative_path(&root, Path::new(".volum/manifest.json"))?;
+            if let Some(manifest) = read_local_manifest(&manifest_path, "")? {
+                seeded_project_ids = manifest
+                    .assets
+                    .into_iter()
+                    .map(|asset| asset.project_id)
+                    .collect::<HashSet<_>>()
+                    .into_iter()
+                    .collect();
+                seeded_project_ids.sort();
+            }
+        }
+        let mut inner = self.inner.lock().await;
+        let mirror = inner
+            .config
+            .mirror
+            .as_mut()
+            .ok_or_else(|| "Choose a folder for local project files first".to_string())?;
+        mirror.mode = mode.to_string();
+        if !seeded_project_ids.is_empty() {
+            mirror.selection.project_ids = seeded_project_ids;
+        }
+        mirror.last_error = None;
+        persist_config(&path, &inner.config)?;
+        drop(inner);
+        Ok(self.mirror_settings().await)
+    }
+
+    async fn set_mirror_selection(
+        &self,
+        input: MirrorSelectionInput,
+    ) -> RemoteResult<RemoteMirrorSettings> {
+        let selection = normalized_mirror_selection(input)?;
+        let mut inner = self.inner.lock().await;
+        let mirror = inner
+            .config
+            .mirror
+            .as_mut()
+            .ok_or_else(|| "Choose a folder for local project files first".to_string())?;
+        mirror.selection = selection;
+        mirror.last_error = None;
+        persist_config(&inner.path, &inner.config)?;
+        drop(inner);
+        Ok(self.mirror_settings().await)
     }
 
     async fn sync_mirror(&self) -> RemoteResult<MirrorSyncReport> {
@@ -568,8 +965,26 @@ impl RemoteController {
             .canonicalize()
             .map_err(|_| "The mirror folder is unavailable".to_string())?;
         let (endpoint, token) = self.endpoint_and_token().await?;
+        let selection_body = (mirror.mode == "selected").then(|| {
+            serde_json::json!({
+                "projectIds": mirror.selection.project_ids,
+                "excludedProjectIds": mirror.selection.excluded_project_ids,
+                "folderIds": mirror.selection.folder_ids,
+                "collectionIds": mirror.selection.collection_ids,
+            })
+        });
         let manifest_value = self
-            .send_json(&endpoint, &token, "/api/v1/sync/manifest", "GET", None)
+            .send_json(
+                &endpoint,
+                &token,
+                "/api/v1/sync/manifest",
+                if selection_body.is_some() {
+                    "POST"
+                } else {
+                    "GET"
+                },
+                selection_body.as_ref(),
+            )
             .await?;
         let remote: SyncManifest = serde_json::from_value(manifest_value)
             .map_err(|_| "The Volum server returned an invalid sync manifest".to_string())?;
@@ -1022,6 +1437,7 @@ impl RemoteController {
             })
             .map(|asset| MirroredAsset {
                 id: asset.id,
+                project_id: asset.project_id,
                 project_name: asset.project_name,
                 filename: asset.filename,
                 byte_size: asset.byte_size,
@@ -1029,6 +1445,53 @@ impl RemoteController {
                 mirror_path: asset.mirror_path,
             })
             .collect())
+    }
+
+    async fn mirrored_projects(&self) -> RemoteResult<Vec<MirroredProject>> {
+        let mirror = self
+            .inner
+            .lock()
+            .await
+            .config
+            .mirror
+            .clone()
+            .filter(|value| value.enabled)
+            .ok_or_else(|| "No local project-files folder is enabled".to_string())?;
+        let root = PathBuf::from(mirror.path)
+            .canonicalize()
+            .map_err(|_| "The local project-files folder is unavailable".to_string())?;
+        let manifest_path = checked_relative_path(&root, Path::new(".volum/manifest.json"))?;
+        let Some(manifest) = read_local_manifest(&manifest_path, "")? else {
+            return Ok(Vec::new());
+        };
+        let mut projects = HashMap::<String, MirroredProject>::new();
+        for asset in manifest.assets {
+            let available =
+                checked_mirror_path(&root, &asset.mirror_path).is_ok_and(|path| path.is_file());
+            let project =
+                projects
+                    .entry(asset.project_id.clone())
+                    .or_insert_with(|| MirroredProject {
+                        project_id: asset.project_id.clone(),
+                        project_name: asset.project_name.clone(),
+                        asset_count: 0,
+                        available_asset_count: 0,
+                        byte_size: 0,
+                    });
+            project.asset_count += 1;
+            if available {
+                project.available_asset_count += 1;
+                project.byte_size = project.byte_size.saturating_add(asset.byte_size);
+            }
+        }
+        let mut projects = projects.into_values().collect::<Vec<_>>();
+        projects.sort_by(|left, right| {
+            left.project_name
+                .to_lowercase()
+                .cmp(&right.project_name.to_lowercase())
+                .then_with(|| left.project_id.cmp(&right.project_id))
+        });
+        Ok(projects)
     }
 }
 
@@ -1283,9 +1746,33 @@ pub async fn remote_upload_photo(
 pub async fn configure_remote_mirror(
     path: Option<String>,
     enabled: bool,
+    mode: Option<String>,
     controller: tauri::State<'_, RemoteController>,
 ) -> RemoteResult<BackendConnectionStatus> {
-    controller.configure_mirror(path, enabled).await
+    controller.configure_mirror(path, enabled, mode).await
+}
+
+#[tauri::command]
+pub async fn get_remote_mirror_settings(
+    controller: tauri::State<'_, RemoteController>,
+) -> RemoteResult<RemoteMirrorSettings> {
+    Ok(controller.mirror_settings().await)
+}
+
+#[tauri::command]
+pub async fn set_remote_mirror_mode(
+    mode: String,
+    controller: tauri::State<'_, RemoteController>,
+) -> RemoteResult<RemoteMirrorSettings> {
+    controller.set_mirror_mode(&mode).await
+}
+
+#[tauri::command]
+pub async fn set_remote_mirror_selection(
+    input: MirrorSelectionInput,
+    controller: tauri::State<'_, RemoteController>,
+) -> RemoteResult<RemoteMirrorSettings> {
+    controller.set_mirror_selection(input).await
 }
 
 #[tauri::command]
@@ -1324,8 +1811,58 @@ pub async fn list_mirrored_assets(
     controller.mirrored_assets().await
 }
 
+#[tauri::command]
+pub async fn list_mirrored_projects(
+    controller: tauri::State<'_, RemoteController>,
+) -> RemoteResult<Vec<MirroredProject>> {
+    controller.mirrored_projects().await
+}
+
 fn default_mode() -> String {
     "local".into()
+}
+
+fn default_mirror_mode() -> String {
+    "all".into()
+}
+
+fn validate_mirror_mode(mode: &str) -> RemoteResult<()> {
+    if matches!(mode, "all" | "selected") {
+        Ok(())
+    } else {
+        Err("Choose all projects or selected projects for local storage".into())
+    }
+}
+
+fn normalized_mirror_selection(input: MirrorSelectionInput) -> RemoteResult<MirrorSelection> {
+    fn normalize(mut values: Vec<String>) -> RemoteResult<Vec<String>> {
+        if values.len() > MAX_MIRROR_SELECTION_ITEMS
+            || values.iter().any(|value| {
+                value.trim().is_empty() || value.chars().count() > MAX_MIRROR_SELECTION_ID_CHARS
+            })
+        {
+            return Err("The local-copy selection is invalid or too large".into());
+        }
+        values.sort();
+        values.dedup();
+        Ok(values)
+    }
+    let total = input.project_ids.len()
+        + input.excluded_project_ids.len()
+        + input.folder_ids.len()
+        + input.collection_ids.len();
+    if total > MAX_MIRROR_SELECTION_ITEMS {
+        return Err("The local-copy selection is invalid or too large".into());
+    }
+    if input.folder_ids.len() + input.collection_ids.len() > MAX_MIRROR_SELECTION_SCOPES {
+        return Err("The local-copy selection contains too many folder or collection rules".into());
+    }
+    Ok(MirrorSelection {
+        project_ids: normalize(input.project_ids)?,
+        excluded_project_ids: normalize(input.excluded_project_ids)?,
+        folder_ids: normalize(input.folder_ids)?,
+        collection_ids: normalize(input.collection_ids)?,
+    })
 }
 
 fn load_config(path: &Path) -> RemoteResult<BackendConfig> {
@@ -1334,10 +1871,19 @@ fn load_config(path: &Path) -> RemoteResult<BackendConfig> {
     }
     let bytes = std::fs::read(path)
         .map_err(|error| format!("Could not read remote connection settings: {error}"))?;
-    let config: BackendConfig = serde_json::from_slice(&bytes)
+    let mut config: BackendConfig = serde_json::from_slice(&bytes)
         .map_err(|error| format!("Remote connection settings are damaged: {error}"))?;
     if !matches!(config.mode.as_str(), "local" | "remote") {
         return Err("Remote connection settings contain an invalid mode".into());
+    }
+    if let Some(mirror) = config.mirror.as_mut() {
+        validate_mirror_mode(&mirror.mode)?;
+        mirror.selection = normalized_mirror_selection(MirrorSelectionInput {
+            project_ids: mirror.selection.project_ids.clone(),
+            excluded_project_ids: mirror.selection.excluded_project_ids.clone(),
+            folder_ids: mirror.selection.folder_ids.clone(),
+            collection_ids: mirror.selection.collection_ids.clone(),
+        })?;
     }
     Ok(config)
 }
@@ -1402,9 +1948,21 @@ fn status_from_config(
         base_url: remote.map(|value| value.base_url.clone()),
         mirror_enabled: mirror.is_some_and(|value| value.enabled),
         mirror_path: mirror.map(|value| value.path.clone()),
+        mirror_mode: mirror.map(|value| value.mode.clone()),
         last_sync_at: mirror.and_then(|value| value.last_sync_at.clone()),
         last_error: connection_error.or_else(|| mirror.and_then(|value| value.last_error.clone())),
+        local_library_retired: config.retired_local.is_some(),
+        migration_id: config
+            .retired_local
+            .as_ref()
+            .map(|value| value.migration_id.clone()),
     }
+}
+
+pub(crate) fn local_library_retired(data_dir: &Path) -> bool {
+    load_config(&data_dir.join("remote.json"))
+        .map(|config| config.retired_local.is_some())
+        .unwrap_or(false)
 }
 
 fn validate_base_url(value: &str) -> RemoteResult<String> {
@@ -1422,9 +1980,20 @@ fn validate_base_url(value: &str) -> RemoteResult<String> {
     }
     let host = url.host_str().unwrap_or_default();
     if url.scheme() == "http" && !is_private_transport_host(host) {
-        return Err(
-            "Unencrypted Volum connections are allowed only over Tailscale or localhost".into(),
-        );
+        let port = url.port_or_known_default().unwrap_or(43821);
+        let addresses = (host, port)
+            .to_socket_addrs()
+            .map_err(|_| "The private Volum server address could not be resolved".to_string())?
+            .collect::<Vec<_>>();
+        if addresses.is_empty()
+            || addresses
+                .iter()
+                .any(|address| !is_private_transport_ip(address.ip()))
+        {
+            return Err(
+                "Plain HTTP Volum connections are allowed only on private networks or VPNs".into(),
+            );
+        }
     }
     Ok(url.origin().ascii_serialization())
 }
@@ -1444,14 +2013,42 @@ fn is_private_transport_host(host: &str) -> bool {
     match host.parse::<IpAddr>() {
         Ok(IpAddr::V4(ip)) => {
             let octets = ip.octets();
-            ip.is_loopback() || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+            ip.is_private()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || (octets[0] == 100 && (64..=127).contains(&octets[1]))
         }
         Ok(IpAddr::V6(ip)) => {
             let segments = ip.segments();
             ip.is_loopback()
+                || ip.is_unique_local()
+                || ip.is_unicast_link_local()
                 || (segments[0] == 0xfd7a && segments[1] == 0x115c && segments[2] == 0xa1e0)
         }
-        Err(_) => host.eq_ignore_ascii_case("localhost") || host.ends_with(".ts.net"),
+        Err(_) => {
+            host.eq_ignore_ascii_case("localhost")
+                || host.ends_with(".local")
+                || host.ends_with(".ts.net")
+        }
+    }
+}
+
+fn is_private_transport_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => {
+            let octets = ip.octets();
+            ip.is_private()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+        }
+        IpAddr::V6(ip) => {
+            let segments = ip.segments();
+            ip.is_loopback()
+                || ip.is_unique_local()
+                || ip.is_unicast_link_local()
+                || (segments[0] == 0xfd7a && segments[1] == 0x115c && segments[2] == 0xa1e0)
+        }
     }
 }
 
@@ -1745,12 +2342,14 @@ mod tests {
     use walkdir::WalkDir;
 
     #[test]
-    fn remote_urls_require_https_or_tailnet_transport() {
+    fn remote_urls_require_https_or_private_transport() {
         assert!(validate_base_url("http://100.64.0.2:43821").is_ok());
         assert!(validate_base_url("http://workshop.example.ts.net:43821").is_ok());
         assert!(validate_base_url("http://127.0.0.1:43821").is_ok());
         assert!(validate_base_url("https://volum.example.com").is_ok());
-        assert!(validate_base_url("http://192.168.1.4:43821").is_err());
+        assert!(validate_base_url("http://192.168.1.4:43821").is_ok());
+        assert!(validate_base_url("http://10.8.0.2:43821").is_ok());
+        assert!(validate_base_url("http://203.0.113.8:43821").is_err());
         assert!(validate_base_url("https://user:pass@example.com").is_err());
     }
 
@@ -1760,6 +2359,36 @@ mod tests {
         assert!(validated_url(base, "/api/v1/status").is_ok());
         assert!(validated_url(base, "//example.com/status").is_err());
         assert!(validated_url(base, "/\\example.com/status").is_err());
+    }
+
+    #[test]
+    fn legacy_mirror_configuration_defaults_to_the_entire_library() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("remote.json");
+        std::fs::write(
+            &path,
+            serde_json::json!({
+                "mode": "remote",
+                "remote": {
+                    "serverId": "server",
+                    "serverName": "NAS",
+                    "baseUrl": "http://127.0.0.1:43821",
+                    "deviceId": "device"
+                },
+                "mirror": {
+                    "path": directory.path().join("mirror"),
+                    "enabled": true,
+                    "lastSyncAt": null,
+                    "lastError": null
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let config = load_config(&path).unwrap();
+        let mirror = config.mirror.unwrap();
+        assert_eq!(mirror.mode, "all");
+        assert!(mirror.selection.project_ids.is_empty());
     }
 
     #[test]
@@ -1810,6 +2439,7 @@ mod tests {
         .await
         .unwrap();
 
+        let file_guard = state.file_operation_lock.lock().await;
         let original = test_stl("0");
         let source = directory.path().join("source.stl");
         std::fs::write(&source, &original).unwrap();
@@ -1822,6 +2452,20 @@ mod tests {
         let (project_id, _) = project_storage::create_managed_project_internal(&input, &state)
             .await
             .unwrap();
+        let unselected_source = directory.path().join("unselected.stl");
+        std::fs::write(&unselected_source, test_stl("9")).unwrap();
+        project_storage::create_managed_project_internal(
+            &CreateManagedProjectInput {
+                name: "Not mirrored".into(),
+                file_paths: vec![unselected_source.to_string_lossy().to_string()],
+                asset_ids: Vec::new(),
+                transfer_mode: "copy".into(),
+            },
+            &state,
+        )
+        .await
+        .unwrap();
+        drop(file_guard);
         let row = sqlx::query("SELECT a.id, r.path root_path, a.relative_path FROM assets a JOIN model_assets ma ON ma.asset_id = a.id JOIN library_roots r ON r.id = a.root_id WHERE ma.model_id = ? LIMIT 1")
             .bind(&project_id)
             .fetch_one(&state.pool)
@@ -1842,6 +2486,8 @@ mod tests {
                 bind: format!("127.0.0.1:{port}").parse().unwrap(),
                 public_url: base_url.clone(),
                 organization_writes: true,
+                web_admin: None,
+                web_dir: None,
             })
             .await
             .unwrap();
@@ -1879,9 +2525,15 @@ mod tests {
                 mirror: Some(MirrorConfig {
                     path: mirror.to_string_lossy().to_string(),
                     enabled: true,
+                    mode: "selected".into(),
+                    selection: MirrorSelection {
+                        project_ids: vec![project_id.clone()],
+                        ..MirrorSelection::default()
+                    },
                     last_sync_at: None,
                     last_error: None,
                 }),
+                retired_local: None,
             };
             persist_config(&inner.path, &inner.config).unwrap();
         }
@@ -1889,6 +2541,7 @@ mod tests {
 
         let initial = remote.sync_mirror().await.unwrap();
         assert_eq!(initial.downloaded, 1);
+        assert_eq!(initial.total_assets, 1);
         assert_eq!(initial.conflicts, 0);
         let local_manifest = read_local_manifest(&mirror.join(".volum/manifest.json"), "")
             .unwrap()

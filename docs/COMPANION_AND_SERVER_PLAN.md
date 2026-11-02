@@ -1,7 +1,7 @@
 # Volum Companion and Local Server Plan
 
 **Status:** In progress — secure mobile browsing, organization, uploads, offline snapshots, and touch 3D inspection implemented
-**Last updated:** 2026-10-25
+**Last updated:** 2026-10-30
 **Products:** Volum Desktop and Volum for iOS and Android (companion role)
 **Primary architecture:** One Tauri 2 mobile client, backed by an opt-in local server embedded in Volum Desktop
 
@@ -16,7 +16,7 @@ The recommended product shape is:
 - Volum Desktop remains the owner of the filesystem, SQLite database, indexing, parsing, previews, and all destructive file operations.
 - Companion Access is disabled by default and can be enabled from Desktop settings.
 - The companion pairs with the desktop by scanning a short-lived QR code.
-- Desktop Companion Access binds to the discovered Tailscale address. The headless server has a configurable listener so operators can choose Tailscale, a trusted local network, or a TLS reverse proxy. Tailscale supplies WireGuard encryption and device/network identity; Volum adds one-time pairing, per-device tokens, and revocation.
+- Desktop Companion Access uses automatic Tailscale discovery by default, but Tailscale is not required. Custom mode separates the private listener IP from the private HTTP or trusted HTTPS URL clients use. LAN, WireGuard, Twingate, ZeroTier, and reverse proxies are supported. Volum adds server-identity verification, one-time pairing, per-device tokens, and revocation.
 - Volum mobile is a full mobile client delivered in safe phases, not only a read-only companion. Desktop remains authoritative for storage, indexing, parsing, and destructive file operations.
 - Authenticated mobile writes begin with managed 3D-file uploads, favorites, notes, manual collections, and collection membership, then expand to project documentation and phone photos.
 - Touch-friendly 3D inspection and explicit offline availability are part of the mobile product scope.
@@ -33,16 +33,21 @@ Implemented on 2026-10-25:
 - [x] Sanitized network DTOs that omit absolute and relative asset paths.
 - [x] Desktop Companion Access settings, QR display, status, device list, and revocation.
 - [x] One Tauri React mobile codebase plus generated iOS and Android native projects.
-- [x] QR/manual pairing, Stronghold credential storage, Tailnet-restricted Rust HTTP transport, library/favorites/collections/search, and project details.
+- [x] QR/manual pairing, Stronghold credential storage, native HTTPS/private-network Rust transport, library/favorites/collections/search, and project details.
 - [x] Project photos, custom fields, BOM, assembly steps, files, tags, source attribution, and cover thumbnails.
 - [x] Bounded, streaming STL/3MF/OBJ/STEP/STP and photo uploads with progress and native cancellation.
-- [x] Editable paired Tailnet address with fixed port `43821`, paired-server identity verification, and pull-to-refresh/loading states.
+- [x] Editable paired server origin with HTTP port `43821` defaulting, paired-server identity verification, and pull-to-refresh/loading states.
 - [x] Native display name and layered platform icons use the Volum brand; “companion” remains a role and protocol name.
 - [x] First authenticated organization writes: conflict-checked favorites and notes, manual collection creation, and collection membership.
 - [x] Collections have a designed empty state and mobile creation flow.
 - [x] Android arm64 debug APK, unsigned release APK, and unsigned iOS device archive builds.
 - [x] Live Tailnet pairing/authentication round-trip test.
-- [x] Mobile frontend, Rust, and Android debug-build CI jobs.
+- [x] Automatic Tailscale and Custom Desktop network modes with separate bind IP and advertised origin.
+- [x] Backward-compatible `tailscale-http`, provider-neutral `private-http`, and `https` pairing transports.
+- [x] Any trusted HTTPS origin; private-only HTTP with an explicit mobile warning; public HTTP rejection; redirects disabled.
+- [x] Editable advertised URL before QR generation and editable URL review after scanning.
+- [x] `/identity` verification before a pairing secret or stored token is sent to a changed origin.
+- [x] Mobile frontend tests/build, Rust checks/tests, visual regression, Android release build, and unsigned iOS simulator-build CI jobs.
 - [x] Offline metadata/media snapshots, mobile localization, revision-safe writes, photo uploads, revision polling, and an interactive 3D viewer.
 - [x] Add revision/ETag-aware transient media caching with bounded LRU eviction.
 - [x] Complete English, Catalan, and Spanish mobile interface, validation, and server-error localization with source-scanned coverage tests.
@@ -177,8 +182,8 @@ The plan therefore introduces narrow reusable service functions and network DTOs
 ## 6. Target architecture
 
 ```text
-                               Tailscale network
-┌────────────────────┐     HTTP inside WireGuard    ┌─────────────────────────┐
+                   Private network/VPN or trusted HTTPS
+┌────────────────────┐       authenticated API      ┌─────────────────────────┐
 │ Volum Companion    │ <─────────────────────────> │ Volum Desktop           │
 │ Tauri iOS/Android  │                              │                         │
 │                    │                              │ Axum API adapter        │
@@ -210,20 +215,21 @@ TanStack Query + offline repository
                 │
 Typed companion API client
                 │
-Tauri commands for restricted Tailnet HTTP and secure storage
+Tauri commands for restricted private HTTP/trusted HTTPS and secure storage
                 │
 Volum Desktop server
 ```
 
-The mobile WebView does not make ordinary JavaScript network requests. A small Rust transport accepts only Tailscale CGNAT, Tailscale IPv6, or `*.ts.net` hosts, executes requests, and returns typed JSON or binary data to the React layer. A future direct-LAN transport will add certificate-pinned TLS.
+The mobile WebView does not make ordinary JavaScript network requests. A small Rust transport accepts trusted HTTPS and HTTP only for loopback, private IPv4/IPv6, link-local, Tailscale, `.local`, `.ts.net`, or names that resolve entirely to private addresses. It disables redirects, executes requests, and returns typed JSON or binary data to the React layer.
 
 ### 6.3 Deployment modes
 
 | Mode | Initial support | Behavior |
 | --- | --- | --- |
-| Same Wi-Fi without Tailscale | Later | Direct-LAN access will require certificate-pinned HTTPS. |
-| Tailscale/WireGuard | Required initially | Bind only to the desktop Tailnet address; Tailscale encrypts the route and Volum authenticates the paired device. |
-| Public internet | Not supported | No port forwarding, UPnP, public listener, or cloud relay instructions. |
+| Same trusted Wi-Fi | Supported | Custom mode binds an explicit private IP; private HTTP shows a warning and relies on the LAN boundary. |
+| Tailscale/WireGuard/ZeroTier | Supported | Tailscale is automatic; other VPN routes use Custom mode. The tunnel protects private HTTP. |
+| Twingate/private DNS | Supported | Private HTTP names must resolve entirely to private addresses; trusted HTTPS is also accepted. |
+| Public internet | HTTPS only | A trusted reverse proxy must terminate TLS. Public HTTP remains blocked; there is no Volum relay or UPnP. |
 | Desktop in foreground | Required for 0.1 | Server runs while the Volum process is running. |
 | Desktop background/tray | Later | Optional keep-running and login-start behavior. |
 | Headless NAS/server | Future | Reuse extracted Rust services in a separate daemon. |
@@ -666,33 +672,32 @@ Protect against:
 
 The first version does not attempt to protect data on an already-unlocked, compromised desktop or phone.
 
-### 11.2 Tailnet transport and later direct-LAN TLS
+### 11.2 Private-network and HTTPS transport
 
-The initial release relies on Tailscale's authenticated WireGuard tunnel:
+The release supports three backward-compatible transport identifiers:
 
-1. Desktop creates a stable random Volum server ID.
-2. Desktop discovers its active Tailscale IPv4 address and binds only to that address.
-3. Mobile's Rust transport rejects non-Tailscale IP ranges and non-`*.ts.net` hosts.
-4. Tailscale encrypts packets and enforces Tailnet membership; Volum separately authenticates every library request with a paired-device token.
-5. Plain HTTP is never bound to ordinary LAN, loopback, or public interfaces.
+1. `tailscale-http`: automatic Desktop discovery and all existing QR payloads; Tailscale's WireGuard tunnel protects application HTTP.
+2. `private-http`: an explicit LAN, WireGuard, Twingate, ZeroTier, or other private route. HTTP is allowed only for private/link-local/Tailscale IPs or names that resolve entirely to private addresses. Mobile shows an explicit warning because the network or VPN supplies confidentiality.
+3. `https`: any origin whose TLS certificate is trusted by the operating system. This is required for public or otherwise non-private routes.
 
-For users who later need direct Wi-Fi access without Tailscale, add a separate certificate-pinned HTTPS mode with a generated TLS keypair, QR-delivered fingerprint, hard certificate-mismatch failure, and no option to disable verification.
+Desktop creates a stable random Volum server ID. Automatic mode binds only to the discovered Tailscale IP. Custom mode binds only to an explicit private IP and separately advertises the origin clients use; wildcard and public listener IPs are rejected. Public HTTP is always rejected, redirects are disabled, and no mode uses UPnP or a hosted Volum relay.
 
 ### 11.3 Pairing flow
 
 1. User enables Companion Access in Desktop settings.
 2. User selects **Pair a device**.
 3. Desktop creates a cryptographically random, one-use pairing secret with a five-minute lifetime.
-4. Desktop displays a QR code containing protocol version, server ID, Tailnet address/port, transport identifier, and the one-time secret.
+4. Desktop displays a QR code containing protocol version, server ID, editable server origin, transport identifier, and the one-time secret.
 5. The companion scans the QR using Tauri's mobile barcode-scanner plugin.
-6. Mobile validates the Tailnet address in its Rust transport and calls `/pair` with device name and platform.
-7. Desktop verifies and consumes the one-time secret.
-8. Desktop returns a random 256-bit bearer token once.
-9. Server stores only a token hash and device metadata.
-10. Mobile stores the token and server identity in Stronghold.
-11. Desktop lists the device with paired and last-seen timestamps.
+6. Mobile displays an editable address-review screen and explains whether HTTPS, Tailscale, or a private network protects the route.
+7. Mobile validates the transport policy and calls unauthenticated `/identity`; it checks server ID and protocol compatibility before sending the secret.
+8. Mobile calls `/pair` with device name and platform. Desktop verifies and consumes the one-time secret.
+9. Desktop returns a random 256-bit bearer token once.
+10. Server stores only a token hash and device metadata.
+11. Mobile stores the token and server identity in Stronghold.
+12. Desktop lists the device with paired and last-seen timestamps.
 
-Manual entry parses the same signed-in-Tailnet payload and preserves the same host-range restrictions; it cannot be used as an arbitrary URL client.
+Manual entry parses the same payload and preserves the same HTTPS/private-HTTP policy. Later address edits perform `/identity` verification before a stored token is used against the new origin.
 
 ### 11.4 Authorization
 
@@ -732,9 +737,9 @@ The separate companion store is excluded from Volum backups and restore archives
 ### 11.6 Network behavior
 
 - Bind only after explicit enablement.
-- Bind only to the active Tailscale interface in the initial release.
+- Default to the active Tailscale interface, with explicit Custom mode for another private listener IP.
 - Persist an automatically selected available port; permit reset if another application claims it.
-- Do not bind the Tailnet HTTP listener to ordinary LAN, loopback, or wildcard addresses.
+- Do not bind to wildcard or public addresses. Custom mode may bind an explicit LAN, VPN, loopback, or link-local IP.
 - Do not advertise through public discovery services.
 - Add Bonjour/mDNS (`_volum._tcp`) only after QR pairing works reliably.
 - Treat mDNS as convenience discovery, never as authentication.
@@ -800,7 +805,7 @@ Recommended stack:
 
 - `axum` for routing and extractors;
 - `tower`/`tower-http` for limits, request IDs, tracing, and timeouts;
-- Tailscale/WireGuard as the initial encrypted transport boundary;
+- Tailscale/WireGuard as the automatic path, explicit private-network routes, or trusted HTTPS;
 - `tokio-util::CancellationToken` for clean start/stop;
 - a maintained QR encoder for the Desktop pairing dialog;
 - an explicit rate limiter for pairing and authentication failures.
@@ -809,7 +814,7 @@ Add a `CompanionServerController` to desktop state that can:
 
 - start once;
 - stop cleanly;
-- report Tailnet address, port, server identity, and status;
+- report network mode, listener/address, transport, server identity, and status;
 - create and consume short-lived pairing sessions;
 - revoke a device;
 - shut down during application exit.
@@ -825,7 +830,7 @@ Add a **Companion Access** section near Privacy & data:
 - **Pair a device** button;
 - QR dialog with expiration countdown and cancel action;
 - paired-device rows with device name, platform, scopes, paired date, last seen, and revoke;
-- optional Tailscale/manual address help;
+- automatic Tailscale and Custom LAN/VPN/HTTPS address controls;
 - later background/tray controls.
 
 Turning access off must close the listener immediately while retaining device records unless the user explicitly revokes or resets them.
@@ -841,8 +846,8 @@ Resetting server identity must warn that every companion will be disconnected.
 Proposed values, subject to store availability checks:
 
 - Product name: **Volum Companion**
-- iOS bundle ID: `dev.didac.volum.companion`
-- Android application ID: `dev.didac.volum.companion`
+- iOS bundle ID: `com.dsd.volum.companion`
+- Android application ID: `com.dsd.volum.companion`
 - URL scheme: `volum://`
 
 The home-screen display name may be shortened to **Volum** if store and platform metadata clearly describe it as the companion.
@@ -854,7 +859,7 @@ Use Tauri for:
 - one React UI codebase on iOS and Android;
 - QR scanning through the official barcode-scanner plugin;
 - Stronghold-backed secret storage;
-- a custom Rust command restricted to Tailnet HTTP hosts;
+- a custom Rust command restricted to trusted HTTPS or private HTTP hosts;
 - opening intentional external URLs;
 - optional haptics and biometrics later;
 - platform build/signing integration.
@@ -932,19 +937,19 @@ Each phase should land as one or more reviewable pull requests and preserve all 
 
 **Purpose:** retire the highest-risk unknowns before restructuring production code.
 
-- [x] Confirm native app name and bundle/application IDs (`Volum`, `dev.didac.volum.companion`).
+- [x] Confirm native app name and bundle/application IDs (`Volum`, `com.dsd.volum.companion`).
 - [ ] Decide minimum supported iOS and Android versions based on current Tauri/plugin support.
 - [ ] Audit repository contributors and choose a mobile/App Store licensing strategy.
 - [x] Initialize the production Tauri mobile app and generated iOS/Android projects.
 - [x] Build and run it on one physical iPhone and one physical Android device.
 - [x] Verify shared CSS tokens and the model card render correctly in both WebViews.
 - [ ] Verify official QR scanning on both platforms.
-- [x] Prove the Rust mobile command can connect only to Tailnet hosts; complete a live pairing/authentication round trip over Tailscale.
+- [x] Prove the Rust mobile command permits trusted HTTPS/private routes, blocks public HTTP, and completes a live pairing/authentication round trip over Tailscale.
 - [x] Implement Stronghold persistence for the paired server identity and token.
 - [x] Verify binary image transfer and blob/cache rendering on physical iOS and Android devices.
 - [ ] Record WebGL availability and a representative `VLM2` mesh result, without committing to viewer launch scope.
 
-**Exit criteria:** pairing transport, secure storage, QR scanning, physical-device builds, and shared styling are all feasible. Initial HTTP must remain confined to the Tailnet interface and Rust host allowlist; do not expose plaintext HTTP to the ordinary LAN.
+**Exit criteria:** pairing transport, secure storage, QR scanning, physical-device builds, and shared styling are all feasible. HTTP remains confined to explicit private network/VPN routes; public routes require HTTPS.
 
 ### Phase 1 — workspace and design foundation
 
@@ -1005,18 +1010,18 @@ Each phase should land as one or more reviewable pull requests and preserve all 
 
 - [x] Implement the separate, backup-excluded `companion.json` security store.
 - [x] Generate and persist a stable server ID.
-- [x] Bind HTTP only to the active Tailscale IPv4 address.
+- [x] Bind Automatic mode only to the active Tailscale IPv4 address and Custom mode only to an explicit private IP.
 - [x] Implement in-memory one-time pairing sessions with five-minute expiry and one-use consumption.
 - [x] Implement device token issuance, hashing, last-seen updates, and revocation; the current API is read-only.
 - [x] Limit failed attempts for each pairing session.
 - [x] Add a start/stop/restart controller and clean shutdown.
 - [x] Discover the active Tailnet address and MagicDNS name without placing tokens or pairing secrets in logs.
-- [ ] Add direct-LAN TLS identity, certificate pinning, and reset/rotation if that mode is approved.
+- [x] Add trusted HTTPS and private-LAN/VPN HTTP transport policy with server-identity verification before secrets or tokens.
 - [x] Add a live ignored integration test for one-use pairing, authenticated access, and immediate revocation.
 - [ ] Add non-network unit coverage for expiry and failed-attempt exhaustion.
-- [ ] Add a platform test proving the release listener never binds to wildcard or ordinary LAN addresses.
+- [ ] Add platform tests proving the listener never binds to wildcard or public addresses and Custom mode binds only the requested private IP.
 
-**Exit criteria:** no library endpoint is reachable without a valid device token over the Tailnet-only listener, and revocation takes effect immediately.
+**Exit criteria:** no library endpoint is reachable without a valid device token over an approved private or HTTPS transport, and revocation takes effect immediately.
 
 ### Phase 5 — Desktop Companion Access UI
 
@@ -1028,7 +1033,7 @@ Each phase should land as one or more reviewable pull requests and preserve all 
 - [x] Add running/stopped/error status and actionable error copy.
 - [x] Add a QR pairing dialog with expiry countdown and close control.
 - [x] Add the paired-device list and revoke confirmation.
-- [x] Add Tailscale connection guidance and an address-copy fallback.
+- [x] Add automatic Tailscale plus Custom listener/advertised-address controls and editable QR origin.
 - [x] Add translations in English, Catalan, and Spanish.
 - [x] Update privacy copy to distinguish optional companion traffic from cloud uploads.
 - [x] Ensure disabling closes the listener immediately.
@@ -1043,14 +1048,15 @@ Each phase should land as one or more reviewable pull requests and preserve all 
 - [x] Create the `mobile/` Tauri application and production identifiers.
 - [x] Add mobile Vite, TypeScript, Vitest, and Tauri configurations.
 - [x] Add initial mobile transport Vitest coverage for server-address normalization and selected-file filename handling.
-- [x] Add CI jobs for the mobile frontend, Rust checks/tests, and Android arm64 debug build.
+- [x] Add CI jobs for the mobile frontend, Rust checks/tests, visual regression, Android arm64 release build, and unsigned iOS simulator build.
 - [ ] Add shared design and localization packages.
 - [x] Add a safe-area shell, system light/dark theme application, and mobile navigation.
 - [x] Add camera/local-network permission strings and Android manifest entries.
 - [x] Add QR scanner and manual-entry flow.
-- [x] Implement a Rust HTTP transport restricted to Tailscale CGNAT, Tailscale IPv6, and `*.ts.net` hosts.
+- [x] Implement a Rust transport for trusted HTTPS and private-only HTTP, with DNS validation and redirects disabled.
 - [x] Store the server identity and token in Stronghold.
 - [x] Add protocol compatibility and server-identity checks during pairing.
+- [x] Add editable post-scan address review, explicit private-HTTP warning, and identity checks before pairing or changing address.
 - [x] Add user-friendly connection, unavailable, and revoked states.
 - [x] Add unpair and re-pair flows.
 - [ ] Verify release-mode builds on physical iOS and Android devices.
@@ -1261,16 +1267,18 @@ These are starting budgets, not promises to hide regressions; CI/load tests shou
 
 ### 17.1 Continuous integration
 
-Extend `.github/workflows/ci.yml` with separate jobs for:
+CI now runs separate jobs for:
 
-- shared package tests/typecheck/build;
-- mobile React tests/build;
-- companion API schema drift;
+- shared Photo Room tests through the desktop and mobile suites;
+- mobile React tests/build and Playwright visual regression;
 - desktop Rust server/service tests;
 - mobile Rust checks for supported targets;
-- Android debug build;
-- iOS compile/build check on macOS where signing permits;
-- existing desktop frontend, Rust, AppImage, and Windows installer jobs unchanged.
+- Android arm64 release APK build;
+- unsigned iOS simulator archive on macOS;
+- browser administrator, website/docs, and Docker image builds;
+- desktop frontend, Rust, AppImage, and Windows installer builds.
+
+OpenAPI generation and companion API schema-drift validation remain future gates.
 
 Pin compatible Tauri and plugin versions rather than allowing an unreviewed mobile plugin major/minor jump.
 
@@ -1326,7 +1334,7 @@ Suggested capabilities:
 
 | Risk | Impact | Mitigation |
 | --- | --- | --- |
-| Tailnet HTTP is accidentally exposed outside Tailscale | Exposes private library data without transport encryption | Bind only to the discovered Tailnet IP, reject non-Tailscale hosts in mobile Rust, keep CSP restrictive, and test release configurations. |
+| Private HTTP is exposed to a public or untrusted network | Exposes private library data without transport encryption | Reject public listener/client addresses, resolve HTTP DNS names to private IPs, disable redirects, require HTTPS for public routes, firewall the listener, and test release configurations. |
 | Desktop must be running | Companion appears unreliable | Explain state clearly, add offline cache, then optional tray/start-at-login. |
 | Existing commands are transport-coupled | Server duplicates logic or leaks fields | Extract service functions and create dedicated network DTOs first. |
 | Styling diverges | Companion feels like another product | Shared token/package ownership, screenshot tests, and no mobile palette duplication. |
@@ -1334,7 +1342,7 @@ Suggested capabilities:
 | Large libraries overwhelm phone/network | Slow grids and memory pressure | Cursor pagination, lazy media, ETags, LRU cache, payload budgets, virtualization if measured necessary. |
 | 3D meshes overwhelm mobile GPU/RAM | Crashes or battery drain | Keep viewer post-MVP, cap payloads, cache sparingly, retain thumbnail fallback. |
 | Pairing tokens leak through backups/logs | Unauthorized access | Separate security store, OS credential manager, redacted logging, backup exclusion tests. |
-| Tailnet addresses or device names change | Reconnection failures | Store server identity, use MagicDNS when practical, and provide explicit re-pairing without weakening host validation. |
+| Network addresses or device names change | Reconnection failures or token disclosure to the wrong host | Store server identity, verify `/identity` before pairing or using a token at a changed origin, and provide explicit re-pairing without weakening host validation. |
 | GPL/App Store incompatibility | Blocks iOS distribution | Resolve licensing in Phase 0, before significant shared-code investment. |
 | Tauri plugin/mobile regressions | Release instability | Pin versions, test release builds on hardware, keep platform-specific code small. |
 | Safe writes create conflicts | Lost notes or confusing state | Ship read-only first; require online edits and revision preconditions later. |
@@ -1347,8 +1355,8 @@ Recommended defaults are shown in bold.
 
 - Mobile framework: **Tauri 2 with React for both iOS and Android**.
 - Initial access: **read-only**.
-- Connectivity: **Tailscale required initially; no public relay or ordinary-LAN listener**.
-- Transport: **HTTP bound only to the Tailnet address, inside Tailscale's authenticated WireGuard tunnel; certificate-pinned HTTPS is reserved for a later direct-LAN mode**.
+- Connectivity: **Tailscale is the automatic recommended path, not a requirement; explicit private LAN/VPN routes and trusted HTTPS are supported; there is no public relay**.
+- Transport: **`tailscale-http` remains backward compatible; `private-http` is limited to explicit private routes with a warning; `https` accepts operating-system-trusted TLS; public HTTP and redirects are blocked**.
 - Pairing: **short-lived one-use QR code with manual secure fallback**.
 - Desktop lifecycle: **server available only while Volum runs for 0.1**.
 - Mobile server count: **one active paired server in 0.1; schema permits more later**.
@@ -1360,11 +1368,11 @@ Recommended defaults are shown in bold.
 
 Items requiring explicit owner decision:
 
-- [x] Native mobile name and identifiers (`Volum`, `dev.didac.volum.companion`); Companion remains the in-app connection role.
+- [x] Native mobile name and identifiers (`Volum`, `com.dsd.volum.companion`); Companion remains the in-app connection role.
 - [ ] Confirm iOS 15 as the public minimum after hardware testing.
 - [ ] Confirm Android API 24 as the public minimum after hardware testing.
 - [ ] Mobile/shared-code licensing approach.
-- [x] Companion 0.1 requires Tailscale; launch documentation must explain that prerequisite.
+- [x] Companion 1.0 keeps automatic Tailscale while documenting and supporting LAN, WireGuard, Twingate, ZeroTier, and trusted HTTPS alternatives.
 - [ ] Whether phone photo upload belongs in 0.2 or 0.3.
 - [ ] Default mobile media cache limit after device testing.
 
@@ -1376,7 +1384,7 @@ The first public companion release is complete when:
 
 - [x] A user can enable Companion Access without editing files or using a terminal.
 - [ ] iOS and Android can pair by QR and reconnect after restart.
-- [x] Every library endpoint requires a valid, revocable token over the Tailnet-only listener.
+- [x] Every library endpoint requires a valid, revocable token over an approved private or HTTPS transport.
 - [x] Companion API responses omit absolute paths, relative asset paths, and secrets.
 - [ ] Library, search, favorites, folders, collections, project detail, photos, BOM, and assembly instructions work on both platforms.
 - [ ] Cached project information remains readable while the desktop is unavailable.
@@ -1402,9 +1410,9 @@ This is the smallest reviewable order that follows the dependencies above:
 4. **Backend read services and tests.**
 5. **Sanitized companion DTOs, OpenAPI, and generated TypeScript client.**
 6. **Read-only Axum routes behind test authentication.**
-7. **Tailnet-only listener, secure pairing, device tokens, and revocation.**
+7. **Private listener/HTTPS policy, secure pairing, device tokens, and revocation.**
 8. **Desktop Companion Access settings and QR flow.**
-9. **Mobile Tailnet-restricted transport, QR pairing, and secure storage.**
+9. **Mobile private-HTTP/trusted-HTTPS transport, QR pairing, identity verification, and secure storage.**
 10. **Mobile library/search/collection browsing.**
 11. **Mobile project detail, photos, BOM, and assembly guide.**
 12. **Offline metadata/media cache and resilience.**
@@ -1422,7 +1430,7 @@ Each PR should update this checklist, add its own tests, and keep the Desktop ap
 - Tauri mobile development: <https://v2.tauri.app/develop/>
 - Tauri barcode scanner: <https://v2.tauri.app/plugin/barcode-scanner/>
 - Tauri Stronghold: <https://v2.tauri.app/plugin/stronghold/>
-- Current Volum architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
+- Current Volum architecture: [`../website/docs/reference/architecture.md`](../website/docs/reference/architecture.md)
 - Current product plan: [`../Volum-product-engineering-plan.md`](../Volum-product-engineering-plan.md)
 - Current shared visual source: [`../src/styles/global.css`](../src/styles/global.css)
 - Current frontend API facade: [`../src/lib/tauri/api.ts`](../src/lib/tauri/api.ts)

@@ -1,12 +1,16 @@
+import { getVersion } from "@tauri-apps/api/app";
 import { openAppSettings } from "@tauri-apps/plugin-barcode-scanner";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bell,
+  CircleAlert,
+  CircleCheck,
   CloudDownload,
   HardDrive,
   KeyRound,
   Languages,
   LoaderCircle,
+  Sparkles,
   ShieldCheck,
   Trash2,
   Unplug,
@@ -18,11 +22,12 @@ import { Brand } from "../../components/Brand";
 import { PullToRefresh } from "../../components/PullToRefresh";
 import { saveCredential } from "../../lib/credentials";
 import { formatBytes } from "../../lib/format";
+import { isDemoCredential } from "../../lib/demo";
 import { localizedError, setLanguage, t, useLanguage, type AppLanguage } from "../../lib/i18n";
 import { clearMediaCache, mediaCacheStats } from "../../lib/mediaCache";
 import { completionNotificationsEnabled, setCompletionNotifications } from "../../lib/notifications";
 import { clearOfflineProjects, listOfflineManifests } from "../../lib/offline";
-import { normalizeServerUrl, requestJson } from "../../lib/transport";
+import { normalizeServerUrl, requestJson, verifyServerIdentity } from "../../lib/transport";
 import type { Credential, ServerStatus } from "../../types";
 
 export function SettingsScreen({
@@ -42,12 +47,16 @@ export function SettingsScreen({
   const [address, setAddress] = useState(credential.baseUrl);
   const [savingAddress, setSavingAddress] = useState(false);
   const [addressError, setAddressError] = useState("");
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [connectionTest, setConnectionTest] = useState<{ success: boolean; message: string }>();
   const [permissionError, setPermissionError] = useState("");
   const [clearingCache, setClearingCache] = useState(false);
   const [clearingMedia, setClearingMedia] = useState(false);
   const [completionAlerts, setCompletionAlerts] = useState(completionNotificationsEnabled);
   const [notificationBusy, setNotificationBusy] = useState(false);
+  const [appVersion, setAppVersion] = useState("1.0.0");
   const language = useLanguage();
+  const demo = isDemoCredential(credential);
   const offline = useQuery({
     queryKey: ["offline-manifests", credential.serverId],
     queryFn: () => listOfflineManifests(credential.serverId),
@@ -60,12 +69,16 @@ export function SettingsScreen({
   });
 
   useEffect(() => setAddress(credential.baseUrl), [credential.baseUrl]);
+  useEffect(() => { void getVersion().then(setAppVersion).catch(() => undefined); }, []);
 
   const saveAddress = async () => {
     setSavingAddress(true);
     setAddressError("");
+    setConnectionTest(undefined);
     try {
-      const baseUrl = normalizeServerUrl(address);
+      const candidate = normalizeServerUrl(address);
+      if (candidate.startsWith("http://") && candidate !== credential.baseUrl && !window.confirm(t("This private HTTP connection relies on your network or VPN for encryption. Continue?"))) return;
+      const baseUrl = await verifyServerIdentity(candidate, credential.serverId);
       const next = { ...credential, baseUrl };
       const nextStatus = await requestJson<ServerStatus>(next, "/api/v1/status");
       if (nextStatus.serverId !== credential.serverId) {
@@ -78,6 +91,29 @@ export function SettingsScreen({
       setAddressError(localizedError(reason));
     } finally {
       setSavingAddress(false);
+    }
+  };
+
+  const testConnection = async () => {
+    setTestingConnection(true);
+    setAddressError("");
+    setConnectionTest(undefined);
+    try {
+      const candidate = normalizeServerUrl(address);
+      if (candidate.startsWith("http://") && candidate !== credential.baseUrl && !window.confirm(t("This private HTTP connection relies on your network or VPN for encryption. Continue?"))) return;
+      const baseUrl = await verifyServerIdentity(candidate, credential.serverId);
+      const nextStatus = await requestJson<ServerStatus>({ ...credential, baseUrl }, "/api/v1/status");
+      if (nextStatus.serverId !== credential.serverId) {
+        throw new Error(t("That address belongs to a different Volum Desktop."));
+      }
+      setConnectionTest({
+        success: true,
+        message: t("Connected to {name}", { name: nextStatus.name }),
+      });
+    } catch (reason) {
+      setConnectionTest({ success: false, message: localizedError(reason) });
+    } finally {
+      setTestingConnection(false);
     }
   };
 
@@ -143,31 +179,41 @@ export function SettingsScreen({
     <PullToRefresh onRefresh={onRefresh} />
     <header className="mobile-header">
       <div>
-        <div className="eyebrow">VOL⁣UM {t("MOBILE")}</div>
         <h1>{t("Settings")}</h1>
         <p>{t("Connection and privacy")}</p>
       </div>
-      <Brand compact />
     </header>
 
-    <section className="mobile-settings-card">
+    {demo ? <section className="mobile-settings-card demo-settings-card">
+      <span className="settings-icon is-demo"><Sparkles /></span>
+      <div>
+        <strong>{t("Demo library")}</strong>
+        <small>{t("Explore sample projects without an account or a connection to Volum Desktop. Changes and uploads are disabled.")}</small>
+      </div>
+    </section> : <section className="mobile-settings-card">
       <span className="settings-icon is-online"><Wifi /></span>
       <div>
         <strong>{credential.serverName}</strong>
         <small>{status ? `${status.projectCount} ${t("projects")} · ${t("Connected")}` : "Volum Desktop"}</small>
         <label className="server-address">
-          <span>{t("Tailnet address")}</span>
+          <span>{t("Server address")}</span>
           <div>
-            <input value={address} disabled={savingAddress} autoCapitalize="off" autoCorrect="off" onChange={(event) => setAddress(event.target.value)} />
-            <button disabled={savingAddress || address.trim() === credential.baseUrl} onClick={() => void saveAddress()}>
+            <input value={address} disabled={savingAddress || testingConnection} autoCapitalize="off" autoCorrect="off" onChange={(event) => { setAddress(event.target.value); setAddressError(""); setConnectionTest(undefined); }} />
+            <button disabled={savingAddress || testingConnection || address.trim() === credential.baseUrl} onClick={() => void saveAddress()}>
               {savingAddress ? <LoaderCircle className="spin" /> : t("Save")}
             </button>
           </div>
-          <small>{t("Port 43821 is added automatically.")}</small>
+          <small>{t("Use a private HTTP origin or any trusted HTTPS origin.")}</small>
         </label>
+        <button className="settings-action-button settings-test-button" disabled={savingAddress || testingConnection || !address.trim()} onClick={() => void testConnection()}>
+          {testingConnection ? <LoaderCircle className="spin" /> : <Wifi />}{testingConnection ? t("Testing connection…") : t("Test connection")}
+        </button>
+        {connectionTest && <div className={`connection-test-result ${connectionTest.success ? "is-success" : "is-error"}`} role={connectionTest.success ? "status" : "alert"}>
+          {connectionTest.success ? <CircleCheck /> : <CircleAlert />}<span>{connectionTest.message}</span>
+        </div>}
         {addressError && <div className="settings-inline-error" role="alert">{addressError}</div>}
       </div>
-    </section>
+    </section>}
 
     <section className="mobile-settings-card">
       <span className="settings-icon"><Languages /></span>
@@ -229,14 +275,14 @@ export function SettingsScreen({
       </div>
     </section>
 
-    <button className="unpair-button" onClick={onUnpair}><Unplug size={17} />{t("Unpair this device")}</button>
+    <button className="unpair-button" onClick={onUnpair}><Unplug size={17} />{t(demo ? "Exit demo" : "Unpair this device")}</button>
 
     <p className="settings-section-heading">{t("PRIVACY & SAFETY")}</p>
     <section className="mobile-settings-card mobile-settings-card--informational">
       <span className="settings-icon"><ShieldCheck /></span>
       <div>
         <strong>{t("Private by design")}</strong>
-        <small>{t("Your token is encrypted on this device. Library requests travel through your Tailnet without a Volum cloud or relay.")}</small>
+        <small>{t("Your token is encrypted on this device. Library requests travel directly through your chosen network without a Volum cloud or relay.")}</small>
       </div>
     </section>
     <section className="mobile-settings-card mobile-settings-card--informational">
@@ -247,6 +293,9 @@ export function SettingsScreen({
       </div>
     </section>
 
-    <p className="settings-version">Volum 0.1 · {t("Protocol")} 1</p>
+    <footer className="settings-about">
+      <Brand />
+      <p>v{appVersion} · {t("Protocol")} 1</p>
+    </footer>
   </main>;
 }

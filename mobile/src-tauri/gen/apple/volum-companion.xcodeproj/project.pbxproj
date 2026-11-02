@@ -15,6 +15,7 @@
 		62A5DA7E462229C9BB8FF09B /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1C8424B10EF28EEBFDF993A3 /* MetalKit.framework */; };
 		AA2B654CAF95674F8E6EFCB9 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B24B5DA664DA9C39AFA4AA8E /* Metal.framework */; };
 		AE5814BA86043A3EE7618419 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 6747F0EA598DB54BC62AAD5A /* LaunchScreen.storyboard */; };
+		C30DC1EC8B0A4F9D1D44441C /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 4EF21E428F9BBDD4514FE5C5 /* PrivacyInfo.xcprivacy */; };
 		C5A04EAEFDE72CE75136F739 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8CBAAFFF8B18CD4C1BCA73AB /* Security.framework */; };
 		C5A6144779C4C9970A86F786 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 409EDE2A9FD9D1F18A8BF1F8 /* Assets.xcassets */; };
 		D0602411FBB7239F5F220316 /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B5F1910914325FED9508D5A8 /* QuartzCore.framework */; };
@@ -26,6 +27,7 @@
 		1C8424B10EF28EEBFDF993A3 /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
 		409EDE2A9FD9D1F18A8BF1F8 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		436E15BF327F5093DCEEB8B8 /* lib.rs */ = {isa = PBXFileReference; path = lib.rs; sourceTree = "<group>"; };
+		4EF21E428F9BBDD4514FE5C5 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		51E9FFB693571F301E64AE0C /* main.rs */ = {isa = PBXFileReference; path = main.rs; sourceTree = "<group>"; };
 		5C306939225EA73F4777447D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		6747F0EA598DB54BC62AAD5A /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
@@ -37,6 +39,7 @@
 		91490C2C7D75499577B40A38 /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
 		B24B5DA664DA9C39AFA4AA8E /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
 		B5F1910914325FED9508D5A8 /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
+		DD3ECDA95AEF50A9C9C7B5E4 /* local_preview.rs */ = {isa = PBXFileReference; path = local_preview.rs; sourceTree = "<group>"; };
 		E234A1A0B0B502DCB24AB219 /* volum-companion_iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "volum-companion_iOS.entitlements"; sourceTree = "<group>"; };
 		F16084088BB21AF77852A80A /* volum-companion_iOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "volum-companion_iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		F7BF2883B6E1B044E8275CBB /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
@@ -65,6 +68,7 @@
 			isa = PBXGroup;
 			children = (
 				436E15BF327F5093DCEEB8B8 /* lib.rs */,
+				DD3ECDA95AEF50A9C9C7B5E4 /* local_preview.rs */,
 				51E9FFB693571F301E64AE0C /* main.rs */,
 			);
 			name = src;
@@ -128,6 +132,7 @@
 			isa = PBXGroup;
 			children = (
 				5C306939225EA73F4777447D /* Info.plist */,
+				4EF21E428F9BBDD4514FE5C5 /* PrivacyInfo.xcprivacy */,
 				E234A1A0B0B502DCB24AB219 /* volum-companion_iOS.entitlements */,
 			);
 			path = "volum-companion_iOS";
@@ -148,6 +153,20 @@
 				CA9E11730774DDD2A63C29F1 /* volum-companion */,
 			);
 			path = Sources;
+			sourceTree = "<group>";
+		};
+		"TEMP_200D825B-A555-43CF-BA9C-08357A98905E" /* arm64 */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = arm64;
+			sourceTree = "<group>";
+		};
+		"TEMP_75D07119-9C69-45E6-BDDE-EAE930BF00F7" /* x86_64 */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = x86_64;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -182,6 +201,9 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					FA2FDD509B59286D86FCC8D6 = {
+						DevelopmentTeam = "$(APPLE_DEVELOPMENT_TEAM)";
+					};
 				};
 			};
 			buildConfigurationList = 0C7B01697F2AFF4B1AE148E2 /* Build configuration list for PBXProject "volum-companion" */;
@@ -210,6 +232,7 @@
 			files = (
 				C5A6144779C4C9970A86F786 /* Assets.xcassets in Resources */,
 				AE5814BA86043A3EE7618419 /* LaunchScreen.storyboard in Resources */,
+				C30DC1EC8B0A4F9D1D44441C /* PrivacyInfo.xcprivacy in Resources */,
 				0D1F241CF7928B1BEBB3C6E2 /* assets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -236,7 +259,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "npm run -- tauri ios xcode-script -v --platform \"${PLATFORM_DISPLAY_NAME:?}\" --sdk-root \"${SDKROOT:?}\" --framework-search-paths \"${FRAMEWORK_SEARCH_PATHS:?}\" --header-search-paths \"${HEADER_SEARCH_PATHS:?}\" --gcc-preprocessor-definitions \"${GCC_PREPROCESSOR_DEFINITIONS:-}\" --configuration \"${CONFIGURATION:?}\" ${FORCE_COLOR} ${ARCHS:?}\n";
+			shellScript = "if [ \"${VOLUM_USE_PREBUILT_RUST:-0}\" = \"1\" ]; then exit 0; fi\nnpm run -- tauri ios xcode-script -v --platform \"${PLATFORM_DISPLAY_NAME:?}\" --sdk-root \"${SDKROOT:?}\" --framework-search-paths \"${FRAMEWORK_SEARCH_PATHS:?}\" --header-search-paths \"${HEADER_SEARCH_PATHS:?}\" --gcc-preprocessor-definitions \"${GCC_PREPROCESSOR_DEFINITIONS:-}\" --configuration \"${CONFIGURATION:?}\" ${FORCE_COLOR} ${ARCHS:?}\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -261,7 +284,10 @@
 				);
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = "volum-companion_iOS/volum-companion_iOS.entitlements";
-				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 3;
+				DEVELOPMENT_TEAM = "$(APPLE_DEVELOPMENT_TEAM)";
 				ENABLE_BITCODE = NO;
 				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -275,12 +301,12 @@
 				);
 				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
 				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.dsd.volum.companion;
 				PRODUCT_NAME = "Volum";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = arm64;
-				DEVELOPMENT_TEAM = "$(APPLE_DEVELOPMENT_TEAM)";
 			};
 			name = debug;
 		};
@@ -349,7 +375,10 @@
 				);
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = "volum-companion_iOS/volum-companion_iOS.entitlements";
-				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_IDENTITY = "Apple Distribution";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 3;
+				DEVELOPMENT_TEAM = "$(APPLE_DEVELOPMENT_TEAM)";
 				ENABLE_BITCODE = NO;
 				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -363,12 +392,13 @@
 				);
 				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
 				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.dsd.volum.companion;
 				PRODUCT_NAME = "Volum";
+				PROVISIONING_PROFILE_SPECIFIER = "Volum App Store Distribution 2026";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = arm64;
-				DEVELOPMENT_TEAM = "$(APPLE_DEVELOPMENT_TEAM)";
 			};
 			name = release;
 		};

@@ -16,12 +16,12 @@ val tauriProperties = Properties().apply {
 
 android {
     compileSdk = 37
-    namespace = "dev.didac.volum.companion"
+    namespace = "com.dsd.volum.companion"
     defaultConfig {
         // Companion HTTP is carried inside Tailscale's encrypted WireGuard tunnel.
         // The Rust transport independently rejects non-Tailnet hosts.
         manifestPlaceholders["usesCleartextTraffic"] = "true"
-        applicationId = "dev.didac.volum.companion"
+        applicationId = "com.dsd.volum.companion"
         minSdk = 24
         targetSdk = 37
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()

@@ -4,14 +4,24 @@
   "version": "0.2.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build"
+    "dev": "concurrently --kill-others-on-fail --names website,docs --prefix-colors cyan,magenta \"npm:dev:landing\" \"npm:dev:docs:proxy\"",
+    "dev:landing": "vite --host localhost --port 5173 --strictPort",
+    "dev:docs": "vitepress dev . --open /docs/",
+    "dev:docs:proxy": "vitepress dev . --host 127.0.0.1 --port 5174 --strictPort",
+    "build": "npm run build:landing && npm run build:docs",
+    "build:landing": "vite build",
+    "build:docs": "vitepress build .",
+    "preview": "vite preview",
+    "preview:docs": "vitepress preview ."
   },
   "dependencies": {
     "lucide": "^0.544.0",
     "posthog-js": "^1.434.7"
   },
   "devDependencies": {
-    "vite": "^7.1.7"
+    "concurrently": "^9.2.1",
+    "vite": "^7.1.7",
+    "vitepress": "^1.6.4",
+    "vue": "^3.5.44"
   }
 }

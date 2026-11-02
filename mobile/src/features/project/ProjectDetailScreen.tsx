@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
+import { writeFile } from "@tauri-apps/plugin-fs";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import QRCode from "qrcode";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
@@ -7,7 +8,7 @@ import {
   ArrowDown, ArrowLeft, ArrowUp, Box, Boxes, CalendarDays, Camera, Check, ChevronDown,
   ChevronRight, CircleAlert, CloudCheck, CloudDownload, CloudOff, Crosshair, ExternalLink, Eye,
   FileImage, Folder, Gauge, HardDrive, Heart, Layers3, ListChecks, LoaderCircle, Package, Pencil,
-  Plus, Printer, QrCode, RotateCcw, Ruler, Scale, Share2, Tag as TagIcon, Trash2,
+  Plus, Printer, QrCode, RotateCcw, Ruler, Save, Scale, Share2, Sparkles, Tag as TagIcon, Trash2,
   UploadCloud, Wifi, Wrench, X,
 } from "lucide-react";
 import { ErrorState } from "../../components/ErrorState";
@@ -30,21 +31,33 @@ import {
 import { projectQrPayload } from "../../lib/projectQr";
 import type { LocalStlObject } from "../../lib/localStl";
 import {
-  cancelUpload, filenameFromFilePath, mutateJson, requestJson, uploadProjectFile,
+  cancelUpload, filenameFromFilePath, mutateJson, requestBlob, requestJson, uploadProjectFile,
   uploadProjectPhoto,
 } from "../../lib/transport";
 import type {
   AssemblyStep, Collection, Credential, CustomFieldDefinition, Material, ProjectBomItem,
   ProjectDetail, ProjectDocumentation, ProjectPhoto, RelatedProject, Tag, UploadProgress,
+  CompanionAsset,
 } from "../../types";
 import { PhotoImage, PlateThumbnail, ProjectImage } from "./ProjectMedia";
 
 const MobileModelViewer = lazy(() => import("../../components/MobileModelViewer").then((module) => ({ default: module.MobileModelViewer })));
+const MobilePhotoRoom = lazy(() => import("../photo-room/MobilePhotoRoom").then((module) => ({ default: module.MobilePhotoRoom })));
 
 type BomDraft = Pick<ProjectBomItem, "kind" | "name" | "quantity" | "unit" | "notes"> & { id?: string; linkedAssetId?: string; url?: string; sortOrder?: number };
 type StepDraft = Pick<AssemblyStep, "title" | "instructions" | "bomItemIds" | "photoIds"> & { id?: string; sortOrder?: number };
 type PhotoDraft = { file?: File; photo?: ProjectPhoto; caption: string; isCover: boolean };
 type CostDraft = { assetId: string; materialId: string; plasticG: string; quantity: string; source: "manual" | "3mf" | "web" };
+
+export function assetMimeType(extension: string) {
+  switch (extension.toLowerCase()) {
+    case "stl": return "model/stl";
+    case "3mf": return "model/3mf";
+    case "obj": return "model/obj";
+    case "step": case "stp": return "model/step";
+    default: return "application/octet-stream";
+  }
+}
 
 function CustomValueControl({ field, value, busy, onSave }: { field: CustomFieldDefinition; value: string | number | boolean | null | undefined; busy: boolean; onSave: (value: string | number | boolean | null) => void }) {
   const serialized = value == null ? "" : String(value);
@@ -86,6 +99,7 @@ export function ProjectDetailScreen({ credential, id, canWrite: writesAllowed, o
   const [bomDraft, setBomDraft] = useState<BomDraft>();
   const [stepDraft, setStepDraft] = useState<StepDraft>();
   const [showViewer, setShowViewer] = useState(false);
+  const [photoRoomOpen, setPhotoRoomOpen] = useState(false);
   const [viewerReset, setViewerReset] = useState(0);
   const [viewerAssetId, setViewerAssetId] = useState<string>();
   const [plateIndex, setPlateIndex] = useState<number>();
@@ -102,6 +116,9 @@ export function ProjectDetailScreen({ credential, id, canWrite: writesAllowed, o
   const [workshopMode, setWorkshopMode] = useState(false);
   const [costDraft, setCostDraft] = useState<CostDraft>();
   const [shareMessage, setShareMessage] = useState("");
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareBusy, setShareBusy] = useState("");
+  const [preparedShare, setPreparedShare] = useState<{ assetId: string; file: File }>();
   const [projectQr, setProjectQr] = useState("");
   const [projectQrBusy, setProjectQrBusy] = useState(false);
   const detail = useQuery({ queryKey: ["project", id], queryFn: () => requestJson<ProjectDetail>(credential, `/api/v1/projects/${encodeURIComponent(id)}`) });
@@ -447,23 +464,53 @@ export function ProjectDetailScreen({ credential, id, canWrite: writesAllowed, o
     } catch (reason) { setEditError(localizedError(reason)); }
     finally { setSavingProject(false); }
   };
-  const shareProject = async () => {
-    if (!project) return;
+  const fetchAssetFile = async (asset: CompanionAsset) => {
+    const blob = await requestBlob(credential, `/api/v1/assets/${encodeURIComponent(asset.id)}/content`, assetMimeType(asset.extension));
+    return new File([blob], asset.filename, { type: assetMimeType(asset.extension), lastModified: Date.parse(asset.modifiedAt) || Date.now() });
+  };
+  const saveAsset = async (asset: CompanionAsset, file?: File) => {
+    const destination = await save({
+      defaultPath: asset.filename,
+      filters: [{ name: asset.extension.toUpperCase() || t("Project file"), extensions: [asset.extension.toLowerCase()] }],
+    });
+    if (!destination) return false;
+    const payload = file ?? await fetchAssetFile(asset);
+    await writeFile(destination, new Uint8Array(await payload.arrayBuffer()));
+    setShareMessage(t("Saved {name} to Files.", { name: asset.filename }));
+    return true;
+  };
+  const shareAsset = async (asset: CompanionAsset) => {
     setShareMessage(""); setEditError("");
-    const dimensionsText = dimensions ? `${dimensions.map((value) => Math.round(value)).join(" × ")} mm` : projectFormat;
-    const text = `${project.displayName}\n${dimensionsText} · ${project.assets.length} ${t(project.assets.length === 1 ? "file" : "files")}\n${project.folderName}`;
     try {
-      const sourceUrl = project.webSource ? validatedExternalUrl(project.webSource.canonicalUrl) : undefined;
-      if (navigator.share) {
-        await navigator.share({ title: project.displayName, text, url: sourceUrl?.toString() });
+      if (preparedShare?.assetId !== asset.id) {
+        setShareBusy(`share:${asset.id}`);
+        const file = await fetchAssetFile(asset);
+        setPreparedShare({ assetId: asset.id, file });
+        setShareMessage(t("File ready. Tap Share again to choose where to send it."));
+        return;
+      }
+      const file = preparedShare.file;
+      const shareData: ShareData = { title: project?.displayName, files: [file] };
+      if (navigator.share && (!navigator.canShare || navigator.canShare(shareData))) {
+        await navigator.share(shareData);
+        setShareOpen(false);
+        setPreparedShare(undefined);
       } else {
-        await navigator.clipboard.writeText(sourceUrl ? `${text}\n${sourceUrl}` : text);
-        setShareMessage(t("Project details copied to the clipboard."));
+        if (await saveAsset(asset, file)) {
+          setShareOpen(false);
+          setPreparedShare(undefined);
+        }
       }
     } catch (reason) {
       if (reason instanceof DOMException && reason.name === "AbortError") return;
       setEditError(localizedError(reason));
-    }
+    } finally { setShareBusy(""); }
+  };
+  const downloadAsset = async (asset: CompanionAsset) => {
+    setShareMessage(""); setEditError(""); setShareBusy(`save:${asset.id}`);
+    try { await saveAsset(asset); }
+    catch (reason) { setEditError(localizedError(reason)); }
+    finally { setShareBusy(""); }
   };
   const openSource = async () => {
     if (!project?.webSource) return;
@@ -489,9 +536,21 @@ export function ProjectDetailScreen({ credential, id, canWrite: writesAllowed, o
   const totalBytes = project.assets.reduce((total, asset) => total + asset.byteSize, 0);
   const projectFormat = (project.primaryExtension || "PROJECT").toUpperCase();
   if (workshopMode && docs) return <WorkshopScreen credential={credential} project={project} documentation={docs} offlinePhotos={offlinePhotoMap} onBack={() => setWorkshopMode(false)} />;
+  if (photoRoomOpen && viewerAsset) return <Suspense fallback={<div className="center-state" role="status"><LoaderCircle className="spin" /></div>}><MobilePhotoRoom
+    title={project.displayName}
+    credential={detail.data ? credential : undefined}
+    assetId={viewerAsset.id}
+    revision={viewerAsset.modifiedAt}
+    plateIndex={plateIndex}
+    offlinePayload={offlineViewerPayload}
+    projectId={project.id}
+    documentationRevision={docs?.revision}
+    canSaveToProject={canWrite}
+    onClose={() => setPhotoRoomOpen(false)}
+  /></Suspense>;
   if (showViewer && viewerAsset) return <main className="fullscreen-viewer">
     <Suspense fallback={<div className="viewer-state"><LoaderCircle className="spin" /><span>{t("Opening 3D viewer…")}</span></div>}><MobileModelViewer credential={credential} assetId={viewerAsset.id} revision={viewerAsset.modifiedAt} plateIndex={plateIndex} offlinePayload={offlineViewerPayload} resetSignal={viewerReset} selectedObjectId={selectedObjectId} isolatedObjectId={isolatedObjectId} focusObjectId={focusObjectId} focusSignal={focusSignal} onObjectSelect={selectViewerObject} onObjects={setViewerObjects} onStatus={handleViewerStatus} /></Suspense>
-    <div className="fullscreen-viewer__toolbar"><button className="round-button fullscreen-viewer__back" aria-label={t("Back to project")} onClick={() => setShowViewer(false)}><ArrowLeft /></button><button className="round-button fullscreen-viewer__reset" aria-label={t("Reset 3D view")} onClick={() => setViewerReset((value) => value + 1)}><RotateCcw /></button></div>
+    <div className="fullscreen-viewer__toolbar"><button className="round-button fullscreen-viewer__back" aria-label={t("Back to project")} onClick={() => setShowViewer(false)}><ArrowLeft /></button><div className="fullscreen-viewer__toolbar-actions"><button className="round-button" aria-label={t("Open Photo Room")} onClick={() => setPhotoRoomOpen(true)}><Sparkles /></button><button className="round-button fullscreen-viewer__reset" aria-label={t("Reset 3D view")} onClick={() => setViewerReset((value) => value + 1)}><RotateCcw /></button></div></div>
     {viewerObjects.length > 0 && <button className="project-viewer-objects-button" aria-label={t("Open object list")} onClick={() => setViewerObjectsOpen(true)}><Layers3 /><span>{viewerObjects.length === 1 ? t("1 object") : t("{count} objects", { count: viewerObjects.length })}</span></button>}
     {selectedObject && <section className="local-object-inspector project-object-inspector" aria-label={t("Selected object details")}>
       <header><div><span>{t("OBJECT {current} OF {count}", { current: selectedObject.id, count: viewerObjects.length })}</span><strong>{selectedObject.name || t("Object {number}", { number: selectedObject.id })}</strong></div><button className="round-button" aria-label={t("Clear object selection")} onClick={() => selectViewerObject(undefined)}><X /></button></header>
@@ -506,12 +565,12 @@ export function ProjectDetailScreen({ credential, id, canWrite: writesAllowed, o
   return <main className="detail-screen">
     <PullToRefresh onRefresh={() => Promise.all([detail.refetch(), documentation.refetch(), fields.refetch(), collections.refetch(), tags.refetch()])} />
     <section className="detail-stage">
-      <ProjectImage credential={credential} projectId={id} revision={project.revision} className="project-image--detail" offlineBlob={offline.data?.cover} />
+      <ProjectImage credential={credential} projectId={id} revision={project.revision} className="project-image--detail" offlineBlob={offline.data?.cover} detailFallback canOpenViewer={Boolean(viewerAsset)} />
       <div className="detail-stage__chrome">
         <button className="round-button detail-back" aria-label={t("Back to library")} onClick={onBack}><ArrowLeft /></button>
-        <div className="detail-stage__actions"><button className="round-button" aria-label={t("Show project QR code")} disabled={projectQrBusy} onClick={() => void showProjectQr()}>{projectQrBusy ? <LoaderCircle className="spin" /> : <QrCode />}</button><button className="round-button" aria-label={t("Share project")} onClick={() => void shareProject()}><Share2 /></button>{canWrite ? <button className={`detail-favorite ${project.favorite ? "is-active" : ""}`} disabled={savingProject} aria-label={t(project.favorite ? "Remove from favorites" : "Add to favorites")} onClick={() => void saveProject({ favorite: !project.favorite })}>{savingProject ? <LoaderCircle className="spin" /> : <Heart size={18} fill={project.favorite ? "currentColor" : "none"} />}</button> : project.favorite ? <span className="detail-favorite is-active" role="img" aria-label={t("Favorite project")}><Heart size={18} fill="currentColor" /></span> : null}</div>
+        <div className="detail-stage__actions"><button className="round-button" aria-label={t("Show project QR code")} disabled={projectQrBusy} onClick={() => void showProjectQr()}>{projectQrBusy ? <LoaderCircle className="spin" /> : <QrCode />}</button><button className="round-button" aria-label={t("Share project files")} disabled={!detail.data || !project.assets.some((asset) => !asset.missing)} onClick={() => { setShareMessage(""); setEditError(""); setPreparedShare(undefined); setShareOpen(true); }}><Share2 /></button>{canWrite ? <button className={`detail-favorite ${project.favorite ? "is-active" : ""}`} disabled={savingProject} aria-label={t(project.favorite ? "Remove from favorites" : "Add to favorites")} onClick={() => void saveProject({ favorite: !project.favorite })}>{savingProject ? <LoaderCircle className="spin" /> : <Heart size={18} fill={project.favorite ? "currentColor" : "none"} />}</button> : project.favorite ? <span className="detail-favorite is-active" role="img" aria-label={t("Favorite project")}><Heart size={18} fill="currentColor" /></span> : null}</div>
       </div>
-      {viewerAsset && <button className="viewer-open-button" disabled={!detail.data && !offlineViewerPayload} onClick={() => setShowViewer(true)}><span className="viewer-open-button__icon"><Box /></span><span>{t("View in 3D")}</span><ChevronRight /></button>}
+      {viewerAsset && <div className="detail-stage__model-actions"><button className="viewer-open-button" disabled={!detail.data && !offlineViewerPayload} onClick={() => setShowViewer(true)}><span className="viewer-open-button__icon"><Box /></span><span>{t("View in 3D")}</span><ChevronRight /></button><button className="photo-room-open-button" disabled={!detail.data && !offlineViewerPayload} onClick={() => setPhotoRoomOpen(true)}><Sparkles /><span>{t("Photo Room")}</span></button></div>}
     </section>
     <article className="detail-content">
       <input ref={photoInput} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) setPhotoDraft({ file, caption: "", isCover: !docs?.photos.length }); event.target.value = ""; }} />
@@ -531,7 +590,7 @@ export function ProjectDetailScreen({ credential, id, canWrite: writesAllowed, o
       {shareMessage && <div className="success-banner" role="status"><Check />{shareMessage}</div>}
       {(canWrite || project.notes) && <DetailSection title={t("Notes")} icon={<ListChecks />}>{editingNotes ? <div className="notes-editor"><textarea value={notesDraft} maxLength={100000} autoFocus onChange={(event) => setNotesDraft(event.target.value)} placeholder={t("Add build notes, settings, or reminders…")} /><div><button className="button button--quiet" disabled={savingProject} onClick={() => setEditingNotes(false)}><X />{t("Cancel")}</button><button className="button button--primary" disabled={savingProject} onClick={() => void saveNotes()}>{savingProject ? <LoaderCircle className="spin" /> : <Check />}{t("Save notes")}</button></div></div> : <div className="notes-view"><p className={project.notes ? "prose" : "prose prose--empty"}>{project.notes || t("No notes yet.")}</p>{canWrite && <button className="inline-edit" onClick={beginNotes}><Pencil />{project.notes ? t("Edit notes") : t("Add notes")}</button>}</div>}</DetailSection>}
       {(canWrite || project.collectionIds.length > 0) && <DetailSection title={t("Collections")} icon={<Boxes />} count={project.collectionIds.length}><div className="project-collections">{collections.isLoading ? <LoaderCircle className="spin" /> : collections.data?.length ? collections.data.map((collection) => { const selected = project.collectionIds.includes(collection.id); return <button key={collection.id} className={selected ? "is-selected" : ""} disabled={!canWrite || collection.smart || Boolean(collectionBusy)} onClick={() => void toggleCollection(collection)} style={{ "--collection-color": collection.color } as React.CSSProperties}><i /> <span><strong>{collection.name}</strong><small>{collection.smart ? t("Smart collection") : selected ? t("Included") : t("Tap to include")}</small></span>{collectionBusy === collection.id ? <LoaderCircle className="spin" /> : selected ? <Check /> : <Plus />}</button>; }) : <p className="prose prose--empty">{t("Create a collection from the Collections tab, then add this project here.")}</p>}</div></DetailSection>}
-      {project.assets.some((asset) => asset.metadata.threeMf) && <DetailSection title={t("Print setup")} icon={<Printer />}><div className="print-profiles">{project.assets.filter((asset) => asset.metadata.threeMf).map((asset) => { const profile = asset.metadata.threeMf!; return <article key={asset.id}><header><div><strong>{asset.filename}</strong><small>{[profile.slicer, profile.slicerVersion].filter(Boolean).join(" · ") || t("3MF project")}</small></div><button disabled={!detail.data && asset.id !== offlineViewerAssetId} onClick={() => { setViewerAssetId(asset.id); setPlateIndex(undefined); setShowViewer(true); }}><Eye />{t("View")}</button></header><div className="profile-grid">{profile.printer && <div><span>{t("Printer")}</span><strong>{profile.printer}</strong></div>}{profile.printProfile && <div><span>{t("Profile")}</span><strong>{profile.printProfile}</strong></div>}{profile.nozzleDiameterMm != null && <div><span>{t("Nozzle")}</span><strong>{profile.nozzleDiameterMm} mm</strong></div>}{profile.layerHeightMm != null && <div><span>{t("Layer")}</span><strong>{profile.layerHeightMm} mm</strong></div>}</div>{profile.plates.length > 0 && <div className="plate-list">{profile.plates.map((plate) => <button key={plate.index} disabled={!detail.data} onClick={() => { setViewerAssetId(asset.id); setPlateIndex(plate.index); setShowViewer(true); }}><PlateThumbnail credential={credential} assetId={asset.id} plateIndex={plate.index} name={plate.name || t("Plate {number}", { number: plate.index + 1 })} enabled={Boolean(detail.data)} /><span><strong>{plate.name || t("Plate {number}", { number: plate.index + 1 })}</strong><small>{plate.objectCount} {t("objects")}{plate.printTimeSeconds ? ` · ${formatDuration(plate.printTimeSeconds)}` : ""}{plate.filamentGrams ? ` · ${Math.round(plate.filamentGrams)} g` : ""}</small>{plate.materialNames.length > 0 && <em>{plate.materialNames.join(" · ")}</em>}</span><ChevronRight /></button>)}</div>}{!detail.data && profile.plates.length > 0 && <p className="offline-plate-note"><CloudOff />{t("Plate-specific previews need a connection to Volum Desktop. The saved full model remains available.")}</p>}</article>; })}</div></DetailSection>}
+      {project.assets.some((asset) => asset.metadata.threeMf) && <DetailSection title={t("Print setup")} icon={<Printer />}><div className="print-profiles">{project.assets.filter((asset) => asset.metadata.threeMf).map((asset) => { const profile = asset.metadata.threeMf!; return <article key={asset.id}><header><div><strong>{asset.filename}</strong><small>{[profile.slicer, profile.slicerVersion].filter(Boolean).join(" · ") || t("3MF project")}</small></div><button disabled={!detail.data && asset.id !== offlineViewerAssetId} onClick={() => { setViewerAssetId(asset.id); setPlateIndex(undefined); setShowViewer(true); }}><Eye />{t("View")}</button></header><div className="profile-grid">{profile.printer && <div><span>{t("Printer")}</span><strong>{profile.printer}</strong></div>}{profile.printProfile && <div><span>{t("Profile")}</span><strong>{profile.printProfile}</strong></div>}{profile.nozzleDiameterMm != null && <div><span>{t("Nozzle")}</span><strong>{profile.nozzleDiameterMm} mm</strong></div>}{profile.layerHeightMm != null && <div><span>{t("Layer")}</span><strong>{profile.layerHeightMm} mm</strong></div>}</div>{profile.plates.length > 0 && <div className="plate-list">{profile.plates.map((plate) => <button key={plate.index} disabled={!detail.data} onClick={() => { setViewerAssetId(asset.id); setPlateIndex(plate.index); setShowViewer(true); }}><PlateThumbnail credential={credential} assetId={asset.id} plateIndex={plate.index} name={t("Plate {number}", { number: plate.index })} enabled={Boolean(detail.data)} /><span><strong>{t("Plate {number}", { number: plate.index })}</strong><small>{plate.objectCount} {t("objects")}{plate.printTimeSeconds ? ` · ${formatDuration(plate.printTimeSeconds)}` : ""}{plate.filamentGrams ? ` · ${Math.round(plate.filamentGrams)} g` : ""}</small>{plate.materialNames.length > 0 && <em>{plate.materialNames.join(" · ")}</em>}</span><ChevronRight /></button>)}</div>}{!detail.data && profile.plates.length > 0 && <p className="offline-plate-note"><CloudOff />{t("Plate-specific previews need a connection to Volum Desktop. The saved full model remains available.")}</p>}</article>; })}</div></DetailSection>}
       <DetailSection title={t("Geometry & inspection")} icon={<Gauge />}><div className="inspection-list">{project.assets.map((asset) => <article key={asset.id}><header><span>{asset.extension}</span><div><strong>{asset.filename}</strong><small>{t(asset.parseStatus)}{asset.missing ? ` · ${t("Missing")}` : ""}</small></div></header><div>{asset.metadata.dimensionsMm && <span><Ruler />{asset.metadata.dimensionsMm.map((value) => Math.round(value)).join(" × ")} mm</span>}{asset.metadata.triangleCount != null && <span><Layers3 />{formatNumber(asset.metadata.triangleCount)} {t("triangles")}</span>}{asset.metadata.objectCount != null && <span><Boxes />{asset.metadata.objectCount} {t("objects")}</span>}{asset.metadata.surfaceAreaMm2 != null && <span><Scale />{formatArea(asset.metadata.surfaceAreaMm2)}</span>}{asset.metadata.volumeMm3 != null && <span><Box />{formatVolume(asset.metadata.volumeMm3)}</span>}</div>{asset.metadata.materialNames?.length ? <small className="inspection-materials">{asset.metadata.materialNames.join(" · ")}</small> : null}{asset.metadata.warning && <p><CircleAlert />{t(asset.metadata.warning)}</p>}</article>)}</div></DetailSection>
       <DetailSection title={t("Print cost")} icon={<Scale />}><div className="cost-card">{project.estimate ? <><div className="cost-total"><span>{t(project.estimate.quantity > 1 ? "Batch estimate" : "Estimated cost")}</span><strong>{formatMoney(project.estimate.batchCostMinor ?? project.estimate.costPerPieceMinor, materials.data?.find((item) => item.id === project.estimate?.materialId)?.currency)}</strong></div><div className="cost-facts"><span>{formatNumber(project.estimate.plasticG)} {t("g each")}</span><span>{project.estimate.quantity} {t(project.estimate.quantity === 1 ? "piece" : "pieces")}</span><span>{materials.data?.find((item) => item.id === project.estimate?.materialId)?.name ?? t(project.estimate.source)}</span></div></> : <p className="prose prose--empty">{t("No saved material estimate yet.")}</p>}{canWrite && <button className="inline-edit" onClick={beginCost}><Pencil />{project.estimate ? t("Edit estimate") : t("Add estimate")}</button>}</div></DetailSection>
       {docs && (canWrite || docs.photos.length > 0) && <DetailSection title={t("Workshop photos")} icon={<FileImage />} count={docs.photos.length}><div className="documentation-section">{canWrite && <div className="photo-actions"><button onClick={() => choosePhoto(true)}><Camera />{t("Take photo")}</button><button onClick={() => choosePhoto(false)}><FileImage />{t("Photo library")}</button></div>}{docs.photos.length ? <div className="photo-grid photo-grid--managed">{docs.photos.map((photo, index) => <article key={photo.id}><button className="photo-grid__image" onClick={() => canWrite && setPhotoDraft({ photo, caption: photo.caption, isCover: photo.isCover })}><PhotoImage credential={credential} photo={photo} offlineBlob={offlinePhotoMap.get(photo.id)} />{photo.isCover && <span>{t("Cover")}</span>}</button><div><small>{photo.caption || photo.originalFilename}</small>{canWrite && <span className="photo-row-actions"><button disabled={index === 0 || Boolean(documentationBusy)} aria-label={t("Move photo up")} onClick={() => void movePhoto(photo, -1)}><ArrowUp /></button><button disabled={index === docs.photos.length - 1 || Boolean(documentationBusy)} aria-label={t("Move photo down")} onClick={() => void movePhoto(photo, 1)}><ArrowDown /></button><button aria-label={t("Edit photo")} onClick={() => setPhotoDraft({ photo, caption: photo.caption, isCover: photo.isCover })}><Pencil /></button><button aria-label={t("Delete photo")} onClick={() => void removePhoto(photo)}>{documentationBusy === `photo:${photo.id}` ? <LoaderCircle className="spin" /> : <Trash2 />}</button></span>}</div></article>)}</div> : <p className="prose prose--empty">{t("Capture the build, a finished print, or an assembly detail.")}</p>}</div></DetailSection>}
@@ -543,6 +602,7 @@ export function ProjectDetailScreen({ credential, id, canWrite: writesAllowed, o
       {project.webSource && <DetailSection title={t("Source")} icon={<Wifi />}><div className="source-card"><strong>{project.webSource.title}</strong><span>{project.webSource.creator ? `${project.webSource.creator} · ` : ""}{project.webSource.provider}</span>{project.webSource.license && <small>{project.webSource.license}</small>}<button className="inline-edit" onClick={() => void openSource()}><ExternalLink />{t("Open source page")}</button></div></DetailSection>}
     </article>
     {editingName && <div className="sheet-scrim" role="presentation" onClick={() => !savingProject && setEditingName(false)}><section className="mobile-sheet" role="dialog" aria-modal="true" aria-labelledby="rename-project-title" onClick={(event) => event.stopPropagation()}><header><div><div className="eyebrow">{t("PROJECT")}</div><h2 id="rename-project-title">{t("Rename project")}</h2></div><button className="round-button" aria-label={t("Close")} disabled={savingProject} onClick={() => setEditingName(false)}><X /></button></header><label className="sheet-field"><span>{t("Name")}</span><input value={nameDraft} maxLength={160} autoFocus onChange={(event) => setNameDraft(event.target.value)} /></label>{editError && <div className="error-banner" role="alert"><CircleAlert size={16} />{editError}</div>}<button className="button button--primary button--large sheet-submit" disabled={!nameDraft.trim() || nameDraft.trim() === project.displayName || savingProject} onClick={() => void saveName()}>{savingProject ? <LoaderCircle className="spin" /> : <Check />}{savingProject ? t("Renaming…") : t("Save name")}</button></section></div>}
+    {shareOpen && <div className="sheet-scrim" role="presentation" onClick={() => { if (!shareBusy) { setShareOpen(false); setPreparedShare(undefined); } }}><section className="mobile-sheet mobile-sheet--tall project-share-sheet" role="dialog" aria-modal="true" aria-labelledby="share-project-title" onClick={(event) => event.stopPropagation()}><header><div><div className="eyebrow">{t("PROJECT FILES")}</div><h2 id="share-project-title">{t("Share or save a file")}</h2></div><button className="round-button" aria-label={t("Close")} disabled={Boolean(shareBusy)} onClick={() => { setShareOpen(false); setPreparedShare(undefined); }}><X /></button></header><p>{t("Send the original file with AirDrop, Messages, email, or another app.")}</p>{shareMessage && <div className="success-banner" role="status"><Check />{shareMessage}</div>}{editError && <div className="error-banner" role="alert"><CircleAlert />{editError}</div>}<div className="share-file-list">{project.assets.filter((asset) => !asset.missing).sort((left, right) => Number(right.id === project.primaryAssetId) - Number(left.id === project.primaryAssetId)).map((asset) => <article key={asset.id}><span>{asset.extension}</span><div><strong>{asset.filename}</strong><small>{formatBytes(asset.byteSize)} · {t(asset.role)}</small></div><div className="share-file-actions"><button className={preparedShare?.assetId === asset.id ? "is-ready" : ""} disabled={Boolean(shareBusy)} onClick={() => void shareAsset(asset)}>{shareBusy === `share:${asset.id}` ? <LoaderCircle className="spin" /> : <Share2 />}<span>{preparedShare?.assetId === asset.id ? t("Share now") : t("Share")}</span></button><button disabled={Boolean(shareBusy)} onClick={() => void downloadAsset(asset)}>{shareBusy === `save:${asset.id}` ? <LoaderCircle className="spin" /> : <Save />}<span>{t("Save to Files")}</span></button></div></article>)}</div></section></div>}
     {projectQr && <div className="sheet-scrim" role="presentation" onClick={() => setProjectQr("")}><section className="mobile-sheet project-qr-sheet" role="dialog" aria-modal="true" aria-labelledby="project-qr-title" onClick={(event) => event.stopPropagation()}><header><div><div className="eyebrow">{t("PROJECT HANDOFF")}</div><h2 id="project-qr-title">{t("Scan to open")}</h2></div><button className="round-button" aria-label={t("Close")} onClick={() => setProjectQr("")}><X /></button></header><img src={projectQr} alt={t("QR code for {name}", { name: project.displayName })} /><strong>{project.displayName}</strong><p>{t("Scan from Library on another device paired with")} <strong>{credential.serverName}</strong>. {t("The code contains project IDs only—never your token or file paths.")}</p></section></div>}
     {editingTags && <div className="sheet-scrim" role="presentation" onClick={() => !savingProject && !creatingTag && setEditingTags(false)}><section className="mobile-sheet mobile-sheet--tall" role="dialog" aria-modal="true" aria-labelledby="edit-tags-title" onClick={(event) => event.stopPropagation()}><header><div><div className="eyebrow">{t("ORGANIZE")}</div><h2 id="edit-tags-title">{t("Project tags")}</h2></div><button className="round-button" aria-label={t("Close")} disabled={savingProject || creatingTag} onClick={() => setEditingTags(false)}><X /></button></header><div className="tag-picker">{tags.isLoading ? <LoaderCircle className="spin" /> : tags.data?.length ? tags.data.map((tag) => { const selected = tagDraft.includes(tag.id); return <div className="tag-picker__row" key={tag.id} style={{ "--tag-color": tag.color } as React.CSSProperties}><button className={selected ? "is-selected" : ""} onClick={() => setTagDraft((current) => selected ? current.filter((id) => id !== tag.id) : [...current, tag.id])}><i /><span>{tag.name}</span>{selected && <Check />}</button><button className="tag-picker__edit" aria-label={t("Manage {name}", { name: tag.name })} onClick={() => { setEditError(""); setTagEditor({ tag, name: tag.name, color: tag.color }); }}><Pencil /></button></div>; }) : <p className="prose prose--empty">{t("Create the first tag below.")}</p>}</div><div className="new-tag"><label className="sheet-field"><span>{t("New tag")}</span><div><input value={newTagName} maxLength={40} placeholder="Prototype" onChange={(event) => setNewTagName(event.target.value)} /><button disabled={!newTagName.trim() || creatingTag} onClick={() => void createTag()}>{creatingTag ? <LoaderCircle className="spin" /> : <Plus />}</button></div></label><div className="tag-color-picker">{COLLECTION_COLORS.map((color) => <button key={color} className={newTagColor === color ? "is-selected" : ""} aria-label={t("Use {color}", { color })} onClick={() => setNewTagColor(color)} style={{ "--swatch": color } as React.CSSProperties} />)}</div></div>{editError && <div className="error-banner" role="alert"><CircleAlert size={16} />{editError}</div>}<button className="button button--primary button--large" disabled={savingProject || creatingTag} onClick={() => void saveTags()}>{savingProject ? <LoaderCircle className="spin" /> : <Check />}{savingProject ? t("Saving…") : t("Save tags")}</button></section></div>}
     {tagEditor && <div className="sheet-scrim sheet-scrim--nested" role="presentation" onClick={() => !tagEditorBusy && setTagEditor(undefined)}><form className="mobile-sheet" role="dialog" aria-modal="true" aria-labelledby="manage-tag-title" onSubmit={(event) => { event.preventDefault(); void saveManagedTag(); }} onClick={(event) => event.stopPropagation()}><header><div><div className="eyebrow">{t("TAG")}</div><h2 id="manage-tag-title">{t("Manage tag")}</h2></div><button type="button" className="round-button" aria-label={t("Close")} disabled={tagEditorBusy} onClick={() => setTagEditor(undefined)}><X /></button></header><label className="sheet-field"><span>{t("Name")}</span><input autoFocus value={tagEditor.name} maxLength={40} onChange={(event) => setTagEditor({ ...tagEditor, name: event.target.value })} /></label><fieldset className="color-picker"><legend>{t("Color")}</legend><div>{COLLECTION_COLORS.map((color) => <button type="button" key={color} className={tagEditor.color === color ? "is-selected" : ""} aria-label={t("Use {color}", { color })} onClick={() => setTagEditor({ ...tagEditor, color })} style={{ "--swatch": color } as React.CSSProperties}>{tagEditor.color === color && <Check />}</button>)}</div></fieldset><p className="tag-usage">{t("Used by {count} {projects}.", { count: tagEditor.tag.modelCount, projects: t(tagEditor.tag.modelCount === 1 ? "project" : "projects") })}</p>{editError && <div className="error-banner" role="alert"><CircleAlert size={16} />{editError}</div>}<div className="collection-sheet-actions"><button type="button" className="button button--danger" disabled={tagEditorBusy} onClick={() => void deleteManagedTag()}><Trash2 />{t("Delete")}</button><button className="button button--primary button--large" disabled={tagEditorBusy || !tagEditor.name.trim()}>{tagEditorBusy ? <LoaderCircle className="spin" /> : <Check />}{t("Save tag")}</button></div></form></div>}

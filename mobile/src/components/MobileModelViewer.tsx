@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import * as THREE from "three";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "three-mesh-bvh";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { photoRoomCameraFitDistance } from "../../../shared/photo-room/core";
 import { t } from "../lib/i18n";
 import { requestCachedBinary } from "../lib/mediaCache";
 import {
@@ -79,8 +80,23 @@ function viewerPayload(credential: Credential | undefined, assetId: string | und
   return request;
 }
 
-function Controls({ resetSignal, focusBounds, focusSignal }: { resetSignal: number; focusBounds?: THREE.Box3; focusSignal: number }) {
-  const { camera, gl, invalidate } = useThree();
+function visibleObjectSphere(object: THREE.Object3D) {
+  const bounds = new THREE.Box3();
+  object.updateWorldMatrix(true, true);
+  object.traverse((child) => {
+    if (!(child instanceof THREE.Mesh) || !child.visible) return;
+    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    if (materials.length && materials.every((material) => !material.visible)) return;
+    if (!child.geometry.boundingBox) child.geometry.computeBoundingBox();
+    if (!child.geometry.boundingBox) return;
+    bounds.union(child.geometry.boundingBox.clone().applyMatrix4(child.matrixWorld));
+  });
+  if (bounds.isEmpty()) return undefined;
+  return bounds.getBoundingSphere(new THREE.Sphere());
+}
+
+function Controls({ resetSignal, focusBounds, focusSignal, enabled = true, fitObject, fitToFrame = false }: { resetSignal: number; focusBounds?: THREE.Box3; focusSignal: number; enabled?: boolean; fitObject?: THREE.Object3D; fitToFrame?: boolean }) {
+  const { camera, gl, invalidate, size } = useThree();
   const controls = useMemo(() => new OrbitControls(camera, gl.domElement), [camera, gl.domElement]);
   useEffect(() => {
     const onChange = () => invalidate();
@@ -100,12 +116,38 @@ function Controls({ resetSignal, focusBounds, focusSignal }: { resetSignal: numb
     };
   }, [controls, invalidate]);
   useEffect(() => {
+    controls.enabled = enabled;
+    return () => { controls.enabled = true; };
+  }, [controls, enabled]);
+  useEffect(() => {
+    controls.maxDistance = fitToFrame ? 50 : 12;
+  }, [controls, fitToFrame]);
+  useEffect(() => {
     camera.up.set(0, 1, 0);
     camera.position.set(3.2, 2.35, 4.1);
     controls.target.set(0, 0, 0);
     controls.update();
     invalidate();
   }, [camera, controls, invalidate, resetSignal]);
+  useEffect(() => {
+    if (!fitToFrame || !fitObject || !(camera instanceof THREE.PerspectiveCamera)) return;
+    const sphere = visibleObjectSphere(fitObject);
+    if (!sphere || !Number.isFinite(sphere.radius) || sphere.radius <= 0) return;
+    const direction = camera.position.clone().sub(controls.target).normalize();
+    if (!direction.lengthSq()) direction.set(0.6, 0.45, 0.7).normalize();
+    const distance = photoRoomCameraFitDistance(
+      sphere.radius,
+      camera.fov,
+      size.width / Math.max(1, size.height),
+    );
+    controls.target.copy(sphere.center);
+    camera.position.copy(sphere.center).addScaledVector(direction, distance);
+    camera.near = Math.max(0.01, distance - sphere.radius * 2);
+    camera.far = Math.max(camera.near + 1, distance + sphere.radius * 4);
+    camera.updateProjectionMatrix();
+    controls.update();
+    invalidate();
+  }, [camera, controls, fitObject, fitToFrame, invalidate, resetSignal, size.height, size.width]);
   useEffect(() => {
     if (!focusBounds || focusBounds.isEmpty()) return;
     const center = focusBounds.getCenter(new THREE.Vector3());
@@ -274,9 +316,12 @@ export function parseViewerMesh(buffer: ArrayBuffer) {
   return group;
 }
 
-export function normalizeObject(object: THREE.Object3D) {
+export function normalizeObject(object: THREE.Object3D, modelOnly = false) {
   object.updateMatrixWorld(true);
-  const box = new THREE.Box3().setFromObject(object);
+  const sourceBounds = object.userData.volumSourceBounds;
+  const box = modelOnly && sourceBounds instanceof THREE.Box3
+    ? sourceBounds.clone()
+    : new THREE.Box3().setFromObject(object);
   if (box.isEmpty()) throw new Error("The model contains no displayable geometry.");
   const center = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3());
@@ -285,13 +330,17 @@ export function normalizeObject(object: THREE.Object3D) {
   object.position.sub(center);
   const normalized = new THREE.Group();
   normalized.add(object);
-  normalized.scale.setScalar((object.userData.volumHasBuildPlate ? 1.95 : 2.4) / largest);
+  normalized.scale.setScalar((object.userData.volumHasBuildPlate && !modelOnly ? 1.95 : 2.4) / largest);
   normalized.rotation.x = -Math.PI / 2;
   normalized.userData.volumObjects = object.userData.volumObjects;
   normalized.userData.volumSourceBounds = object.userData.volumSourceBounds;
   normalized.userData.volumSourceObject = object;
   normalized.traverse((child) => {
     if (!(child instanceof THREE.Mesh)) return;
+    const sourceMaterials = Array.isArray(child.material) ? child.material : [child.material];
+    if (modelOnly) sourceMaterials.forEach((material) => {
+      if (material.userData.volumMaterialKind === "plate-surface" || material.userData.volumMaterialKind === "plate-detail") material.visible = false;
+    });
     if (!child.userData.volumSourceMaterial) {
       const previous = child.material;
       child.material = createBambuMaterial([216, 200, 170]);
@@ -342,7 +391,7 @@ function RaycasterSettings() {
   return null;
 }
 
-function LoadedModel({ credential, assetId, revision, plateIndex, offlinePayload, localPayload, selectedObjectId, isolatedObjectId, onObjectSelect, onLoaded, onStatus }: { credential?: Credential; assetId?: string; revision: string; plateIndex?: number; offlinePayload?: ArrayBuffer; localPayload?: ArrayBuffer; selectedObjectId?: number; isolatedObjectId?: number; onObjectSelect?: (objectId?: number) => void; onLoaded: (object?: THREE.Object3D) => void; onStatus: (status: "ready" | "error", message?: string) => void }) {
+function LoadedModel({ credential, assetId, revision, plateIndex, offlinePayload, localPayload, selectedObjectId, isolatedObjectId, hideBuildPlate = false, onObjectSelect, onLoaded, onStatus }: { credential?: Credential; assetId?: string; revision: string; plateIndex?: number; offlinePayload?: ArrayBuffer; localPayload?: ArrayBuffer; selectedObjectId?: number; isolatedObjectId?: number; hideBuildPlate?: boolean; onObjectSelect?: (objectId?: number) => void; onLoaded: (object?: THREE.Object3D) => void; onStatus: (status: "ready" | "error", message?: string) => void }) {
   const [object, setObject] = useState<THREE.Object3D>();
   const invalidate = useThree((state) => state.invalidate);
   useEffect(() => {
@@ -351,7 +400,7 @@ function LoadedModel({ credential, assetId, revision, plateIndex, offlinePayload
     setObject(undefined);
     onLoaded(undefined);
     void viewerPayload(credential, assetId, revision, plateIndex, offlinePayload, localPayload).then((buffer) => {
-      loaded = normalizeObject(parseViewerMesh(buffer));
+      loaded = normalizeObject(parseViewerMesh(buffer), hideBuildPlate);
       if (!active) return;
       setObject(loaded);
       onLoaded(loaded);
@@ -364,20 +413,23 @@ function LoadedModel({ credential, assetId, revision, plateIndex, offlinePayload
       onLoaded(undefined);
       if (loaded) disposeViewerObject(loaded);
     };
-  }, [assetId, credential, localPayload, offlinePayload, onLoaded, onStatus, plateIndex, revision]);
+  }, [assetId, credential, hideBuildPlate, localPayload, offlinePayload, onLoaded, onStatus, plateIndex, revision]);
   useEffect(() => {
     if (!object) return;
     object.traverse((child) => {
       if (!(child instanceof THREE.Mesh)) return;
       const materials = Array.isArray(child.material) ? child.material : [child.material];
       materials.forEach((material) => {
+        if (material.userData.volumMaterialKind === "plate-surface" || material.userData.volumMaterialKind === "plate-detail") {
+          material.visible = !hideBuildPlate;
+        }
         if (!(material instanceof THREE.ShaderMaterial) || !material.uniforms.selected_object_id) return;
         material.uniforms.selected_object_id.value = selectedObjectId ?? 0;
         material.uniforms.isolated_object_id.value = isolatedObjectId ?? 0;
       });
     });
     invalidate();
-  }, [invalidate, isolatedObjectId, object, selectedObjectId]);
+  }, [hideBuildPlate, invalidate, isolatedObjectId, object, selectedObjectId]);
   const selectObject = (event: ThreeEvent<MouseEvent>) => {
     if (!onObjectSelect || event.delta > 8 || event.faceIndex == null) return;
     const objectIds = event.object.userData.volumObjectIds as Uint32Array | undefined;
@@ -389,7 +441,7 @@ function LoadedModel({ credential, assetId, revision, plateIndex, offlinePayload
   return object ? <primitive object={object} onClick={selectObject} /> : null;
 }
 
-export function MobileModelViewer({ credential, assetId, revision = "local", plateIndex, offlinePayload, localPayload, resetSignal, selectedObjectId, isolatedObjectId, focusObjectId, focusSignal = 0, onObjectSelect, onObjects, onStatus }: { credential?: Credential; assetId?: string; revision?: string; plateIndex?: number; offlinePayload?: ArrayBuffer; localPayload?: ArrayBuffer; resetSignal: number; selectedObjectId?: number; isolatedObjectId?: number; focusObjectId?: number; focusSignal?: number; onObjectSelect?: (objectId?: number) => void; onObjects?: (objects: LocalStlObject[]) => void; onStatus: (status: "ready" | "error", message?: string) => void }) {
+export function MobileModelViewer({ credential, assetId, revision = "local", plateIndex, offlinePayload, localPayload, resetSignal, selectedObjectId, isolatedObjectId, focusObjectId, focusSignal = 0, capture = false, modelOrientation = [0, 0, 0, 1], interactionEnabled = true, fitToFrame = false, hideBuildPlate = false, onObjectSelect, onObjects, onStatus }: { credential?: Credential; assetId?: string; revision?: string; plateIndex?: number; offlinePayload?: ArrayBuffer; localPayload?: ArrayBuffer; resetSignal: number; selectedObjectId?: number; isolatedObjectId?: number; focusObjectId?: number; focusSignal?: number; capture?: boolean; modelOrientation?: [number, number, number, number]; interactionEnabled?: boolean; fitToFrame?: boolean; hideBuildPlate?: boolean; onObjectSelect?: (objectId?: number) => void; onObjects?: (objects: LocalStlObject[]) => void; onStatus: (status: "ready" | "error", message?: string) => void }) {
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [message, setMessage] = useState("");
   const [loadedObject, setLoadedObject] = useState<THREE.Object3D>();
@@ -410,9 +462,9 @@ export function MobileModelViewer({ credential, assetId, revision = "local", pla
     onObjects?.((loadedObject?.userData.volumObjects as LocalStlObject[] | undefined) ?? []);
   }, [loadedObject, onObjects]);
   return <div className="mobile-model-viewer" onContextMenu={(event) => event.preventDefault()}>
-    <Canvas flat dpr={[1, 1.5]} camera={{ position: [3.2, 2.35, 4.1], fov: 34 }} frameloop="demand" gl={{ antialias: true, alpha: true, powerPreference: "high-performance" }} onPointerMissed={() => { if (!isolatedObjectId) onObjectSelect?.(undefined); }}>
-      <LoadedModel credential={credential} assetId={assetId} revision={revision} plateIndex={plateIndex} offlinePayload={offlinePayload} localPayload={localPayload} selectedObjectId={selectedObjectId} isolatedObjectId={isolatedObjectId} onObjectSelect={onObjectSelect} onLoaded={setLoadedObject} onStatus={handleStatus} />
-      <Controls resetSignal={resetSignal} focusBounds={focusBounds} focusSignal={focusSignal} />
+    <Canvas flat dpr={capture ? 3 : [1, 1.5]} camera={{ position: [3.2, 2.35, 4.1], fov: 34 }} frameloop="demand" gl={{ antialias: true, alpha: true, preserveDrawingBuffer: capture, powerPreference: "high-performance" }} onPointerMissed={() => { if (!isolatedObjectId) onObjectSelect?.(undefined); }}>
+      <group quaternion={modelOrientation}><LoadedModel credential={credential} assetId={assetId} revision={revision} plateIndex={plateIndex} offlinePayload={offlinePayload} localPayload={localPayload} selectedObjectId={selectedObjectId} isolatedObjectId={isolatedObjectId} hideBuildPlate={hideBuildPlate} onObjectSelect={onObjectSelect} onLoaded={setLoadedObject} onStatus={handleStatus} /></group>
+      <Controls resetSignal={resetSignal} focusBounds={focusBounds} focusSignal={focusSignal} enabled={interactionEnabled} fitObject={loadedObject} fitToFrame={fitToFrame} />
       <RaycasterSettings />
     </Canvas>
     {status === "loading" && <div className="viewer-state" role="status"><LoaderCircle className="spin" /><span>{t("Preparing 3D model…")}</span></div>}

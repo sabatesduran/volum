@@ -11,6 +11,8 @@
     "barcode-scanner:allow-request-permissions",
     "barcode-scanner:allow-open-app-settings",
     "dialog:allow-open",
+    "dialog:allow-save",
+    "fs:allow-write-file",
     "fs:allow-appcache-read-recursive",
     "fs:allow-appcache-write-recursive",
     "fs:allow-remove",

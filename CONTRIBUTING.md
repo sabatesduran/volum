@@ -24,9 +24,15 @@ The hook and CI use Gitleaks to reject credentials, private keys, and tokens. Ne
 npm ci
 npm run build
 npm test
-cd src-tauri
-cargo fmt --check
-cargo test
+npm --prefix mobile ci
+npm --prefix mobile run build
+npm --prefix mobile test
+npm --prefix website ci
+npm run website:build
+cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+cargo test --manifest-path src-tauri/Cargo.toml
 ```
+
+User and operator documentation lives under `website/docs/` and is built with VitePress at `/docs/`. Internal implementation plans remain under `docs/`. Run the public site locally with `npm run website:docs:dev`. Keep commands copyable, mark early-access behavior clearly, and update the relevant guide whenever a user-facing workflow changes.
 
 Use conventional, descriptive commits. Include platform details and reproduction steps for filesystem bugs.

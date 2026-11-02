@@ -18,6 +18,15 @@ The corresponding Volum source and build configuration are available in the
 Volum repository. The special exception supplied by the OCCT authors applies
 in addition to LGPL-2.1.
 
+## Mediabunny
+
+Photo Room MP4 encoding and muxing use Mediabunny.
+
+- Copyright © Mediabunny contributors
+- License: Mozilla Public License 2.0
+- Source: https://github.com/Vanilagy/mediabunny
+- License: https://www.mozilla.org/MPL/2.0/
+
 ## cadrum
 
 - Copyright © cadrum contributors

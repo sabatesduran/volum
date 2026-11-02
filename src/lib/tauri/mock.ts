@@ -14,6 +14,7 @@ import type {
   Page,
   PreviewPayload,
   ProjectDocumentation,
+  RemoteMirrorSettings,
   ScanStatus,
   SavedSearch,
   SlicerApplication,
@@ -82,12 +83,21 @@ let preferences: Record<string, string> = {};
 let backupDestinations: BackupDestination[] = [];
 let backupRuns: BackupRun[] = [];
 let savedSearches: SavedSearch[] = [];
+let remoteMirror: RemoteMirrorSettings = {
+  enabled: false,
+  mode: "all",
+  projectIds: [],
+  excludedProjectIds: [],
+  folderIds: [],
+  collectionIds: [],
+};
 let companionStatus: CompanionStatus = {
   enabled: false,
   running: false,
   serverId: "demo-companion-server",
   port: 43821,
   organizationWrites: false,
+  networkMode: "automatic",
   devices: []
 };
 let customFields: CustomFieldDefinition[] = [
@@ -114,6 +124,16 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
   await new Promise((resolve) => setTimeout(resolve, command === "list_models" ? 80 : 25));
   switch (command) {
     case "get_backend_connection": return { mode: "local", configured: false, online: true, mirrorEnabled: false } as T;
+    case "get_remote_mirror_settings": return remoteMirror as T;
+    case "configure_remote_mirror": {
+      remoteMirror = { ...remoteMirror, enabled: Boolean(args.enabled), path: args.path ? String(args.path) : remoteMirror.path, mode: args.mode === "selected" ? "selected" : remoteMirror.mode };
+      return { mode: "remote", configured: true, online: true, mirrorEnabled: remoteMirror.enabled, mirrorPath: remoteMirror.path, mirrorMode: remoteMirror.mode } as T;
+    }
+    case "set_remote_mirror_mode": remoteMirror = { ...remoteMirror, mode: args.mode === "selected" ? "selected" : "all" }; return remoteMirror as T;
+    case "set_remote_mirror_selection": remoteMirror = { ...remoteMirror, ...(args.input as RemoteMirrorSettings) }; return remoteMirror as T;
+    case "sync_remote_mirror": return { downloaded: 0, uploaded: 0, removed: 0, conflicts: 0, unchanged: 0, totalAssets: 0, cursor: 0, completedAt: new Date().toISOString() } as T;
+    case "list_mirrored_projects": return [] as T;
+    case "list_mirrored_assets": return [] as T;
     case "get_companion_status": return companionStatus as T;
     case "set_companion_enabled": {
       const enabled = Boolean(args.enabled);
@@ -131,10 +151,23 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
       companionStatus = { ...companionStatus, organizationWrites: Boolean(args.enabled) };
       return companionStatus as T;
     }
+    case "set_companion_network": {
+      const networkMode = args.mode === "custom" ? "custom" : "automatic";
+      companionStatus = {
+        ...companionStatus,
+        networkMode,
+        bindAddress: networkMode === "custom" ? String(args.bindAddress ?? "") : undefined,
+        publicUrl: networkMode === "custom" ? String(args.publicUrl ?? "") : undefined,
+        baseUrl: networkMode === "custom" ? String(args.publicUrl ?? "") : companionStatus.baseUrl,
+        transport: networkMode === "custom" ? (String(args.publicUrl ?? "").startsWith("https://") ? "https" : "private-http") : "tailscale-http",
+      };
+      return companionStatus as T;
+    }
     case "create_companion_pairing": {
       const expiresAt = new Date(Date.now() + 300_000).toISOString();
-      const payload = { version: 1, serverId: companionStatus.serverId, serverName: "volum-desktop", baseUrl: companionStatus.baseUrl, secret: "demo-pairing-secret", expiresAt, transport: "tailscale-http" };
-      return { serverId: companionStatus.serverId, serverName: "volum-desktop", baseUrl: companionStatus.baseUrl, secret: payload.secret, expiresAt, qrPayload: JSON.stringify(payload) } as T;
+      const transport = companionStatus.transport ?? "tailscale-http";
+      const payload = { version: 1, serverId: companionStatus.serverId, serverName: "volum-desktop", baseUrl: companionStatus.baseUrl, secret: "demo-pairing-secret", expiresAt, transport };
+      return { serverId: companionStatus.serverId, serverName: "volum-desktop", baseUrl: companionStatus.baseUrl, secret: payload.secret, expiresAt, transport, qrPayload: JSON.stringify(payload) } as T;
     }
     case "revoke_companion_device": companionStatus = { ...companionStatus, devices: companionStatus.devices.filter((device) => device.id !== args.deviceId) }; return companionStatus as T;
     case "list_roots": return [...(managedRoot ? [managedRoot] : []), demoRoot] as T;

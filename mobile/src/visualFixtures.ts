@@ -147,6 +147,7 @@ export const visualRelated: RelatedProject[] = [
 
 export function visualJsonResponse(path: string) {
   const pathname = path.split("?")[0];
+  if (pathname === "/identity") return { serverId: visualCredential.serverId, protocolMin: 1, protocolMax: 1 };
   if (pathname === "/api/v1/status") return visualStatus;
   if (pathname === "/api/v1/collections") return visualCollections;
   if (pathname === "/api/v1/folders") return visualFolders;
@@ -162,16 +163,26 @@ export function visualJsonResponse(path: string) {
 }
 
 export function visualMediaEnvelope(path: string) {
+  if (path.includes("/viewer-mesh")) {
+    return encodeVisualMediaEnvelope(
+      new Uint8Array(visualLocalStlEnvelope().slice(8)),
+      "application/octet-stream",
+      "visual-viewer-vlm5",
+    );
+  }
   const palettes = [
     ["#ff6a48", "#25251f"], ["#6d7df2", "#29283b"], ["#2f8f64", "#183228"], ["#d29a42", "#33291a"],
   ];
   const hash = [...path].reduce((total, character) => total + character.charCodeAt(0), 0);
   const [accent, background] = palettes[hash % palettes.length];
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 480"><defs><linearGradient id="g" x1="0" x2="1" y1="0" y2="1"><stop stop-color="${background}"/><stop offset="1" stop-color="#11110f"/></linearGradient></defs><rect width="640" height="480" fill="url(#g)"/><path d="M182 314V190l138-80 138 80v124l-138 80z" fill="${accent}" opacity=".9"/><path d="m182 190 138 80 138-80M320 270v124" fill="none" stroke="#fff" stroke-opacity=".44" stroke-width="7"/><circle cx="500" cy="86" r="44" fill="${accent}" opacity=".24"/></svg>`;
+  return encodeVisualMediaEnvelope(new TextEncoder().encode(svg), "image/svg+xml", `visual-${hash}`);
+}
+
+function encodeVisualMediaEnvelope(body: Uint8Array, contentTypeValue: string, etagValue: string) {
   const encoder = new TextEncoder();
-  const etag = encoder.encode(`visual-${hash}`);
-  const contentType = encoder.encode("image/svg+xml");
-  const body = encoder.encode(svg);
+  const etag = encoder.encode(etagValue);
+  const contentType = encoder.encode(contentTypeValue);
   const envelope = new Uint8Array(10 + etag.length + contentType.length + body.length);
   envelope.set(encoder.encode("VMC1"), 0);
   const view = new DataView(envelope.buffer);
@@ -182,4 +193,53 @@ export function visualMediaEnvelope(path: string) {
   envelope.set(contentType, 10 + etag.length);
   envelope.set(body, 10 + etag.length + contentType.length);
   return envelope.buffer;
+}
+
+export function visualLocalStlEnvelope() {
+  const vertices = [
+    [0, 0, 0], [20, 0, 0], [20, 30, 0], [0, 30, 0],
+    [0, 0, 20], [20, 0, 20], [20, 30, 20], [0, 30, 20],
+    [28, 5, 0], [40, 5, 0], [40, 17, 0], [28, 17, 0],
+    [28, 5, 12], [40, 5, 12], [40, 17, 12], [28, 17, 12],
+    [-10, -10, -1], [50, -10, -1], [50, 40, -1], [-10, 40, -1],
+  ];
+  const boxTriangles = (base: number) => [
+    [base, base + 2, base + 1], [base, base + 3, base + 2], [base + 4, base + 5, base + 6], [base + 4, base + 6, base + 7],
+    [base, base + 1, base + 5], [base, base + 5, base + 4], [base + 1, base + 2, base + 6], [base + 1, base + 6, base + 5],
+    [base + 2, base + 3, base + 7], [base + 2, base + 7, base + 6], [base + 3, base, base + 4], [base + 3, base + 4, base + 7],
+  ];
+  const triangles = [...boxTriangles(0), ...boxTriangles(8), [16, 17, 18], [16, 18, 19]];
+  const indexCount = triangles.length * 3;
+  const objectCount = 2;
+  const headerLength = 40 + objectCount * 32;
+  const payloadLength = headerLength + vertices.length * 12 + indexCount * 4 + indexCount + triangles.length + triangles.length * 4;
+  const envelope = new ArrayBuffer(8 + payloadLength);
+  const bytes = new Uint8Array(envelope);
+  const view = new DataView(envelope);
+  bytes.set(new TextEncoder().encode("VLP1"), 0);
+  view.setUint32(4, 24, true);
+  bytes.set(new TextEncoder().encode("VLM5"), 8);
+  view.setUint32(12, vertices.length, true);
+  view.setUint32(16, indexCount, true);
+  [0, 0, 0, 40, 30, 20].forEach((value, index) => view.setFloat32(20 + index * 4, value, true));
+  view.setUint32(44, objectCount, true);
+  view.setUint32(48, 1, true);
+  view.setUint32(52, 12, true);
+  [0, 0, 0, 20, 30, 20].forEach((value, index) => view.setFloat32(56 + index * 4, value, true));
+  view.setUint32(80, 2, true);
+  view.setUint32(84, 12, true);
+  [28, 5, 0, 40, 17, 12].forEach((value, index) => view.setFloat32(88 + index * 4, value, true));
+  let offset = 8 + headerLength;
+  vertices.flat().forEach((value) => { view.setFloat32(offset, value, true); offset += 4; });
+  triangles.flat().forEach((value) => { view.setUint32(offset, value, true); offset += 4; });
+  triangles.forEach((_, index) => {
+    bytes.set(index < 24 ? [216, 200, 170] : [54, 55, 64], offset);
+    offset += 3;
+  });
+  triangles.forEach((_, index) => { bytes[offset++] = index < 24 ? 0 : 1; });
+  triangles.forEach((_, index) => {
+    view.setUint32(offset, index < 12 ? 1 : index < 24 ? 2 : 0, true);
+    offset += 4;
+  });
+  return envelope;
 }

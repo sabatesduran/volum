@@ -2,7 +2,7 @@ import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AssemblyStep, BackupArchive, BackupDestination, BackupDestinationInput, BackupRun, Collection, CustomFieldDefinition, DuplicateGroup, DuplicateStats, Folder, LibraryRoot, Material, ModelDetail, ModelQuery, ModelSummary,
-  BackendConnectionStatus, CompanionPairingInfo, CompanionStatus, ConfiguredSlicer, ConsolidationPreview, InboxImportResult, LibraryAssetCandidate, ManagedLibraryStatus, MirroredAsset, MirrorSyncReport, Page, PreparedRestore, PreviewPayload, ProjectBomItem, ProjectDocumentation, ProjectPackagePreview, ProjectPhoto, RelatedModel, SavedSearch, ScanStatus, SlicerApplication, SmartCollectionRule, Tag, WebSource, WebSourcePreview
+  BackendConnectionStatus, CompanionPairingInfo, CompanionStatus, ConfiguredSlicer, ConsolidationPreview, InboxImportResult, LibraryAssetCandidate, LibraryMigrationPreflight, ManagedLibraryStatus, MirroredAsset, MirroredProject, MirrorSyncReport, Page, PendingLibraryMigration, PreparedRestore, PreviewPayload, ProjectBomItem, ProjectDocumentation, ProjectPackagePreview, ProjectPhoto, RelatedModel, RemoteMirrorSelection, RemoteMirrorSettings, SavedSearch, ScanStatus, SlicerApplication, SmartCollectionRule, Tag, WebSource, WebSourcePreview
 } from "../../types";
 import { mockInvoke } from "./mock";
 
@@ -53,10 +53,22 @@ export async function forgetRemoteServer(): Promise<BackendConnectionStatus> {
   return status;
 }
 
-export async function configureRemoteMirror(path: string | undefined, enabled: boolean): Promise<BackendConnectionStatus> {
-  const status = await command<BackendConnectionStatus>("configure_remote_mirror", { path, enabled });
+export async function configureRemoteMirror(path: string | undefined, enabled: boolean, mode?: "all" | "selected"): Promise<BackendConnectionStatus> {
+  const status = await command<BackendConnectionStatus>("configure_remote_mirror", { path, enabled, mode });
   connectionStatus = status;
   return status;
+}
+
+export function getRemoteMirrorSettings(): Promise<RemoteMirrorSettings> {
+  return command<RemoteMirrorSettings>("get_remote_mirror_settings");
+}
+
+export function setRemoteMirrorMode(mode: "all" | "selected"): Promise<RemoteMirrorSettings> {
+  return command<RemoteMirrorSettings>("set_remote_mirror_mode", { mode });
+}
+
+export function setRemoteMirrorSelection(input: RemoteMirrorSelection): Promise<RemoteMirrorSettings> {
+  return command<RemoteMirrorSettings>("set_remote_mirror_selection", { input });
 }
 
 export function syncRemoteMirror(): Promise<MirrorSyncReport> {
@@ -65,6 +77,46 @@ export function syncRemoteMirror(): Promise<MirrorSyncReport> {
 
 export function listMirroredAssets(): Promise<MirroredAsset[]> {
   return command<MirroredAsset[]>("list_mirrored_assets");
+}
+
+export function listMirroredProjects(): Promise<MirroredProject[]> {
+  return command<MirroredProject[]>("list_mirrored_projects");
+}
+
+export function inspectLibraryMigration(): Promise<LibraryMigrationPreflight> {
+  return command<LibraryMigrationPreflight>("inspect_library_migration");
+}
+
+export function pendingLibraryMigration(): Promise<PendingLibraryMigration | undefined> {
+  return command<PendingLibraryMigration | undefined>("get_pending_library_migration");
+}
+
+export async function startLibraryMigration(pairingPayload: string, allowMissing: boolean): Promise<BackendConnectionStatus> {
+  const status = await command<BackendConnectionStatus>("start_library_migration", { pairingPayload, allowMissing });
+  activeBackend = status.mode;
+  connectionStatus = status;
+  return status;
+}
+
+export async function resumeLibraryMigration(): Promise<BackendConnectionStatus> {
+  const status = await command<BackendConnectionStatus>("resume_library_migration");
+  activeBackend = status.mode;
+  connectionStatus = status;
+  return status;
+}
+
+export async function abandonLibraryMigration(): Promise<BackendConnectionStatus> {
+  const status = await command<BackendConnectionStatus>("abandon_library_migration");
+  activeBackend = status.mode;
+  connectionStatus = status;
+  return status;
+}
+
+export async function rollbackLibraryMigration(nasStopped: boolean): Promise<BackendConnectionStatus> {
+  const status = await command<BackendConnectionStatus>("rollback_library_migration", { nasStopped });
+  activeBackend = status.mode;
+  connectionStatus = status;
+  return status;
 }
 
 export function remoteServerStatus(): Promise<{ serverId: string; libraryRevision: string; projectCount: number }> {
@@ -219,6 +271,7 @@ const localApi = {
   companionStatus: () => command<CompanionStatus>("get_companion_status"),
   setCompanionEnabled: (enabled: boolean) => command<CompanionStatus>("set_companion_enabled", { enabled }),
   setCompanionOrganizationWrites: (enabled: boolean) => command<CompanionStatus>("set_companion_organization_writes", { enabled }),
+  setCompanionNetwork: (mode: "automatic" | "custom", bindAddress?: string, publicUrl?: string) => command<CompanionStatus>("set_companion_network", { mode, bindAddress, publicUrl }),
   createCompanionPairing: () => command<CompanionPairingInfo>("create_companion_pairing"),
   revokeCompanionDevice: (deviceId: string) => command<CompanionStatus>("revoke_companion_device", { deviceId })
 };

@@ -1,5 +1,5 @@
 import "fake-indexeddb/auto";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Credential } from "../types";
 import type { MediaFetcher } from "./mediaCache";
 import {
@@ -7,6 +7,7 @@ import {
   mediaCacheStats,
   pruneMediaCache,
   requestCachedBlob,
+  requestCachedMedia,
 } from "./mediaCache";
 
 const servers = new Set<string>();
@@ -76,13 +77,33 @@ describe("transient media cache", () => {
     }));
 
     const stale = await requestCachedBlob(desktop, "/cover", "image/png", async () => {
-      throw new Error("Could not reach Volum Desktop through Tailscale.");
+      throw new Error("Could not reach the Volum server through the selected network.");
     });
     expect([...new Uint8Array(await stale.arrayBuffer())]).toEqual([7]);
 
     await expect(requestCachedBlob(desktop, "/cover", "image/png", async () => {
       throw new Error("This device is no longer paired with Volum Desktop");
     })).rejects.toThrow("no longer paired");
+  });
+
+  it("shows a cached image immediately when background revalidation fails", async () => {
+    const desktop = credential("server-a");
+    await requestCachedBlob(desktop, "/cover", "image/png", async () => ({
+      status: 200,
+      etag: "\"one\"",
+      contentType: "image/png",
+      bytes: bytes(1, 2, 3),
+    }));
+    let attempts = 0;
+
+    const url = await requestCachedMedia(desktop, "/cover", "image/png", async () => {
+      attempts += 1;
+      throw new Error("This media item is not available");
+    });
+
+    expect(url).toMatch(/^blob:/);
+    await vi.waitFor(() => expect(attempts).toBe(1));
+    URL.revokeObjectURL(url);
   });
 
   it("evicts least-recently-used entries to both byte and count limits", async () => {
@@ -118,5 +139,18 @@ describe("transient media cache", () => {
 
     expect(await mediaCacheStats("server-a")).toEqual({ count: 0, byteSize: 0 });
     expect(await mediaCacheStats("server-b")).toEqual({ count: 1, byteSize: 1 });
+  });
+
+  it("does not repopulate a cleared server from an in-flight request", async () => {
+    const desktop = credential("server-a");
+    let finish!: (response: Awaited<ReturnType<MediaFetcher>>) => void;
+    const pending = new Promise<Awaited<ReturnType<MediaFetcher>>>((resolve) => { finish = resolve; });
+    const first = requestCachedBlob(desktop, "/cover", "image/png", () => pending);
+
+    await clearMediaCache("server-a");
+    finish({ status: 200, etag: "\"late\"", contentType: "image/png", bytes: bytes(9) });
+    await first;
+
+    expect(await mediaCacheStats("server-a")).toEqual({ count: 0, byteSize: 0 });
   });
 });

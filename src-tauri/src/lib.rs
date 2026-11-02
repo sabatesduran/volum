@@ -4,6 +4,7 @@ mod companion;
 mod domain;
 mod geometry;
 mod indexing;
+mod library_migration;
 mod menu_bar;
 mod parsers;
 mod previews;
@@ -12,6 +13,7 @@ mod project_packages;
 mod project_storage;
 mod remote;
 mod state;
+mod web_admin;
 mod web_sources;
 
 use sqlx::Row;
@@ -26,6 +28,7 @@ use tauri::{Emitter, Manager};
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -61,8 +64,11 @@ pub fn run() {
                 .app_data_dir()
                 .map_err(|error| error.to_string())?;
             backups::apply_pending_restore(&data_dir)?;
+            let local_retired = remote::local_library_retired(&data_dir);
             let state = tauri::async_runtime::block_on(AppState::initialize(&data_dir))?;
-            tauri::async_runtime::block_on(seed_defaults(&state))?;
+            if !local_retired {
+                tauri::async_runtime::block_on(seed_defaults(&state))?;
+            }
             let companion = companion::CompanionController::new(
                 &data_dir,
                 state.clone(),
@@ -86,49 +92,51 @@ pub fn run() {
                 }
             }
             tauri::async_runtime::spawn(remote_sync.run_background_sync());
-            tauri::async_runtime::spawn(async move {
-                companion.start_if_enabled().await;
-            });
-            let maintenance_handle = app.handle().clone();
-            let maintenance_data_dir = data_dir.clone();
-            tauri::async_runtime::spawn(async move {
-                let _ = tauri::async_runtime::spawn_blocking(move || {
-                    backups::cleanup_stale_work(&maintenance_data_dir);
-                })
-                .await;
-                let state = maintenance_handle.state::<AppState>();
-                if let Err(error) = backups::reconcile_backup_credentials(&state).await {
-                    log::warn!("Could not reconcile backup credentials: {error}");
-                }
-            });
-            let handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                let state = handle.state::<AppState>();
-                let has_managed_root: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM library_roots WHERE root_kind = 'managed' AND status != 'removed')")
-                    .fetch_one(&state.pool)
-                    .await
-                    .unwrap_or(false);
-                if has_managed_root {
-                    match project_storage::import_managed_inbox_impl(&state).await {
-                        Ok(result) if !result.project_ids.is_empty() => {
-                            let _ = handle.emit("models-changed", ());
-                        }
-                        Ok(_) => {}
-                        Err(error) => log::warn!("Could not import the managed Inbox: {error}"),
+            if !local_retired {
+                tauri::async_runtime::spawn(async move {
+                    companion.start_if_enabled().await;
+                });
+                let maintenance_handle = app.handle().clone();
+                let maintenance_data_dir = data_dir.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = tauri::async_runtime::spawn_blocking(move || {
+                        backups::cleanup_stale_work(&maintenance_data_dir);
+                    })
+                    .await;
+                    let state = maintenance_handle.state::<AppState>();
+                    if let Err(error) = backups::reconcile_backup_credentials(&state).await {
+                        log::warn!("Could not reconcile backup credentials: {error}");
                     }
-                }
-                if let Ok(rows) =
-                    sqlx::query("SELECT id FROM library_roots WHERE status != 'removed'")
-                        .fetch_all(&state.pool)
+                });
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let state = handle.state::<AppState>();
+                    let has_managed_root: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM library_roots WHERE root_kind = 'managed' AND status != 'removed')")
+                        .fetch_one(&state.pool)
                         .await
-                {
-                    for row in rows {
-                        let id: String = row.get("id");
-                        let _ = indexing::start(id, &state, Some(handle.clone())).await;
+                        .unwrap_or(false);
+                    if has_managed_root {
+                        match project_storage::import_managed_inbox_impl(&state).await {
+                            Ok(result) if !result.project_ids.is_empty() => {
+                                let _ = handle.emit("models-changed", ());
+                            }
+                            Ok(_) => {}
+                            Err(error) => log::warn!("Could not import the managed Inbox: {error}"),
+                        }
                     }
-                }
-            });
-            backups::start_scheduler(app.handle().clone());
+                    if let Ok(rows) =
+                        sqlx::query("SELECT id FROM library_roots WHERE status != 'removed'")
+                            .fetch_all(&state.pool)
+                            .await
+                    {
+                        for row in rows {
+                            let id: String = row.get("id");
+                            let _ = indexing::start(id, &state, Some(handle.clone())).await;
+                        }
+                    }
+                });
+                backups::start_scheduler(app.handle().clone());
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -235,6 +243,7 @@ pub fn run() {
             companion::get_companion_status,
             companion::set_companion_enabled,
             companion::set_companion_organization_writes,
+            companion::set_companion_network,
             companion::create_companion_pairing,
             companion::revoke_companion_device,
             remote::get_backend_connection,
@@ -247,10 +256,20 @@ pub fn run() {
             remote::remote_upload_file,
             remote::remote_upload_photo,
             remote::configure_remote_mirror,
+            remote::get_remote_mirror_settings,
+            remote::set_remote_mirror_mode,
+            remote::set_remote_mirror_selection,
             remote::sync_remote_mirror,
             remote::open_remote_asset,
             remote::reveal_remote_asset,
             remote::list_mirrored_assets,
+            remote::list_mirrored_projects,
+            library_migration::inspect_library_migration,
+            library_migration::get_pending_library_migration,
+            library_migration::start_library_migration,
+            library_migration::resume_library_migration,
+            library_migration::abandon_library_migration,
+            library_migration::rollback_library_migration,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Volum")
@@ -293,8 +312,10 @@ pub async fn run_headless() -> Result<(), String> {
         }
     });
     let organization_writes = env_flag("VOLUM_ORGANIZATION_WRITES", true)?;
+    let web_enabled = env_flag("VOLUM_WEB_ENABLED", true)?;
 
     backups::apply_pending_restore(&data_dir)?;
+    library_migration::apply_pending_activation(&data_dir, &library_dir)?;
     let state = AppState::initialize(&data_dir).await?;
     seed_defaults(&state).await?;
     let has_managed_root: bool = sqlx::query_scalar(
@@ -312,12 +333,42 @@ pub async fn run_headless() -> Result<(), String> {
         .await?;
     }
 
+    let loaded_web_admin = if web_enabled {
+        Some(web_admin::WebAdminState::load(&data_dir)?)
+    } else {
+        None
+    };
+    let web_dir = if web_enabled {
+        let directory = std::env::var_os("VOLUM_WEB_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/usr/share/volum/web"));
+        if directory.join("index.html").is_file() {
+            Some(directory)
+        } else {
+            log::warn!(
+                "Volum web assets were not found at {}; the API will remain available",
+                directory.display()
+            );
+            None
+        }
+    } else {
+        None
+    };
+
     let controller = companion::CompanionController::new(&data_dir, state.clone(), None)?;
+    if loaded_web_admin
+        .as_ref()
+        .is_some_and(|loaded| loaded.password_changed)
+    {
+        controller.revoke_web_admin_devices().await?;
+    }
     controller
         .start_headless(companion::HeadlessServerOptions {
             bind,
             public_url,
             organization_writes,
+            web_admin: loaded_web_admin.map(|loaded| loaded.state),
+            web_dir,
         })
         .await?;
 
@@ -336,7 +387,7 @@ pub async fn run_headless() -> Result<(), String> {
     }
 
     let status = controller.status().await;
-    let print_pairing = env_flag("VOLUM_PRINT_PAIRING", status.devices.is_empty())?;
+    let print_pairing = env_flag("VOLUM_PRINT_PAIRING", false)?;
     println!(
         "volumd listening at {}",
         status.base_url.as_deref().unwrap_or("unknown URL")

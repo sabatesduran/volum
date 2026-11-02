@@ -492,6 +492,10 @@ export interface CompanionStatus {
   port: number;
   devices: CompanionDevice[];
   organizationWrites: boolean;
+  networkMode: "automatic" | "custom";
+  bindAddress?: string;
+  publicUrl?: string;
+  transport?: "tailscale-http" | "private-http" | "https";
   lastError?: string;
 }
 
@@ -501,6 +505,7 @@ export interface CompanionPairingInfo {
   baseUrl: string;
   secret: string;
   expiresAt: string;
+  transport: "tailscale-http" | "private-http" | "https";
   qrPayload: string;
 }
 
@@ -513,8 +518,46 @@ export interface BackendConnectionStatus {
   baseUrl?: string;
   mirrorEnabled: boolean;
   mirrorPath?: string;
+  mirrorMode?: "all" | "selected";
   lastSyncAt?: string;
   lastError?: string;
+  localLibraryRetired?: boolean;
+  migrationId?: string;
+}
+
+export interface LibraryMigrationStats {
+  projects: number;
+  files: number;
+  photos: number;
+  collections: number;
+  tags: number;
+  linkedProjects: number;
+  managedProjects: number;
+  missingFiles: number;
+  totalBytes: number;
+}
+
+export interface LibraryMigrationPreflight {
+  stats: LibraryMigrationStats;
+  missing: Array<{ projectName: string; filename: string; source: string }>;
+  unreadablePhotos: string[];
+  canMigrate: boolean;
+}
+
+export interface PendingLibraryMigration {
+  id: string;
+  createdAt: string;
+  stats: LibraryMigrationStats;
+  serverId?: string;
+}
+
+export interface LibraryMigrationProgress {
+  stage: "snapshot" | "hashing" | "transferring" | "verifying" | "activating";
+  message: string;
+  completedBytes: number;
+  totalBytes: number;
+  completedFiles: number;
+  totalFiles: number;
 }
 
 export interface MirrorSyncReport {
@@ -530,9 +573,33 @@ export interface MirrorSyncReport {
 
 export interface MirroredAsset {
   id: string;
+  projectId: string;
   projectName: string;
   filename: string;
   byteSize: number;
   modifiedAt: string;
   mirrorPath: string;
+}
+
+export interface MirroredProject {
+  projectId: string;
+  projectName: string;
+  assetCount: number;
+  availableAssetCount: number;
+  byteSize: number;
+}
+
+export interface RemoteMirrorSelection {
+  projectIds: string[];
+  excludedProjectIds: string[];
+  folderIds: string[];
+  collectionIds: string[];
+}
+
+export interface RemoteMirrorSettings extends RemoteMirrorSelection {
+  enabled: boolean;
+  path?: string;
+  mode: "all" | "selected";
+  lastSyncAt?: string;
+  lastError?: string;
 }

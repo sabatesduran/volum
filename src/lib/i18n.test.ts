@@ -36,6 +36,13 @@ describe("language resolution", () => {
     expect(translate("Open on phone", "es")).toBe("Abrir en el teléfono");
   });
 
+  it("localizes Photo Room and migration recovery controls", () => {
+    expect(translate("Render MP4", "ca")).toBe("Renderitza l'MP4");
+    expect(translate("Choose a format", "es")).toBe("Elige un formato");
+    expect(translate("Abandon migration", "ca")).toBe("Abandona la migració");
+    expect(translate("NAS transfer data", "es")).toBe("Datos de transferencia del NAS");
+  });
+
   it("lets an explicit preference override the system language", () => {
     expect(resolveLanguagePreference("system", "ca-ES")).toBe("ca");
     expect(resolveLanguagePreference("system", "fr-FR")).toBe("en");

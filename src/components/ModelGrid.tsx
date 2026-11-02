@@ -15,9 +15,13 @@ interface ModelGridProps {
   context?: "folder" | "date" | "format";
   onChanged?: () => void;
   trashed?: boolean;
+  availableLocalProjectIds?: Set<string>;
+  localCopyMode?: "all" | "selected";
+  localCopyBusy?: boolean;
+  onToggleLocal?: (projectId: string, keep: boolean) => Promise<void>;
 }
 
-export function ModelGrid({ models, loading = false, loadingMore = false, hasMore = false, onLoadMore, context = "folder", onChanged, trashed = false }: ModelGridProps) {
+export function ModelGrid({ models, loading = false, loadingMore = false, hasMore = false, onLoadMore, context = "folder", onChanged, trashed = false, availableLocalProjectIds, localCopyMode, localCopyBusy, onToggleLocal }: ModelGridProps) {
   const density = useAppStore((state) => state.density);
   const parentRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -73,7 +77,7 @@ export function ModelGrid({ models, loading = false, loadingMore = false, hasMor
           <div className="virtual-grid__loader" key={row.key} style={{ transform: `translateY(${row.start}px)`, height: rowHeight }}><span className="spin-dot" />{t(loadingMore ? "Loading more projects…" : "Scroll to load more")}</div>
         ) : (
           <div className="virtual-grid__row" key={row.key} style={{ transform: `translateY(${row.start}px)`, gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, gap }}>
-            {models.slice(row.index * columns, row.index * columns + columns).map((model) => <ModelCard key={model.id} model={model} context={context} onChanged={onChanged} trashed={trashed} />)}
+            {models.slice(row.index * columns, row.index * columns + columns).map((model) => <ModelCard key={model.id} model={model} context={context} onChanged={onChanged} trashed={trashed} availableLocally={availableLocalProjectIds?.has(model.id)} localCopyMode={localCopyMode} localCopyBusy={localCopyBusy} onToggleLocal={onToggleLocal} />)}
           </div>
         ))}
       </div>

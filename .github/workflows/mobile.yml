@@ -117,7 +117,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
-      - run: sdkmanager "platforms;android-37" "build-tools;37.0.0" "ndk;28.2.13676358"
+      - run: sdkmanager "platforms;android-36" "build-tools;36.1.0" "ndk;28.2.13676358"
       - run: npm ci
       - run: npm run tauri -- android build --target aarch64 --apk
         env:

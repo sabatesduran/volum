@@ -16,7 +16,7 @@ val tauriProperties = Properties().apply {
 val androidKeystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
 
 android {
-    compileSdk = 37
+    compileSdk = 36
     namespace = "com.dsd.volum.companion"
     defaultConfig {
         // Companion HTTP is carried inside Tailscale's encrypted WireGuard tunnel.
@@ -24,7 +24,7 @@ android {
         manifestPlaceholders["usesCleartextTraffic"] = "true"
         applicationId = "com.dsd.volum.companion"
         minSdk = 24
-        targetSdk = 37
+        targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
     }

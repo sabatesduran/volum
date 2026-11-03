@@ -428,7 +428,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
-      - run: sdkmanager "platforms;android-37" "build-tools;37.0.0" "ndk;28.2.13676358"
+      - run: sdkmanager "platforms;android-36" "build-tools;36.1.0" "ndk;28.2.13676358"
       - run: npm ci
         working-directory: apps/mobile
       - name: Decode release keystore
@@ -468,7 +468,7 @@ jobs:
             fi
             exit 1
           fi
-          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs "$APK"
+          "$ANDROID_HOME/build-tools/36.1.0/apksigner" verify --print-certs "$APK"
           VERSION="$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)"
           mkdir -p release
           OUTPUT="release/Volum_Companion_${VERSION}_android_arm64.apk"

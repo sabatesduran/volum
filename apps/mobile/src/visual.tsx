@@ -6,6 +6,7 @@ import { CompanionApp, PairingScreen } from "./App";
 import { LocalStlPreviewScreen } from "./features/upload/LocalStlPreviewScreen";
 import { demoCredential } from "./lib/demo";
 import { resolveLanguage, setLanguage } from "./lib/i18n";
+import { markOriginVerified } from "./lib/transport";
 import { visualCredential, visualJsonResponse, visualLocalStlEnvelope, visualMediaEnvelope } from "./visualFixtures";
 import "@volum/design/tokens.css";
 import "@volum/design/primitives.css";
@@ -46,6 +47,8 @@ mockIPC((command, payload) => {
   if (command === "companion_take_opened_stls") return [];
   throw new Error(`Unexpected visual fixture command: ${command}`);
 });
+
+markOriginVerified(visualCredential.baseUrl);
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false, staleTime: Infinity } },

@@ -1,0 +1,11 @@
+{
+  "subtitle": "La biblioteca 3D del taller",
+  "description": "Consulta la teva biblioteca privada de Volum des del taller. Troba projectes, revisa fitxers i detalls 3D i tingues cada muntatge a mà sense compte ni relay al núvol de Volum.",
+  "scenes": {
+    "library": { "headline": "El teu taller, a mà", "subhead": "Consulta projectes, fitxers i preferits des del banc de treball." },
+    "detail": { "headline": "Cada detall, a mà", "subhead": "Fitxers, mides, notes, peces i vistes 3D en un sol lloc." },
+    "filters": { "headline": "Troba la impressió ideal", "subhead": "Cerca, filtra i ordena centenars de projectes en segons." },
+    "collections": { "headline": "Muntatges ben organitzats", "subhead": "Agrupa peces i idees sense moure cap fitxer." },
+    "private": { "headline": "Privat per disseny", "subhead": "Connecta directament amb l'ordinador, sense compte, núvol ni relay públic." }
+  }
+}

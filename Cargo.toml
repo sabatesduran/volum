@@ -1,0 +1,40 @@
+[workspace]
+resolver = "2"
+members = [
+  "apps/*/src-tauri",
+  "apps/volumd",
+  "crates/*",
+]
+
+[workspace.package]
+edition = "2021"
+license = "GPL-3.0-or-later"
+authors = ["Volum contributors"]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "fs", "macros", "net", "io-util", "signal"] }
+sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "migrate", "uuid"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+log = "0.4"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tauri = { version = "=2.12.4", default-features = false }
+tauri-build = { version = "=2.7.4", features = [] }
+reqwest = { version = "0.13", default-features = false }
+rand = "0.9"
+base64 = "0.22"
+tokio-util = { version = "0.7", features = ["io", "rt"] }
+futures-util = "0.3"
+
+[profile.dev]
+debug = 1
+incremental = false
+
+[profile.dev.package.scrypt]
+opt-level = 3
+
+[profile.test]
+debug = 1
+incremental = false

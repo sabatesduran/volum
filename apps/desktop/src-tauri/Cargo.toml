@@ -1,0 +1,44 @@
+[package]
+name = "volum"
+version = "0.2.0"
+description = "A beautiful home for your 3D projects"
+authors = ["Volum contributors"]
+edition = "2021"
+license = "GPL-3.0-or-later"
+default-run = "volum"
+
+[lib]
+name = "volum_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build.workspace = true
+
+[dependencies]
+volum-server = { path = "../../../crates/volum-server", version = "0.2.0" }
+tauri = { workspace = true, features = ["wry", "tray-icon", "image-png"] }
+tauri-plugin-dialog = "2.4.0"
+tauri-plugin-fs = "2"
+tauri-plugin-log = "2.7.0"
+tauri-plugin-single-instance = "2.3.4"
+tauri-plugin-window-state = "2.4.0"
+tauri-plugin-process = "2"
+tauri-plugin-updater = "2.14.1"
+serde_json.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+log.workspace = true
+serde.workspace = true
+reqwest.workspace = true
+tokio-util.workspace = true
+keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native-sync-persistent", "crypto-rust", "vendored"] }
+percent-encoding = "2"
+regex = "1"
+walkdir = "2"
+blake3 = "1"
+zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile = "3"

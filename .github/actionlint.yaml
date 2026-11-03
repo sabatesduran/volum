@@ -1,0 +1,5 @@
+# actionlint 1.7.7 predates GitHub's hosted Windows 11 ARM runner label.
+paths:
+  .github/workflows/**/*.{yml,yaml}:
+    ignore:
+      - 'label "windows-11-arm" is unknown'

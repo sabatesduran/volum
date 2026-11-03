@@ -1,0 +1,50 @@
+.volum-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  color: var(--color-ink);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-soft);
+}
+
+.volum-button {
+  min-height: var(--control-height);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  color: var(--color-ink);
+  background: var(--color-surface);
+  font: 700 13px/1 var(--font-ui);
+}
+
+.volum-button--primary {
+  border-color: transparent;
+  color: var(--color-accent-ink);
+  background: var(--color-accent);
+}
+
+.volum-field {
+  min-height: var(--control-height);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  color: var(--color-ink);
+  background: var(--color-surface-strong);
+  font: 400 14px/1.4 var(--font-ui);
+}
+
+.volum-button:focus-visible,
+.volum-field:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--color-accent) 58%, transparent);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

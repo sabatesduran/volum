@@ -1,0 +1,1239 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Volum Companion API",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "/"
+    }
+  ],
+  "paths": {
+    "/api/v1/admin/devices": {
+      "get": {
+        "operationId": "adminDevices",
+        "responses": {
+          "200": {
+            "description": "Paired devices",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CompanionDevice"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/devices/{id}": {
+      "delete": {
+        "operationId": "deleteAdminDevicesId",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/migration-pairings": {
+      "post": {
+        "operationId": "postAdminMigrationPairings",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/pairings": {
+      "post": {
+        "operationId": "adminPairing",
+        "responses": {
+          "200": {
+            "description": "Pairing information",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PairingInfo"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assets/{id}/content": {
+      "get": {
+        "operationId": "getAssetsIdContent",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      },
+      "head": {
+        "operationId": "headAssetsIdContent",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      },
+      "put": {
+        "operationId": "putAssetsIdContent",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/assets/{id}/plates/{plate_index}/thumbnail": {
+      "get": {
+        "operationId": "getAssetsIdPlatesPlateIndexThumbnail",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/assets/{id}/thumbnail": {
+      "get": {
+        "operationId": "getAssetsIdThumbnail",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/assets/{id}/viewer-mesh": {
+      "get": {
+        "operationId": "getAssetsIdViewerMesh",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/collections": {
+      "get": {
+        "operationId": "getCollections",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      },
+      "post": {
+        "operationId": "postCollections",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/collections/{collection_id}/projects/{project_id}": {
+      "delete": {
+        "operationId": "deleteCollectionsCollectionIdProjectsProjectId",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      },
+      "put": {
+        "operationId": "putCollectionsCollectionIdProjectsProjectId",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/collections/{id}": {
+      "delete": {
+        "operationId": "deleteCollectionsId",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "patchCollectionsId",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/custom-fields": {
+      "get": {
+        "operationId": "getCustomFields",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      },
+      "post": {
+        "operationId": "postCustomFields",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/custom-fields/{id}": {
+      "delete": {
+        "operationId": "deleteCustomFieldsId",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/duplicates": {
+      "get": {
+        "operationId": "getDuplicates",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/duplicates/stats": {
+      "get": {
+        "operationId": "getDuplicatesStats",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/folders": {
+      "get": {
+        "operationId": "getFolders",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/materials": {
+      "get": {
+        "operationId": "getMaterials",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      },
+      "post": {
+        "operationId": "postMaterials",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/migrations": {
+      "post": {
+        "operationId": "postMigrations",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/migrations/preflight": {
+      "get": {
+        "operationId": "getMigrationsPreflight",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/migrations/{id}": {
+      "get": {
+        "operationId": "getMigrationsId",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/migrations/{id}/activate": {
+      "post": {
+        "operationId": "postMigrationsIdActivate",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/migrations/{id}/cancel": {
+      "post": {
+        "operationId": "postMigrationsIdCancel",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/migrations/{id}/files/{file_id}": {
+      "get": {
+        "operationId": "getMigrationsIdFilesFileId",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      },
+      "put": {
+        "operationId": "putMigrationsIdFilesFileId",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/migrations/{id}/finish": {
+      "post": {
+        "operationId": "postMigrationsIdFinish",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/migrations/{id}/verify": {
+      "post": {
+        "operationId": "postMigrationsIdVerify",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/photos/{id}": {
+      "get": {
+        "operationId": "getPhotosId",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/projects": {
+      "get": {
+        "operationId": "getProjects",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      },
+      "post": {
+        "operationId": "postProjects",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}": {
+      "get": {
+        "operationId": "getProjectsId",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "patchProjectsId",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/assembly-steps": {
+      "post": {
+        "operationId": "postProjectsIdAssemblySteps",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/assembly-steps/{step_id}": {
+      "delete": {
+        "operationId": "deleteProjectsIdAssemblyStepsStepId",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/bom": {
+      "post": {
+        "operationId": "postProjectsIdBom",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/bom/{item_id}": {
+      "delete": {
+        "operationId": "deleteProjectsIdBomItemId",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/cover": {
+      "get": {
+        "operationId": "getProjectsIdCover",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/custom-fields/{field_id}": {
+      "put": {
+        "operationId": "putProjectsIdCustomFieldsFieldId",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/documentation": {
+      "get": {
+        "operationId": "getProjectsIdDocumentation",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/estimate": {
+      "put": {
+        "operationId": "putProjectsIdEstimate",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/photos": {
+      "post": {
+        "operationId": "postProjectsIdPhotos",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/photos/{photo_id}": {
+      "delete": {
+        "operationId": "deleteProjectsIdPhotosPhotoId",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "patchProjectsIdPhotosPhotoId",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/related": {
+      "get": {
+        "operationId": "getProjectsIdRelated",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/restore": {
+      "post": {
+        "operationId": "postProjectsIdRestore",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/trash": {
+      "delete": {
+        "operationId": "deleteProjectsIdTrash",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      },
+      "put": {
+        "operationId": "putProjectsIdTrash",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/roots": {
+      "get": {
+        "operationId": "getRoots",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/saved-searches": {
+      "get": {
+        "operationId": "getSavedSearches",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      },
+      "post": {
+        "operationId": "postSavedSearches",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/saved-searches/{id}": {
+      "delete": {
+        "operationId": "deleteSavedSearchesId",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/status": {
+      "get": {
+        "operationId": "status",
+        "responses": {
+          "200": {
+            "description": "Server status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sync/changes": {
+      "get": {
+        "operationId": "getSyncChanges",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/sync/manifest": {
+      "get": {
+        "operationId": "getSyncManifest",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      },
+      "post": {
+        "operationId": "postSyncManifest",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/tags": {
+      "get": {
+        "operationId": "getTags",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      },
+      "post": {
+        "operationId": "postTags",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/tags/{id}": {
+      "delete": {
+        "operationId": "deleteTagsId",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "patchTagsId",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/uploads": {
+      "post": {
+        "operationId": "postUploads",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/web-sources": {
+      "get": {
+        "operationId": "getWebSources",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/web/bootstrap": {
+      "get": {
+        "operationId": "webBootstrap",
+        "responses": {
+          "200": {
+            "description": "Administrator bootstrap",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebBootstrap"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/web/login": {
+      "post": {
+        "operationId": "postWebLogin",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/web/logout": {
+      "post": {
+        "operationId": "postWebLogout",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/healthz": {
+      "get": {
+        "operationId": "getHealthz",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/identity": {
+      "get": {
+        "operationId": "identity",
+        "responses": {
+          "200": {
+            "description": "Server identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerIdentity"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pair": {
+      "post": {
+        "operationId": "pair",
+        "responses": {
+          "200": {
+            "description": "Paired credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PairResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "operationId": "getReadyz",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApiError": {
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "retryable"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ApiErrorEnvelope": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ApiError"
+          }
+        }
+      },
+      "ServerIdentity": {
+        "type": "object",
+        "required": [
+          "serverId",
+          "name",
+          "protocolMin",
+          "protocolMax"
+        ],
+        "properties": {
+          "serverId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "protocolMin": {
+            "type": "integer"
+          },
+          "protocolMax": {
+            "type": "integer"
+          }
+        }
+      },
+      "PairResponse": {
+        "type": "object",
+        "required": [
+          "serverId",
+          "deviceId",
+          "token",
+          "protocolVersion"
+        ],
+        "properties": {
+          "serverId": {
+            "type": "string"
+          },
+          "deviceId": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          },
+          "protocolVersion": {
+            "type": "integer"
+          }
+        }
+      },
+      "ServerCapabilities": {
+        "type": "object",
+        "required": [
+          "readLibrary",
+          "organizationWrites",
+          "photoUploads",
+          "fileUploads",
+          "viewerMeshes",
+          "plateThumbnails",
+          "costEstimates",
+          "relatedProjects",
+          "liveEvents"
+        ],
+        "properties": {
+          "readLibrary": {
+            "type": "boolean"
+          },
+          "organizationWrites": {
+            "type": "boolean"
+          },
+          "photoUploads": {
+            "type": "boolean",
+            "description": "Whether the host currently permits project-photo uploads. This policy is independent of organization writes."
+          },
+          "fileUploads": {
+            "type": "boolean",
+            "description": "Whether the host currently permits managed 3D-file imports."
+          },
+          "viewerMeshes": {
+            "type": "boolean"
+          },
+          "plateThumbnails": {
+            "type": "boolean"
+          },
+          "costEstimates": {
+            "type": "boolean"
+          },
+          "relatedProjects": {
+            "type": "boolean"
+          },
+          "liveEvents": {
+            "type": "boolean"
+          },
+          "originalFiles": {
+            "type": "boolean"
+          },
+          "incrementalSync": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ServerStatus": {
+        "type": "object",
+        "required": [
+          "serverId",
+          "name",
+          "protocolVersion",
+          "projectCount",
+          "libraryRevision",
+          "capabilities"
+        ],
+        "properties": {
+          "serverId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "protocolVersion": {
+            "type": "integer"
+          },
+          "projectCount": {
+            "type": "integer"
+          },
+          "libraryRevision": {
+            "type": "string"
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/ServerCapabilities"
+          }
+        }
+      },
+      "WebBootstrap": {
+        "type": "object",
+        "required": [
+          "configured",
+          "serverId",
+          "serverName",
+          "publicUrl",
+          "secureTransport",
+          "protocolVersion"
+        ],
+        "properties": {
+          "configured": {
+            "type": "boolean"
+          },
+          "serverId": {
+            "type": "string"
+          },
+          "serverName": {
+            "type": "string"
+          },
+          "publicUrl": {
+            "type": "string"
+          },
+          "secureTransport": {
+            "type": "boolean"
+          },
+          "protocolVersion": {
+            "type": "integer"
+          }
+        }
+      },
+      "CompanionDevice": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "platform",
+          "pairedAt",
+          "role"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string"
+          },
+          "pairedAt": {
+            "type": "string"
+          },
+          "lastSeenAt": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "client",
+              "migration"
+            ]
+          }
+        }
+      },
+      "PairingInfo": {
+        "type": "object",
+        "required": [
+          "serverId",
+          "serverName",
+          "baseUrl",
+          "secret",
+          "expiresAt",
+          "transport",
+          "qrPayload"
+        ],
+        "properties": {
+          "serverId": {
+            "type": "string"
+          },
+          "serverName": {
+            "type": "string"
+          },
+          "baseUrl": {
+            "type": "string"
+          },
+          "secret": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string"
+          },
+          "transport": {
+            "type": "string",
+            "enum": [
+              "tailscale-http",
+              "private-http",
+              "https"
+            ]
+          },
+          "qrPayload": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

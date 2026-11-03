@@ -1,0 +1,12 @@
+[package]
+name = "volumd"
+version = "0.2.0"
+description = "Headless Volum server"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+tokio.workspace = true
+tracing-subscriber.workspace = true
+volum-server = { path = "../../crates/volum-server", version = "0.2.0" }

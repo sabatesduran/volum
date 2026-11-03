@@ -1,0 +1,25 @@
+{
+  "name": "@volum/viewer",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./core": "./core.ts",
+    "./materials": "./materials.ts"
+  },
+  "peerDependencies": {
+    "three": "^0.180.0",
+    "three-mesh-bvh": "^0.9.17"
+  },
+  "devDependencies": {
+    "@types/three": "^0.180.0",
+    "three": "^0.180.0",
+    "three-mesh-bvh": "^0.9.17",
+    "typescript": "^5.9.2",
+    "vitest": "^5.0.1"
+  },
+  "scripts": {
+    "test": "vitest run"
+  }
+}

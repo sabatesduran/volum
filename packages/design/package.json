@@ -1,0 +1,10 @@
+{
+  "name": "@volum/design",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "exports": {
+    "./tokens.css": "./tokens.css",
+    "./primitives.css": "./primitives.css"
+  }
+}

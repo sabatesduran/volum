@@ -1,0 +1,27 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "mobile-capability",
+  "description": "Permissions for Volum mobile",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "app-locale:default",
+    "barcode-scanner:allow-scan",
+    "barcode-scanner:allow-cancel",
+    "barcode-scanner:allow-check-permissions",
+    "barcode-scanner:allow-request-permissions",
+    "barcode-scanner:allow-open-app-settings",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "fs:allow-write-file",
+    "fs:allow-appcache-read-recursive",
+    "fs:allow-appcache-write-recursive",
+    "fs:allow-remove",
+    "opener:allow-open-url",
+    "notification:default",
+    "stronghold:allow-initialize",
+    "stronghold:allow-load-client",
+    "stronghold:allow-get-store-record",
+    "stronghold:allow-destroy"
+  ]
+}

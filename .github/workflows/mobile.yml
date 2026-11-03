@@ -3,14 +3,32 @@ name: Mobile
 on:
   pull_request:
     paths:
-      - "mobile/**"
-      - "shared/**"
+      - "apps/mobile/**"
+      - "crates/tauri-plugin-app-locale/**"
+      - "packages/companion-api/**"
+      - "packages/design/**"
+      - "packages/photo-room/**"
+      - "packages/shared/**"
+      - "packages/viewer/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".nvmrc"
       - ".github/workflows/mobile.yml"
   push:
     branches: [main]
     paths:
-      - "mobile/**"
-      - "shared/**"
+      - "apps/mobile/**"
+      - "crates/tauri-plugin-app-locale/**"
+      - "packages/companion-api/**"
+      - "packages/design/**"
+      - "packages/photo-room/**"
+      - "packages/shared/**"
+      - "packages/viewer/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".nvmrc"
       - ".github/workflows/mobile.yml"
 
 permissions:
@@ -25,30 +43,31 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: mobile
+        working-directory: apps/mobile
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 22.23.4
           cache: npm
-          cache-dependency-path: mobile/package-lock.json
+          cache-dependency-path: apps/mobile/package-lock.json
       - run: npm ci
       - run: npm test
       - run: npm run build
+      - run: npm run budget
 
   visual:
     runs-on: macos-latest
     defaults:
       run:
-        working-directory: mobile
+        working-directory: apps/mobile
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 22.23.4
           cache: npm
-          cache-dependency-path: mobile/package-lock.json
+          cache-dependency-path: apps/mobile/package-lock.json
       - run: npm ci
       - run: npx playwright install chromium
       - run: npm run test:visual
@@ -56,49 +75,52 @@ jobs:
         if: failure()
         with:
           name: mobile-visual-diff
-          path: mobile/test-results
+          path: apps/mobile/test-results
           if-no-files-found: ignore
 
   rust:
     runs-on: macos-latest
     defaults:
       run:
-        working-directory: mobile/src-tauri
+        working-directory: apps/mobile/src-tauri
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.99.1
         with:
           components: clippy,rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: mobile/src-tauri
-      - run: cargo fmt -- --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
+          workspaces: ". -> target"
+      - run: cargo fmt --all -- --check
+        working-directory: ../../..
+      - run: cargo clippy -p volum-companion --all-targets -- -D warnings
+        working-directory: ../../..
+      - run: cargo test -p volum-companion
+        working-directory: ../../..
 
   android:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: mobile
+        working-directory: apps/mobile
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 22.23.4
           cache: npm
-          cache-dependency-path: mobile/package-lock.json
+          cache-dependency-path: apps/mobile/package-lock.json
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
       - uses: android-actions/setup-android@v3
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.1
         with:
           targets: aarch64-linux-android
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: mobile/src-tauri
+          workspaces: ". -> target"
       - run: sdkmanager "platforms;android-37" "build-tools;37.0.0" "ndk;28.2.13676358"
       - run: npm ci
       - run: npm run tauri -- android build --target aarch64 --apk
@@ -109,20 +131,20 @@ jobs:
     runs-on: macos-latest
     defaults:
       run:
-        working-directory: mobile
+        working-directory: apps/mobile
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 22.23.4
           cache: npm
-          cache-dependency-path: mobile/package-lock.json
-      - uses: dtolnay/rust-toolchain@stable
+          cache-dependency-path: apps/mobile/package-lock.json
+      - uses: dtolnay/rust-toolchain@1.99.1
         with:
           targets: aarch64-apple-ios-sim
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: mobile/src-tauri
+          workspaces: ". -> target"
       - run: npm ci
       - name: Build iOS simulator app without signing
         run: npm run tauri -- ios build --debug --target aarch64-sim --ci --no-sign --archive-only

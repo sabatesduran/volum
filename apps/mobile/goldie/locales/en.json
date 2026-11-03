@@ -1,0 +1,11 @@
+{
+  "subtitle": "Your 3D workshop library",
+  "description": "Browse your private Volum library from the workshop. Find projects, inspect files and 3D details, and keep every build close without a Volum account or cloud relay.",
+  "scenes": {
+    "library": { "headline": "Your workshop library", "subhead": "Browse every project, file, and favorite from the bench." },
+    "detail": { "headline": "Every detail, at hand", "subhead": "Files, dimensions, notes, parts, and 3D previews in one place." },
+    "filters": { "headline": "Find the right print", "subhead": "Search, filter, and sort hundreds of projects in seconds." },
+    "collections": { "headline": "Keep builds organized", "subhead": "Group parts and ideas without moving a single file." },
+    "private": { "headline": "Private by design", "subhead": "Connect directly to Desktop—no account, cloud, or public relay." }
+  }
+}

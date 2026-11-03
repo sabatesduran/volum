@@ -80,9 +80,6 @@ jobs:
 
   rust:
     runs-on: macos-latest
-    defaults:
-      run:
-        working-directory: apps/mobile/src-tauri
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.99.1
@@ -92,11 +89,8 @@ jobs:
         with:
           workspaces: ". -> target"
       - run: cargo fmt --all -- --check
-        working-directory: ../../..
       - run: cargo clippy -p volum-companion --all-targets -- -D warnings
-        working-directory: ../../..
       - run: cargo test -p volum-companion
-        working-directory: ../../..
 
   android:
     runs-on: ubuntu-latest

@@ -1,11 +1,14 @@
 import type {
-  Credential, OfflineManifest, OfflineProjectSnapshot, ProjectDetail, ProjectDocumentation,
+  CompanionPage, Credential, OfflineManifest, OfflineProjectSnapshot, OfflineScope, ProjectDetail, ProjectDocumentation, ProjectSummary,
 } from "../types";
+import { localizedError, t } from "./i18n";
 import { requestBinary, requestBlob, requestJson } from "./transport";
 
 const DATABASE_NAME = "volum-companion-offline";
 const STORE_NAME = "projects";
-const DATABASE_VERSION = 2;
+const SCOPES_STORE_NAME = "scopes";
+const DATABASE_VERSION = 3;
+const MANIFEST_VERSION = 2;
 const MAX_PROJECT_BYTES = 250 * 1024 * 1024;
 const STORAGE_RESERVE_BYTES = 50 * 1024 * 1024;
 
@@ -36,10 +39,13 @@ function database(): Promise<IDBDatabase> {
         cursor.onsuccess = () => {
           if (!cursor.result) return;
           const snapshot = cursor.result.value as OfflineProjectSnapshot;
-          snapshot.manifest.schemaVersion = 2;
+          snapshot.manifest.schemaVersion = MANIFEST_VERSION;
           cursor.result.update(snapshot);
           cursor.result.continue();
         };
+      }
+      if (!request.result.objectStoreNames.contains(SCOPES_STORE_NAME)) {
+        request.result.createObjectStore(SCOPES_STORE_NAME, { keyPath: "key" });
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -47,11 +53,11 @@ function database(): Promise<IDBDatabase> {
   });
 }
 
-async function transaction<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore) => IDBRequest<T>) {
+async function transaction<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore) => IDBRequest<T>, storeName = STORE_NAME) {
   const db = await database();
   return new Promise<T>((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, mode);
-    const request = run(tx.objectStore(STORE_NAME));
+    const tx = db.transaction(storeName, mode);
+    const request = run(tx.objectStore(storeName));
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error ?? new Error("Offline storage could not be updated."));
     tx.oncomplete = () => db.close();
@@ -86,6 +92,18 @@ export async function removeOfflineProject(serverId: string, projectId: string) 
 export async function clearOfflineProjects(serverId: string) {
   const manifests = await listOfflineManifests(serverId);
   await Promise.all(manifests.map((manifest) => transaction("readwrite", (store) => store.delete(manifest.key))));
+  const scopes = await listOfflineScopes(serverId);
+  await Promise.all(scopes.map((scope) => transaction("readwrite", (store) => store.delete(scope.key), SCOPES_STORE_NAME)));
+  emitOfflineChange();
+}
+
+export async function listOfflineScopes(serverId: string): Promise<OfflineScope[]> {
+  const scopes = await transaction<OfflineScope[]>("readonly", (store) => store.getAll(), SCOPES_STORE_NAME);
+  return scopes.filter((scope) => scope.serverId === serverId).sort((left, right) => right.syncedAt.localeCompare(left.syncedAt));
+}
+
+export async function removeOfflineScope(key: string) {
+  await transaction("readwrite", (store) => store.delete(key), SCOPES_STORE_NAME);
   emitOfflineChange();
 }
 
@@ -142,7 +160,7 @@ export async function downloadOfflineProject(
     update("3D viewer", viewerMesh.byteLength);
   }
   const manifest: OfflineManifest = {
-    schemaVersion: DATABASE_VERSION,
+    schemaVersion: MANIFEST_VERSION,
     key: key(credential.serverId, projectId),
     serverId: credential.serverId,
     projectId,
@@ -171,6 +189,76 @@ export async function downloadOfflineProject(
     throw reason;
   }
   return snapshot;
+}
+
+export type OfflineScopeInput = Pick<OfflineScope, "serverId" | "kind" | "scopeId" | "label" | "params">;
+
+export async function syncOfflineScope(
+  credential: Credential,
+  scopeInput: OfflineScopeInput,
+  libraryRevision: string | undefined,
+  onProgress: (progress: OfflineDownloadProgress) => void = () => undefined,
+): Promise<OfflineScope> {
+  if (credential.serverId !== scopeInput.serverId) throw new Error("The offline scope belongs to a different Volum Desktop.");
+  const scopeKey = `${scopeInput.serverId}:${scopeInput.kind}:${scopeInput.scopeId}` as OfflineScope["key"];
+  const existing = (await listOfflineScopes(scopeInput.serverId)).find((scope) => scope.key === scopeKey);
+  const params = new URLSearchParams(scopeInput.params);
+  params.delete("cursor");
+  params.delete("limit");
+  const projects: ProjectSummary[] = [];
+  let cursor = "";
+  try {
+    do {
+      const pageParams = new URLSearchParams(params);
+      pageParams.set("limit", "100");
+      if (cursor) pageParams.set("cursor", cursor);
+      const page = await requestJson<CompanionPage<ProjectSummary>>(credential, `/api/v1/projects?${pageParams}`);
+      projects.push(...page.items);
+      cursor = page.nextCursor ?? "";
+    } while (cursor);
+  } catch (reason) {
+    const scope: OfflineScope = {
+      ...scopeInput,
+      key: scopeKey,
+      projectIds: existing?.projectIds ?? [],
+      syncedAt: existing?.syncedAt ?? new Date().toISOString(),
+      libraryRevision,
+      error: localizedError(reason),
+    };
+    await transaction("readwrite", (store) => store.put(scope), SCOPES_STORE_NAME);
+    emitOfflineChange();
+    throw reason;
+  }
+
+  const failures: string[] = [];
+  for (let index = 0; index < projects.length; index += 1) {
+    const project = projects[index];
+    try {
+      await downloadOfflineProject(credential, project.id);
+    } catch (reason) {
+      failures.push(`${project.displayName}: ${localizedError(reason)}`);
+    }
+    onProgress({ completed: index + 1, total: projects.length, byteSize: 0, label: project.displayName });
+  }
+  const error = failures.length
+    ? failures.length === 1
+      ? t("One offline project could not be synced: {details}", { details: failures[0] })
+      : t("{count} offline projects could not be synced: {details}", {
+        count: failures.length,
+        details: `${failures.slice(0, 3).join(" · ")}${failures.length > 3 ? ` · ${t("{count} more", { count: failures.length - 3 })}` : ""}`,
+      })
+    : undefined;
+  const scope: OfflineScope = {
+    ...scopeInput,
+    key: scopeKey,
+    projectIds: projects.map((project) => project.id),
+    syncedAt: new Date().toISOString(),
+    libraryRevision,
+    error,
+  };
+  await transaction("readwrite", (store) => store.put(scope), SCOPES_STORE_NAME);
+  emitOfflineChange();
+  return scope;
 }
 
 export async function offlineStorageEstimate() {

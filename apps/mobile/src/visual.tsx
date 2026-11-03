@@ -69,7 +69,7 @@ function VisualApp() {
     return <PairingScreen onPaired={() => undefined} onDemo={() => setDemo(true)} />;
   }
   const credential = demo ? demoCredential : visualCredential;
-  return <CompanionApp credential={credential} onCredentialChange={() => undefined} onUnpair={() => setDemo(false)} onPreviewStl={async () => undefined} />;
+  return <CompanionApp credential={credential} onCredentialChange={() => undefined} onUnpair={() => setDemo(false)} onPreviewStl={async () => undefined} verified onVerified={() => undefined} onRevoked={() => undefined} />;
 }
 
 createRoot(document.getElementById("root")!).render(

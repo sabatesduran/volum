@@ -8,9 +8,10 @@ vi.mock("@tauri-apps/api/core", async () => ({
 }));
 
 import {
-  CompanionError, filenameFromFilePath, isConnectionError, normalizeServerUrl, pairingPayloadWithAddress,
-  pairWithDesktop, parseMediaEnvelope, parsePairingPayload, retryCompanionQuery,
+  CompanionError, filenameFromFilePath, isConnectionError, isOriginVerified, normalizeServerUrl, pairingPayloadWithAddress,
+  pairWithDesktop, parseMediaEnvelope, parsePairingPayload, requestJson, retryCompanionQuery,
 } from "./transport";
+import { demoCredential } from "./demo";
 
 function mediaEnvelope(status: number, etag: string, contentType: string, body: number[]) {
   const encoder = new TextEncoder();
@@ -95,6 +96,7 @@ describe("pairing transport", () => {
 
     await pairWithDesktop(payload);
 
+    expect(isOriginVerified(payload.baseUrl)).toBe(true);
     expect(invokeMock).toHaveBeenNthCalledWith(2, "companion_json_request", {
       request: expect.objectContaining({
         path: "/pair",
@@ -103,6 +105,35 @@ describe("pairing transport", () => {
       }),
     });
     vi.unstubAllGlobals();
+  });
+});
+
+describe("verified-origin request guard", () => {
+  it("rejects authenticated calls before invoking an unverified origin", async () => {
+    const credential = {
+      serverId: "server-unverified",
+      serverName: "Unverified",
+      baseUrl: "https://unverified.example.com",
+      deviceId: "device",
+      token: "secret-token",
+    };
+    invokeMock.mockReset();
+
+    await expect(requestJson(credential, "/api/v1/status")).rejects.toMatchObject({
+      message: "Volum Desktop is unreachable. Showing offline copies.",
+      code: "server_unverified",
+      retryable: true,
+    });
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps demo requests independent of verified origins", async () => {
+    invokeMock.mockReset();
+
+    const status = await requestJson(demoCredential, "/api/v1/status");
+
+    expect(status).toMatchObject({ serverId: "volum-demo" });
+    expect(invokeMock).not.toHaveBeenCalled();
   });
 });
 

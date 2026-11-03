@@ -10,13 +10,13 @@ import { PullToRefresh } from "../../components/PullToRefresh";
 import { QrScannerOverlay } from "../../components/QrScannerOverlay";
 import { notifyCompletion } from "../../lib/notifications";
 import {
-  downloadOfflineProject, listOfflineManifests, listOfflineProjectSnapshots,
+  listOfflineManifests, listOfflineProjectSnapshots, syncOfflineScope, type OfflineScopeInput,
 } from "../../lib/offline";
 import { parseProjectQrPayload } from "../../lib/projectQr";
 import { CompanionError, requestJson } from "../../lib/transport";
 import { localizedError, t } from "../../lib/i18n";
 import type {
-  Collection, CompanionPage, Credential, FolderSummary, ProjectDetail, ProjectSummary, SavedSearch, Tag,
+  Collection, CompanionPage, Credential, FolderSummary, ProjectDetail, ProjectSummary, SavedSearch, ServerStatus, Tag,
 } from "../../types";
 import { ProjectImage } from "../project/ProjectMedia";
 
@@ -32,7 +32,7 @@ function ProjectCard({ credential, project, offline, onOpen }: { credential: Cre
   </button>;
 }
 
-export function LibraryScreen({ credential, tab, selectedCollection, onCollection, onOpen }: { credential: Credential; tab: Tab; selectedCollection?: string; onCollection: (id?: string) => void; onOpen: (id: string) => void }) {
+export function LibraryScreen({ credential, tab, selectedCollection, verified, onCollection, onOpen }: { credential: Credential; tab: Tab; selectedCollection?: string; verified: boolean; onCollection: (id?: string) => void; onOpen: (id: string) => void }) {
   const queryClient = useQueryClient();
   const [searchValue, setSearchValue] = useState("");
   const [search, setSearch] = useState("");
@@ -51,10 +51,10 @@ export function LibraryScreen({ credential, tab, selectedCollection, onCollectio
   const [projectScanBusy, setProjectScanBusy] = useState(false);
   const [projectScanError, setProjectScanError] = useState("");
   const projectScanCanceled = useRef(false);
-  const collections = useQuery({ queryKey: ["collections"], queryFn: () => requestJson<Collection[]>(credential, "/api/v1/collections") });
-  const folders = useQuery({ queryKey: ["folders"], queryFn: () => requestJson<FolderSummary[]>(credential, "/api/v1/folders") });
-  const savedSearches = useQuery({ queryKey: ["saved-searches"], queryFn: () => requestJson<SavedSearch[]>(credential, "/api/v1/saved-searches") });
-  const tags = useQuery({ queryKey: ["tags"], queryFn: () => requestJson<Tag[]>(credential, "/api/v1/tags") });
+  const collections = useQuery({ queryKey: ["collections"], queryFn: () => requestJson<Collection[]>(credential, "/api/v1/collections"), enabled: verified });
+  const folders = useQuery({ queryKey: ["folders"], queryFn: () => requestJson<FolderSummary[]>(credential, "/api/v1/folders"), enabled: verified });
+  const savedSearches = useQuery({ queryKey: ["saved-searches"], queryFn: () => requestJson<SavedSearch[]>(credential, "/api/v1/saved-searches"), enabled: verified });
+  const tags = useQuery({ queryKey: ["tags"], queryFn: () => requestJson<Tag[]>(credential, "/api/v1/tags"), enabled: verified });
   const offline = useQuery({ queryKey: ["offline-manifests", credential.serverId], queryFn: () => listOfflineManifests(credential.serverId), staleTime: Infinity });
   const offlineProjects = useQuery({ queryKey: ["offline-library", credential.serverId], queryFn: () => listOfflineProjectSnapshots(credential.serverId), staleTime: Infinity });
   useEffect(() => {
@@ -83,6 +83,7 @@ export function LibraryScreen({ credential, tab, selectedCollection, onCollectio
   const projects = useInfiniteQuery({
     queryKey: ["projects", tab, selectedCollection, folderId, savedSearchId, recentOnly, search, format, availability, tagId, sort],
     initialPageParam: "",
+    enabled: verified,
     queryFn: ({ pageParam }) => requestJson<CompanionPage<ProjectSummary>>(credential, `/api/v1/projects?${buildParams(pageParam)}`),
     getNextPageParam: (last) => last.nextCursor,
   });
@@ -109,7 +110,7 @@ export function LibraryScreen({ credential, tab, selectedCollection, onCollectio
       if ((savedQuery?.sort ?? sort) === "opened") return (right.lastOpenedAt ?? "").localeCompare(left.lastOpenedAt ?? "");
       return right.modifiedAt.localeCompare(left.modifiedAt);
     });
-  const usingOfflineFallback = projects.isError && cachedItems.length > 0;
+  const usingOfflineFallback = (!verified || projects.isError) && cachedItems.length > 0;
   const visibleItems = usingOfflineFallback ? cachedItems : items;
   const total = usingOfflineFallback ? cachedItems.length : projects.data?.pages[0]?.total;
   const activeFolder = folders.data?.find((item) => item.id === folderId);
@@ -121,38 +122,28 @@ export function LibraryScreen({ credential, tab, selectedCollection, onCollectio
   const saveScopeOffline = async () => {
     setPackBusy(true); setPackProgress({ completed: 0, total: 0 }); setPackError("");
     try {
-      const all: ProjectSummary[] = [];
-      let cursor = "";
-      do {
-        const params = buildParams(cursor); params.set("limit", "100");
-        const page = await requestJson<CompanionPage<ProjectSummary>>(credential, `/api/v1/projects?${params}`);
-        all.push(...page.items); cursor = page.nextCursor ?? "";
-      } while (cursor);
-      setPackProgress({ completed: 0, total: all.length });
-      const failures: string[] = [];
-      for (let index = 0; index < all.length; index += 1) {
-        try {
-          await downloadOfflineProject(credential, all[index].id);
-        } catch (reason) {
-          const message = localizedError(reason);
-          failures.push(`${all[index].displayName}: ${message}`);
-        }
-        setPackProgress({ completed: index + 1, total: all.length });
-      }
+      const params = buildParams();
+      params.delete("cursor");
+      params.delete("limit");
+      const kind: OfflineScopeInput["kind"] = selectedCollection ? "collection" : folderId ? "folder" : "saved-search";
+      const scopeId = selectedCollection || folderId || savedSearchId;
+      const label = selectedCollection
+        ? collections.data?.find((item) => item.id === selectedCollection)?.name ?? t("Collection")
+        : folderId
+          ? folders.data?.find((item) => item.id === folderId)?.name ?? t("Folder")
+          : savedSearches.data?.find((item) => item.id === savedSearchId)?.name ?? t("Saved search");
+      const scope = await syncOfflineScope(
+        credential,
+        { serverId: credential.serverId, kind, scopeId, label, params: params.toString() },
+        queryClient.getQueryData<ServerStatus>(["status", credential.baseUrl])?.libraryRevision,
+        (progress) => setPackProgress({ completed: progress.completed, total: progress.total }),
+      );
+      setPackError(scope.error ?? "");
       await offline.refetch();
-      if (failures.length) {
-        const preview = failures.slice(0, 3).join(" · ");
-        setPackError(t("{count} {projects} could not be saved. {details}", {
-          count: failures.length,
-          projects: t(failures.length === 1 ? "project" : "projects"),
-          details: `${preview}${failures.length > 3 ? ` · ${t("{count} more", { count: failures.length - 3 })}` : ""}`,
-        }));
-      }
+      await offlineProjects.refetch();
       await notifyCompletion(
-        t(failures.length ? "Offline download finished with errors" : "Offline download complete"),
-        failures.length
-          ? t("{saved} of {total} projects were saved.", { saved: all.length - failures.length, total: all.length })
-          : t("{count} projects are ready offline.", { count: all.length }),
+        t(scope.error ? "Offline download finished with errors" : "Offline download complete"),
+        scope.error ?? t("{count} projects are ready offline.", { count: scope.projectIds.length }),
       );
     } catch (reason) {
       setPackError(localizedError(reason));
@@ -189,15 +180,15 @@ export function LibraryScreen({ credential, tab, selectedCollection, onCollectio
     setProjectScanBusy(false);
   };
   return <main className="library-screen">
-    <PullToRefresh onRefresh={() => Promise.all([projects.refetch(), collections.refetch(), folders.refetch(), savedSearches.refetch(), offline.refetch(), offlineProjects.refetch()])} />
-    <header className="mobile-header"><div><h1>{title}</h1><p>{typeof total === "number" && total >= 0 ? `${total} ${t("projects")}` : t("Your private collection")}</p></div><div className="mobile-header__actions"><button className="round-button" aria-label={t("Open project scanner")} onClick={() => { setProjectScanError(""); setProjectScannerOpen(true); }}><QrCode /></button></div></header>
+    <PullToRefresh onRefresh={() => Promise.all([...(verified ? [projects.refetch(), collections.refetch(), folders.refetch(), savedSearches.refetch()] : []), offline.refetch(), offlineProjects.refetch()])} />
+    <header className="mobile-header"><div><h1>{title}</h1><p>{typeof total === "number" && total >= 0 ? `${total} ${t("projects")}` : t("Your private collection")}</p></div>{verified && <div className="mobile-header__actions"><button className="round-button" aria-label={t("Open project scanner")} onClick={() => { setProjectScanError(""); setProjectScannerOpen(true); }}><QrCode /></button></div>}</header>
     {usingOfflineFallback && <div className="offline-fallback-banner" role="status"><CloudCheck /><span><strong>{t("Showing saved projects")}</strong><small>{t("Volum Desktop is unavailable. Search and basic filters apply to this device’s offline snapshots.")}</small></span></div>}
-    <div className="library-search-row"><form className="search-field" onSubmit={(event) => { event.preventDefault(); setSearch(searchValue.trim()); }}><Search size={18} /><input value={searchValue} onChange={(event) => setSearchValue(event.target.value)} placeholder={t("Search projects")} /><button aria-label={t("Search")}><ChevronRight size={18} /></button></form><button id="library-filter" className={`filter-button ${filterCount ? "is-active" : ""}`} aria-label={t("Filter and sort")} onClick={() => setFiltersOpen(true)}><SlidersHorizontal />{filterCount > 0 && <span>{filterCount}</span>}</button></div>
-    {tab === "library" && !search && <section className="collection-strip"><button className={`is-single-line ${!selectedCollection && !folderId && !savedSearchId && !recentOnly ? "is-active" : ""}`} onClick={clearScope}><LibraryBig /><span>{t("All projects")}</span></button><button className={`is-single-line ${recentOnly ? "is-active" : ""}`} onClick={() => { setFolderId(""); setSavedSearchId(""); setRecentOnly(true); onCollection(undefined); }}><Clock3 /><span>{t("Recent")}</span></button>{collections.data?.map((collection) => <button className={selectedCollection === collection.id ? "is-active" : ""} key={collection.id} onClick={() => { setFolderId(""); setSavedSearchId(""); setRecentOnly(false); onCollection(collection.id); }} style={{ "--collection-color": collection.color } as React.CSSProperties}><Boxes /><span>{collection.name}</span><small>{collection.modelCount}</small></button>)}</section>}
-    {(selectedCollection || folderId || savedSearchId) && <section className="scope-offline"><div><CloudDownload /><span><strong>{t("Keep this view offline")}</strong><small>{packBusy ? t("{completed} of {total} projects", { completed: packProgress.completed, total: packProgress.total || "…" }) : t("Download every project in this collection or folder.")}</small></span></div><button disabled={packBusy} onClick={() => void saveScopeOffline()}>{packBusy ? <LoaderCircle className="spin" /> : t("Download")}</button>{packBusy && packProgress.total > 0 && <div className="upload-progress"><span style={{ width: `${packProgress.completed / packProgress.total * 100}%` }} /></div>}{packError && <div className="scope-offline__error" role="alert"><CircleAlert />{packError}</div>}</section>}
+    <div className="library-search-row"><form className="search-field" onSubmit={(event) => { event.preventDefault(); setSearch(searchValue.trim()); }}><Search size={18} /><input value={searchValue} onChange={(event) => setSearchValue(event.target.value)} placeholder={t("Search projects")} /><button aria-label={t("Search")}><ChevronRight size={18} /></button></form>{verified && <button id="library-filter" className={`filter-button ${filterCount ? "is-active" : ""}`} aria-label={t("Filter and sort")} onClick={() => setFiltersOpen(true)}><SlidersHorizontal />{filterCount > 0 && <span>{filterCount}</span>}</button>}</div>
+    {verified && tab === "library" && !search && <section className="collection-strip"><button className={`is-single-line ${!selectedCollection && !folderId && !savedSearchId && !recentOnly ? "is-active" : ""}`} onClick={clearScope}><LibraryBig /><span>{t("All projects")}</span></button><button className={`is-single-line ${recentOnly ? "is-active" : ""}`} onClick={() => { setFolderId(""); setSavedSearchId(""); setRecentOnly(true); onCollection(undefined); }}><Clock3 /><span>{t("Recent")}</span></button>{collections.data?.map((collection) => <button className={selectedCollection === collection.id ? "is-active" : ""} key={collection.id} onClick={() => { setFolderId(""); setSavedSearchId(""); setRecentOnly(false); onCollection(collection.id); }} style={{ "--collection-color": collection.color } as React.CSSProperties}><Boxes /><span>{collection.name}</span><small>{collection.modelCount}</small></button>)}</section>}
+    {verified && (selectedCollection || folderId || savedSearchId) && <section className="scope-offline"><div><CloudDownload /><span><strong>{t("Keep this view offline")}</strong><small>{packBusy ? t("{completed} of {total} projects", { completed: packProgress.completed, total: packProgress.total || "…" }) : t("Download every project in this collection or folder.")}</small></span></div><button disabled={packBusy || !verified} onClick={() => void saveScopeOffline()}>{packBusy ? <LoaderCircle className="spin" /> : t("Download")}</button>{packBusy && packProgress.total > 0 && <div className="upload-progress"><span style={{ width: `${packProgress.completed / packProgress.total * 100}%` }} /></div>}{packError && <div className="scope-offline__error" role="alert"><CircleAlert />{packError}</div>}</section>}
     {projects.isLoading ? <div className="project-grid skeleton-grid">{Array.from({ length: 8 }, (_, index) => <div className="skeleton-card" key={index}><i /><span /><small /></div>)}</div> : projects.isError && !usingOfflineFallback ? <ErrorState error={projects.error} retrying={projects.isFetching} onRetry={() => void projects.refetch()} /> : visibleItems.length ? <><div className="project-grid">{visibleItems.map((project) => <ProjectCard key={project.id} credential={credential} project={project} offline={offlineIds.has(project.id)} onOpen={() => onOpen(project.id)} />)}</div>{!usingOfflineFallback && projects.hasNextPage && <button className="load-more" disabled={projects.isFetchingNextPage} onClick={() => void projects.fetchNextPage()}>{projects.isFetchingNextPage ? <LoaderCircle className="spin" /> : t("Load more projects")}</button>}</> : <div className="center-state"><Search size={27} /><strong>{t("No projects found")}</strong><p>{t("Try another search, folder, or filter.")}</p></div>}
-    {filtersOpen && <div className="sheet-scrim" role="presentation" onClick={() => setFiltersOpen(false)}><section className="mobile-sheet mobile-sheet--tall filter-sheet" role="dialog" aria-modal="true" aria-labelledby="filters-title" onClick={(event) => event.stopPropagation()}><header><div><div className="eyebrow">{t("BROWSE")}</div><h2 id="filters-title">{t("Filter & sort")}</h2></div><button className="round-button" aria-label={t("Close filters")} onClick={() => setFiltersOpen(false)}><X /></button></header><div className="sheet-field-grid"><label className="sheet-field sheet-field--wide"><span>{t("Folder")}</span><select value={folderId} onChange={(event) => { setFolderId(event.target.value); if (event.target.value) { onCollection(undefined); setSavedSearchId(""); setRecentOnly(false); } }}><option value="">{t("All folders")}</option>{folders.data?.map((folder) => <option key={folder.id} value={folder.id}>{folder.name} · {folder.modelCount}</option>)}</select></label><label className="sheet-field sheet-field--wide"><span>{t("Saved search")}</span><select value={savedSearchId} onChange={(event) => { setSavedSearchId(event.target.value); if (event.target.value) { setFolderId(""); setRecentOnly(false); onCollection(undefined); } }}><option value="">{t("None")}</option>{savedSearches.data?.map((saved) => <option key={saved.id} value={saved.id}>{saved.name}</option>)}</select></label><label className="sheet-field"><span>{t("Format")}</span><select value={format} onChange={(event) => setFormat(event.target.value)}><option value="">{t("All")}</option>{["3mf", "stl", "obj", "step"].map((value) => <option key={value} value={value}>{value.toUpperCase()}</option>)}</select></label><label className="sheet-field"><span>{t("Desktop file")}</span><select value={availability} onChange={(event) => setAvailability(event.target.value)}><option value="">{t("Any")}</option><option value="available">{t("Available")}</option><option value="offline">{t("Missing")}</option></select></label><label className="sheet-field sheet-field--wide"><span>{t("Tag")}</span><select value={tagId} onChange={(event) => setTagId(event.target.value)}><option value="">{t("All tags")}</option>{tags.data?.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}</select></label><label className="sheet-field sheet-field--wide"><span>{t("Sort")}</span><select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)}><option value="modified">{t("Recently modified")}</option><option value="added">{t("Recently added")}</option><option value="opened">{t("Last opened")}</option><option value="name">{t("Name A–Z")}</option></select></label></div><div className="filter-sheet__actions"><button className="button button--quiet" onClick={() => { setFolderId(""); setSavedSearchId(""); setRecentOnly(false); setFormat(""); setAvailability(""); setTagId(""); setSort("modified"); }}>{t("Clear")}</button><button className="button button--primary" onClick={() => setFiltersOpen(false)}><Check />{t("Show projects")}</button></div></section></div>}
-    {projectScannerOpen && !projectScanBusy && <div className="sheet-scrim" role="presentation" onClick={() => void closeProjectScanner()}><section className="mobile-sheet project-scanner-sheet" role="dialog" aria-modal="true" aria-labelledby="project-scanner-title" onClick={(event) => event.stopPropagation()}><header><div><div className="eyebrow">{t("PROJECT QR")}</div><h2 id="project-scanner-title">{t("Open a shared project")}</h2></div><button className="round-button" aria-label={t("Close")} onClick={() => void closeProjectScanner()}><X /></button></header><div className="project-scanner-sheet__icon"><QrCode /></div><p>{t("Scan a project QR shown by Volum Desktop or another device paired with this same Desktop.")}</p><small>{t("This does not pair the app with Volum Desktop. Pairing codes are scanned from the connection screen.")}</small>{projectScanError && <div className="error-banner" role="alert"><CircleAlert />{projectScanError}</div>}<button className="button button--primary button--large" onClick={() => void scanProject()}><QrCode />{t("Scan project QR")}</button></section></div>}
+    {verified && filtersOpen && <div className="sheet-scrim" role="presentation" onClick={() => setFiltersOpen(false)}><section className="mobile-sheet mobile-sheet--tall filter-sheet" role="dialog" aria-modal="true" aria-labelledby="filters-title" onClick={(event) => event.stopPropagation()}><header><div><div className="eyebrow">{t("BROWSE")}</div><h2 id="filters-title">{t("Filter & sort")}</h2></div><button className="round-button" aria-label={t("Close filters")} onClick={() => setFiltersOpen(false)}><X /></button></header><div className="sheet-field-grid"><label className="sheet-field sheet-field--wide"><span>{t("Folder")}</span><select value={folderId} onChange={(event) => { setFolderId(event.target.value); if (event.target.value) { onCollection(undefined); setSavedSearchId(""); setRecentOnly(false); } }}><option value="">{t("All folders")}</option>{folders.data?.map((folder) => <option key={folder.id} value={folder.id}>{folder.name} · {folder.modelCount}</option>)}</select></label><label className="sheet-field sheet-field--wide"><span>{t("Saved search")}</span><select value={savedSearchId} onChange={(event) => { setSavedSearchId(event.target.value); if (event.target.value) { setFolderId(""); setRecentOnly(false); onCollection(undefined); } }}><option value="">{t("None")}</option>{savedSearches.data?.map((saved) => <option key={saved.id} value={saved.id}>{saved.name}</option>)}</select></label><label className="sheet-field"><span>{t("Format")}</span><select value={format} onChange={(event) => setFormat(event.target.value)}><option value="">{t("All")}</option>{["3mf", "stl", "obj", "step"].map((value) => <option key={value} value={value}>{value.toUpperCase()}</option>)}</select></label><label className="sheet-field"><span>{t("Desktop file")}</span><select value={availability} onChange={(event) => setAvailability(event.target.value)}><option value="">{t("Any")}</option><option value="available">{t("Available")}</option><option value="offline">{t("Missing")}</option></select></label><label className="sheet-field sheet-field--wide"><span>{t("Tag")}</span><select value={tagId} onChange={(event) => setTagId(event.target.value)}><option value="">{t("All tags")}</option>{tags.data?.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}</select></label><label className="sheet-field sheet-field--wide"><span>{t("Sort")}</span><select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)}><option value="modified">{t("Recently modified")}</option><option value="added">{t("Recently added")}</option><option value="opened">{t("Last opened")}</option><option value="name">{t("Name A–Z")}</option></select></label></div><div className="filter-sheet__actions"><button className="button button--quiet" onClick={() => { setFolderId(""); setSavedSearchId(""); setRecentOnly(false); setFormat(""); setAvailability(""); setTagId(""); setSort("modified"); }}>{t("Clear")}</button><button className="button button--primary" onClick={() => setFiltersOpen(false)}><Check />{t("Show projects")}</button></div></section></div>}
+    {verified && projectScannerOpen && !projectScanBusy && <div className="sheet-scrim" role="presentation" onClick={() => void closeProjectScanner()}><section className="mobile-sheet project-scanner-sheet" role="dialog" aria-modal="true" aria-labelledby="project-scanner-title" onClick={(event) => event.stopPropagation()}><header><div><div className="eyebrow">{t("PROJECT QR")}</div><h2 id="project-scanner-title">{t("Open a shared project")}</h2></div><button className="round-button" aria-label={t("Close")} onClick={() => void closeProjectScanner()}><X /></button></header><div className="project-scanner-sheet__icon"><QrCode /></div><p>{t("Scan a project QR shown by Volum Desktop or another device paired with this same Desktop.")}</p><small>{t("This does not pair the app with Volum Desktop. Pairing codes are scanned from the connection screen.")}</small>{projectScanError && <div className="error-banner" role="alert"><CircleAlert />{projectScanError}</div>}<button className="button button--primary button--large" onClick={() => void scanProject()}><QrCode />{t("Scan project QR")}</button></section></div>}
     {projectScannerOpen && projectScanBusy && <QrScannerOverlay title={t("Scan a project QR")} instructions={t("Point the camera at a project code shown in Volum Desktop or another paired Volum device.")} onCancel={() => void closeProjectScanner()} />}
   </main>;
 }

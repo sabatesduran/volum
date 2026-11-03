@@ -23,9 +23,23 @@ const CONNECTION_ERROR_MESSAGES = new Set([
   "Volum Desktop did not respond. Check that it is open and Companion Access is on.",
   "The connection to Volum Desktop failed.",
 ]);
+const verifiedOrigins = new Set<string>();
+const UNVERIFIED_ORIGIN_ERROR = "Volum Desktop is unreachable. Showing offline copies.";
+
+export function markOriginVerified(value: string) {
+  verifiedOrigins.add(normalizeServerUrl(value));
+}
+
+export function isOriginVerified(value: string) {
+  try {
+    return verifiedOrigins.has(normalizeServerUrl(value));
+  } catch {
+    return false;
+  }
+}
 
 export function isConnectionError(reason: unknown) {
-  if (reason instanceof CompanionApiError && reason.code === "connection_failed") return true;
+  if (reason instanceof CompanionApiError && ["connection_failed", "server_unverified"].includes(reason.code ?? "")) return true;
   const message = reason instanceof Error ? reason.message : String(reason);
   return CONNECTION_ERROR_MESSAGES.has(message);
 }
@@ -61,7 +75,8 @@ export async function pairWithDesktop(payload: PairingPayload): Promise<Credenti
   const baseUrl = normalizeServerUrl(payload.baseUrl);
   const identity = await nativeJson<{ serverId: string; protocolMin: number; protocolMax: number }>(baseUrl, "/identity");
   if (identity.serverId !== payload.serverId || identity.protocolMin > 1 || identity.protocolMax < 1) {
-    throw new CompanionApiError("This address belongs to a different or incompatible Volum server.");
+    verifiedOrigins.delete(baseUrl);
+    throw new CompanionApiError("This address belongs to a different or incompatible Volum server.", 0, "server_identity_mismatch");
   }
   const platform = /android/i.test(navigator.userAgent) ? "Android" : /iphone|ipad/i.test(navigator.userAgent) ? "iOS" : "Companion";
   const result = await nativeJson<{ serverId: string; deviceId: string; token: string; protocolVersion: number }>(
@@ -71,7 +86,11 @@ export async function pairWithDesktop(payload: PairingPayload): Promise<Credenti
     { secret: payload.secret, deviceName: deviceName(), platform },
     "POST",
   );
-  if (result.serverId !== payload.serverId || result.protocolVersion !== 1) throw new CompanionApiError("This Volum Desktop identity changed during pairing.");
+  if (result.serverId !== payload.serverId || result.protocolVersion !== 1) {
+    verifiedOrigins.delete(baseUrl);
+    throw new CompanionApiError("This Volum Desktop identity changed during pairing.", 0, "server_identity_mismatch");
+  }
+  markOriginVerified(baseUrl);
   return { serverId: result.serverId, serverName: payload.serverName, baseUrl, deviceId: result.deviceId, token: result.token };
 }
 
@@ -79,8 +98,10 @@ export async function verifyServerIdentity(baseUrl: string, expectedServerId: st
   const normalized = normalizeServerUrl(baseUrl);
   const identity = await nativeJson<{ serverId: string; protocolMin: number; protocolMax: number }>(normalized, "/identity");
   if (identity.serverId !== expectedServerId || identity.protocolMin > 1 || identity.protocolMax < 1) {
-    throw new CompanionApiError("That address belongs to a different Volum server.");
+    verifiedOrigins.delete(normalized);
+    throw new CompanionApiError("That address belongs to a different Volum server.", 0, "server_identity_mismatch");
   }
+  markOriginVerified(normalized);
   return normalized;
 }
 
@@ -90,11 +111,13 @@ export async function requestJson<T>(credential: Credential, path: string): Prom
     if (response === undefined) throw new CompanionApiError("This item is not available in the demo library.", 404, "not_found");
     return response as T;
   }
+  requireVerifiedOrigin(credential);
   return nativeJson<T>(credential.baseUrl, path, credential.token, undefined, "GET");
 }
 
 export function mutateJson<T>(credential: Credential, path: string, method: Exclude<JsonMethod, "GET">, body?: unknown): Promise<T> {
   if (isDemoCredential(credential)) return Promise.reject(new CompanionApiError("The demo library is read-only.", 403, "demo_read_only"));
+  requireVerifiedOrigin(credential);
   return nativeJson<T>(credential.baseUrl, path, credential.token, body, method);
 }
 
@@ -127,6 +150,7 @@ export async function requestMediaResponse(
   ifNoneMatch?: string,
 ): Promise<MediaResponse> {
   if (isDemoCredential(credential)) return parseMediaEnvelope(demoMediaEnvelope(path));
+  requireVerifiedOrigin(credential);
   const envelope = await invoke<ArrayBuffer>("companion_media_request", {
     request: {
       baseUrl: credential.baseUrl,
@@ -175,6 +199,7 @@ export async function uploadProjectFile(
   uploadId: string,
 ): Promise<UploadResult> {
   if (isDemoCredential(credential)) throw new CompanionError("The demo library is read-only.", 403, "demo_read_only");
+  requireVerifiedOrigin(credential);
   const progress = new Channel<UploadProgress>();
   progress.onmessage = onProgress;
   return invoke<UploadResult>("companion_upload_file", {
@@ -200,6 +225,7 @@ export async function uploadProjectPhoto(
   uploadId: string,
 ): Promise<ProjectDocumentation> {
   if (isDemoCredential(credential)) throw new CompanionError("The demo library is read-only.", 403, "demo_read_only");
+  requireVerifiedOrigin(credential);
   if (file.size <= 0 || file.size > 25 * 1024 * 1024) throw new CompanionError("Project photos must be non-empty and at most 25 MB.");
   const extension = photoExtension(file);
   const originalBase = file.name.replace(/\.[^.]+$/, "").trim().slice(0, 140) || "workshop-photo";
@@ -247,6 +273,12 @@ export function normalizeServerUrl(value: string): string {
   }
   if (!url.port && url.protocol === "http:") url.port = "43821";
   return url.origin;
+}
+
+function requireVerifiedOrigin(credential: Credential) {
+  if (!isOriginVerified(credential.baseUrl)) {
+    throw new CompanionApiError(UNVERIFIED_ORIGIN_ERROR, 0, "server_unverified", true);
+  }
 }
 
 export function transportForServerUrl(value: string, original?: PairingPayload): PairingPayload["transport"] {

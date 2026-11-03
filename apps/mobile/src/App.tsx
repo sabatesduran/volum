@@ -12,7 +12,7 @@ import { Brand } from "./components/Brand";
 import { QrScannerOverlay } from "./components/QrScannerOverlay";
 import type { Tab } from "./features/library/LibraryScreen";
 import { clearCredential, loadCredential, prepareCredentialStore, saveCredential } from "./lib/credentials";
-import { clearOfflineProjects } from "./lib/offline";
+import { clearOfflineProjects, listOfflineManifests, listOfflineScopes, syncOfflineScope } from "./lib/offline";
 import { clearMediaCache } from "./lib/mediaCache";
 import { demoCredential, isDemoCredential } from "./lib/demo";
 import { localizedError, t, useLanguage } from "./lib/i18n";
@@ -23,7 +23,7 @@ import {
   takeOpenedStls,
   type LocalStlFile,
 } from "./lib/localStl";
-import { filenameFromFilePath, pairWithDesktop, pairingPayloadWithAddress, parsePairingPayload, requestJson, transportForServerUrl, verifyServerIdentity } from "./lib/transport";
+import { CompanionError, filenameFromFilePath, mutateJson, pairWithDesktop, pairingPayloadWithAddress, parsePairingPayload, requestJson, transportForServerUrl, verifyServerIdentity } from "./lib/transport";
 import type { Credential, PairingPayload, ServerStatus } from "./types";
 
 const LibraryScreen = lazy(() => import("./features/library/LibraryScreen").then((module) => ({ default: module.LibraryScreen })));
@@ -150,37 +150,90 @@ export function PairingScreen({ onPaired, onDemo, onCancel }: { onPaired: (crede
   </main>;
 }
 
-export function CompanionApp({ credential, initialProjectId, onInitialProjectOpened, onCredentialChange, onUnpair, onPreviewStl }: { credential: Credential; initialProjectId?: string; onInitialProjectOpened?: () => void; onCredentialChange: (credential: Credential) => void; onUnpair: () => void; onPreviewStl: (filePath: string, filename: string) => Promise<void> }) {
+export function CompanionApp({ credential, initialProjectId, onInitialProjectOpened, onCredentialChange, onUnpair, onPreviewStl, verified, onVerified, onRevoked }: { credential: Credential; initialProjectId?: string; onInitialProjectOpened?: () => void; onCredentialChange: (credential: Credential) => void; onUnpair: () => void; onPreviewStl: (filePath: string, filename: string) => Promise<void>; verified: boolean; onVerified: (baseUrl: string) => void; onRevoked: () => void }) {
   const queryClient = useQueryClient();
   const observedRevision = useRef("");
+  const syncingRevision = useRef("");
   const [tab, setTab] = useState<Tab>("library");
   const [projectId, setProjectId] = useState<string | undefined>(initialProjectId);
   const [collectionId, setCollectionId] = useState<string>();
+  const [checkingIdentity, setCheckingIdentity] = useState(false);
   const status = useQuery({
     queryKey: ["status", credential.baseUrl],
     queryFn: () => requestJson<ServerStatus>(credential, "/api/v1/status"),
-    refetchInterval: () => document.visibilityState === "visible" ? 15_000 : false,
+    enabled: verified,
+    refetchInterval: () => verified && document.visibilityState === "visible" ? 15_000 : false,
     refetchOnReconnect: true,
   });
+  const invalidateRemoteQueries = useCallback(() => {
+    void queryClient.invalidateQueries({ predicate: (query) => query.queryKey[0] !== "status" && query.queryKey[0] !== "offline-project" && query.queryKey[0] !== "offline-manifests" });
+  }, [queryClient]);
+  const retryIdentity = useCallback(async () => {
+    if (checkingIdentity || isDemoCredential(credential)) return;
+    setCheckingIdentity(true);
+    try {
+      const baseUrl = await verifyServerIdentity(credential.baseUrl, credential.serverId);
+      onVerified(baseUrl);
+      invalidateRemoteQueries();
+    } catch {
+      return;
+    } finally {
+      setCheckingIdentity(false);
+    }
+  }, [checkingIdentity, credential, invalidateRemoteQueries, onVerified]);
   useEffect(() => {
     const next = status.data?.libraryRevision;
     if (!next) return;
-    if (observedRevision.current && observedRevision.current !== next) {
-      void queryClient.invalidateQueries({ predicate: (query) => query.queryKey[0] !== "status" && query.queryKey[0] !== "offline-project" && query.queryKey[0] !== "offline-manifests" });
-    }
+    if (observedRevision.current && observedRevision.current !== next) invalidateRemoteQueries();
     observedRevision.current = next;
-  }, [queryClient, status.data?.libraryRevision]);
+  }, [invalidateRemoteQueries, status.data?.libraryRevision]);
+  useEffect(() => {
+    const revision = status.data?.libraryRevision;
+    if (!verified || !revision || syncingRevision.current === revision) return;
+    syncingRevision.current = revision;
+    void (async () => {
+      try {
+        const scopes = await listOfflineScopes(credential.serverId);
+        for (const scope of scopes) {
+          if (scope.libraryRevision === revision) continue;
+          try {
+            await syncOfflineScope(credential, scope, revision);
+          } catch {
+            continue;
+          }
+        }
+      } catch {
+        return;
+      }
+    })();
+  }, [credential, status.data?.libraryRevision, verified]);
+  useEffect(() => {
+    if (status.error instanceof CompanionError && status.error.status === 401) onRevoked();
+  }, [onRevoked, status.error]);
+  useEffect(() => {
+    if (verified || isDemoCredential(credential)) return;
+    const retryWhenVisible = () => {
+      if (document.visibilityState === "visible") void retryIdentity();
+    };
+    const interval = window.setInterval(retryWhenVisible, 15_000);
+    window.addEventListener("online", retryWhenVisible);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("online", retryWhenVisible);
+    };
+  }, [credential, retryIdentity, verified]);
   useEffect(() => {
     if (initialProjectId) onInitialProjectOpened?.();
   }, [initialProjectId, onInitialProjectOpened]);
-  const canWrite = Boolean(status.data?.capabilities.organizationWrites);
+  const canWrite = verified && Boolean(status.data?.capabilities.organizationWrites);
   if (projectId) return <Suspense fallback={<ScreenFallback />}><ProjectDetailScreen key={projectId} credential={credential} id={projectId} canWrite={canWrite} onBack={() => setProjectId(undefined)} onOpen={setProjectId} /></Suspense>;
   const chooseTab = (next: Tab) => { setTab(next); if (next !== "library") setCollectionId(undefined); };
   return <div className={`app-shell ${isDemoCredential(credential) ? "is-demo" : ""}`}>
-    <Suspense fallback={<ScreenFallback />}>{tab === "collections" ? <CollectionsScreen credential={credential} canWrite={canWrite} onSelect={(id) => { setCollectionId(id); setTab("library"); }} onOpen={setProjectId} /> : tab === "upload" ? <UploadScreen credential={credential} photosEnabled={Boolean(status.data?.capabilities.photoUploads)} onOpen={setProjectId} onPreviewStl={onPreviewStl} /> : tab === "settings" ? <SettingsScreen credential={credential} status={status.data} onCredentialChange={onCredentialChange} onRefresh={() => status.refetch()} onUnpair={onUnpair} /> : <LibraryScreen credential={credential} tab={tab} selectedCollection={collectionId} onCollection={setCollectionId} onOpen={setProjectId} />}</Suspense>
+    {!verified && !isDemoCredential(credential) && <div className="offline-connection-banner" role="status"><span>{t("Volum Desktop is unreachable. Showing offline copies.")}</span><button className="text-button" disabled={checkingIdentity} onClick={() => void retryIdentity()}>{checkingIdentity ? <LoaderCircle className="spin" /> : t("Try again")}</button></div>}
+    <Suspense fallback={<ScreenFallback />}>{tab === "collections" ? <CollectionsScreen credential={credential} canWrite={canWrite} verified={verified} onSelect={(id) => { setCollectionId(id); setTab("library"); }} onOpen={setProjectId} /> : tab === "upload" ? <UploadScreen credential={credential} photosEnabled={verified && Boolean(status.data?.capabilities.photoUploads)} onOpen={setProjectId} onPreviewStl={onPreviewStl} /> : tab === "settings" ? <SettingsScreen credential={credential} status={status.data} onCredentialChange={onCredentialChange} onRefresh={() => status.refetch()} onUnpair={onUnpair} /> : <LibraryScreen credential={credential} tab={tab} selectedCollection={collectionId} verified={verified} onCollection={setCollectionId} onOpen={setProjectId} />}</Suspense>
     <nav className="bottom-nav">{([
       ["library", "Library", LibraryBig], ["favorites", "Favorites", Heart], ["upload", "Capture", Camera], ["collections", "Collections", Boxes], ["settings", "Settings", Settings2]
-    ] as Array<[Tab, string, typeof LibraryBig]>).map(([id, label, Icon]) => <button id={`nav-${id}`} key={id} className={tab === id ? "is-active" : ""} onClick={() => chooseTab(id)}><Icon size={20} fill={id === "favorites" && tab === id ? "currentColor" : "none"} /><span>{t(label)}</span></button>)}</nav>
+    ] as Array<[Tab, string, typeof LibraryBig]>).map(([id, label, Icon]) => <button id={`nav-${id}`} key={id} className={tab === id ? "is-active" : ""} disabled={id === "upload" && !verified && !isDemoCredential(credential)} onClick={() => chooseTab(id)}><Icon size={20} fill={id === "favorites" && tab === id ? "currentColor" : "none"} /><span>{t(label)}</span></button>)}</nav>
   </div>;
 }
 
@@ -188,6 +241,8 @@ export function App() {
   useLanguage();
   const queryClient = useQueryClient();
   const [credential, setCredential] = useState<Credential>();
+  const [verified, setVerified] = useState(false);
+  const [revokedCredential, setRevokedCredential] = useState<Credential>();
   const [unverifiedCredential, setUnverifiedCredential] = useState<Credential>();
   const [verificationError, setVerificationError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -208,10 +263,21 @@ export function App() {
       const verified = { ...saved, baseUrl };
       setUnverifiedCredential(undefined);
       setCredential(verified);
+      setVerified(true);
     } catch (reason) {
-      setCredential(undefined);
-      setUnverifiedCredential(saved);
-      setVerificationError(localizedError(reason));
+      const identityMismatch = reason instanceof CompanionError && reason.code === "server_identity_mismatch";
+      const manifests = identityMismatch ? [] : await listOfflineManifests(saved.serverId).catch(() => []);
+      if (manifests.length > 0) {
+        setCredential(saved);
+        setVerified(false);
+        setUnverifiedCredential(undefined);
+        setVerificationError("");
+      } else {
+        setCredential(undefined);
+        setVerified(false);
+        setUnverifiedCredential(saved);
+        setVerificationError(localizedError(reason));
+      }
     } finally { setLoading(false); }
   }, []);
   useEffect(() => {
@@ -232,6 +298,38 @@ export function App() {
     setUnverifiedCredential(undefined);
     setVerificationError("");
   };
+  const forgetRevokedCredential = async () => {
+    const saved = revokedCredential;
+    if (saved) {
+      await Promise.allSettled([
+        clearOfflineProjects(saved.serverId),
+        clearMediaCache(saved.serverId),
+      ]);
+    }
+    await clearCredential();
+    queryClient.clear();
+    setRevokedCredential(undefined);
+    setCredential(undefined);
+    setVerified(false);
+  };
+  const handleVerified = useCallback((baseUrl: string) => {
+    setCredential((current) => {
+      if (!current || current.baseUrl === baseUrl) return current;
+      const next = { ...current, baseUrl };
+      void saveCredential(next).catch(() => undefined);
+      return next;
+    });
+    setVerified(true);
+    setUnverifiedCredential(undefined);
+    setVerificationError("");
+  }, []);
+  const handleRevoked = useCallback(() => {
+    if (credential) {
+      setRevokedCredential(credential);
+      setCredential(undefined);
+      setVerified(false);
+    }
+  }, [credential]);
   const replaceLocalFile = useCallback((next: LocalStlFile) => {
     const previous = localFileRef.current;
     localFileRef.current = next;
@@ -311,10 +409,23 @@ export function App() {
     if (credential && isDemoCredential(credential)) {
       queryClient.clear();
       setCredential(undefined);
+      setVerified(false);
       return;
     }
     if (!window.confirm(t("Unpair this device and remove its cached credentials?"))) return;
     let cacheError = "";
+    let revokeError = false;
+    if (credential && !isDemoCredential(credential)) {
+      if (!verified) {
+        revokeError = true;
+      } else {
+        try {
+          await mutateJson<void>(credential, "/api/v1/device", "DELETE");
+        } catch {
+          revokeError = true;
+        }
+      }
+    }
     if (credential) {
       const results = await Promise.allSettled([
         clearOfflineProjects(credential.serverId),
@@ -326,14 +437,19 @@ export function App() {
     await clearCredential();
     queryClient.clear();
     setCredential(undefined);
-    if (cacheError) window.alert(t("This device was unpaired, but its offline cache could not be fully removed: {error}", { error: localizedError(cacheError) }));
+    setVerified(false);
+    const alerts = [
+      revokeError ? t("This device was removed here, but Volum Desktop could not be reached. Revoke it from Companion Access on the desktop.") : "",
+      cacheError ? t("This device was unpaired, but its offline cache could not be fully removed: {error}", { error: localizedError(cacheError) }) : "",
+    ].filter(Boolean);
+    if (alerts.length) window.alert(alerts.join("\n\n"));
   };
   let content;
   if (stagingLocalFile && !localFile) {
     content = <main className="local-stl-opening"><Brand /><LoaderCircle className="spin" /><strong>{t("Opening STL on this device…")}</strong><span>{t("Nothing is being uploaded.")}</span></main>;
   } else if (localFile && pairingForLocalFile) {
     content = <PairingScreen
-      onPaired={(next) => { setCredential(next); setPairingForLocalFile(false); }}
+      onPaired={(next) => { setCredential(next); setVerified(true); setPairingForLocalFile(false); }}
       onDemo={() => undefined}
       onCancel={() => { setPairingForLocalFile(false); setResumeLocalSave(false); }}
     />;
@@ -350,12 +466,14 @@ export function App() {
     /></Suspense>;
   } else if (loading) {
     content = <main className="launch-screen"><Brand /><LoaderCircle className="spin" /></main>;
+  } else if (revokedCredential) {
+    content = <main className="launch-screen identity-verification-error"><Brand /><CircleAlert /><strong>{t("This device is no longer paired with Volum Desktop")}</strong><button className="button button--primary" onClick={() => void forgetRevokedCredential()}><Wifi />{t("Pair again")}</button></main>;
   } else if (unverifiedCredential) {
     content = <main className="launch-screen identity-verification-error"><Brand /><CircleAlert /><strong>{t("Server identity could not be verified")}</strong><span>{verificationError}</span><button className="button button--primary" disabled={loading} onClick={() => void verifySavedCredential(unverifiedCredential)}>{loading ? <LoaderCircle className="spin" /> : <Wifi />}{t("Try again")}</button><button className="text-button" disabled={loading} onClick={() => void forgetUnverifiedCredential()}>{t("Forget saved server")}</button></main>;
   } else {
     content = credential
-      ? <CompanionApp credential={credential} initialProjectId={initialProjectId} onInitialProjectOpened={() => setInitialProjectId(undefined)} onCredentialChange={setCredential} onUnpair={() => void unpair()} onPreviewStl={previewSelectedStl} />
-      : <PairingScreen onPaired={setCredential} onDemo={() => setCredential(demoCredential)} />;
+      ? <CompanionApp credential={credential} initialProjectId={initialProjectId} onInitialProjectOpened={() => setInitialProjectId(undefined)} onCredentialChange={setCredential} onUnpair={() => void unpair()} onPreviewStl={previewSelectedStl} verified={verified} onVerified={handleVerified} onRevoked={handleRevoked} />
+      : <PairingScreen onPaired={(next) => { setCredential(next); setVerified(true); }} onDemo={() => { setCredential(demoCredential); setVerified(true); }} />;
   }
   return <>{content}{incomingError && <div className="sheet-scrim"><section className="mobile-sheet incoming-file-error" role="alertdialog" aria-modal="true"><header><div><span className="eyebrow">{t("OPEN STL")}</span><h2>{t("This file could not be opened")}</h2></div><button className="round-button" aria-label={t("Close")} onClick={() => setIncomingError("")}><X /></button></header><div className="error-banner"><CircleAlert />{incomingError}</div><button className="button button--primary button--large sheet-submit" onClick={() => setIncomingError("")}>{t("Continue")}</button></section></div>}</>;
 }

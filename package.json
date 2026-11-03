@@ -1,7 +1,7 @@
 {
   "name": "volum-repository",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "scripts": {
     "setup": "npm ci --prefix packages/companion-api && npm ci --prefix packages/shared && npm ci --prefix packages/viewer && npm ci --prefix packages/photo-room && npm ci --prefix apps/desktop && npm ci --prefix apps/mobile && npm ci --prefix apps/server-admin && npm ci --prefix apps/website",
     "dev": "npm --prefix apps/desktop run dev",

@@ -1,6 +1,6 @@
 [package]
 name = "volum"
-version = "0.2.0"
+version = "0.3.0"
 description = "A beautiful home for your 3D projects"
 authors = ["Volum contributors"]
 edition = "2021"
@@ -15,7 +15,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build.workspace = true
 
 [dependencies]
-volum-server = { path = "../../../crates/volum-server", version = "0.2.0" }
+volum-server = { path = "../../../crates/volum-server", version = "0.3.0" }
 tauri = { workspace = true, features = ["wry", "tray-icon", "image-png"] }
 tauri-plugin-dialog = "2.4.0"
 tauri-plugin-fs = "2"

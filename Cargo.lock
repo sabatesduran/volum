@@ -7087,7 +7087,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "volum"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "blake3",
  "chrono",
@@ -7146,7 +7146,7 @@ dependencies = [
 
 [[package]]
 name = "volum-server"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "argon2",
  "axum",
@@ -7182,7 +7182,7 @@ dependencies = [
 
 [[package]]
 name = "volumd"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "tokio",
  "tracing-subscriber",

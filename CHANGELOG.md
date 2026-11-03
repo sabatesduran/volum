@@ -2,6 +2,27 @@
 
 All notable changes to Volum are documented here.
 
+## [0.3.0] - 2026-11-03
+
+### Added
+
+- Companion Access for securely pairing trusted phones, tablets, and other desktops over Tailscale, private networks, or HTTPS, with scoped permissions and immediate device revocation.
+- The Volum Companion 1.0 beta for iPhone, iPad, and Android, including library browsing, search, project documentation, offline access, touch 3D inspection, photo capture, file uploads, and organization tools.
+- The headless `volumd` server, a browser administrator, and Docker Compose deployment for an always-on library on a NAS or home server.
+- Managed project storage, portable project packages, remote Desktop access, and guided library migration to a new local or network location.
+- Object-level selection, isolation, and visibility controls for inspecting multipart models.
+
+### Improved
+
+- Project details now support photos, custom fields, bills of materials, assembly steps, notes, cost information, and source attribution across supported clients.
+- Desktop, mobile, server, and shared components now live in one validated monorepo with a generated OpenAPI contract and shared design, viewer, photo-room, and utility packages.
+- Release automation now validates versions, changelog-derived notes, installers, mobile builds, container startup, API drift, visual regressions, and bundle budgets.
+
+### Security
+
+- Pairing uses short-lived one-use secrets, hashed and revocable device tokens, server-identity verification, native credential vaults, bounded requests, and independently configurable organization, photo, and model-upload permissions.
+- Existing Companion beta pairings migrate from Stronghold to the native credential vault only after the replacement credentials have been verified.
+
 ## [0.2.0] - 2026-09-23
 
 ### Added
@@ -52,6 +73,7 @@ All notable changes to Volum are documented here.
 - Model cards no longer overlap after a library finishes loading or the grid is resized.
 - Linux filesystem reads no longer trigger continuous rescans or leave the library stuck on “Building previews.”
 
+[0.3.0]: https://github.com/sabatesduran/volum/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/sabatesduran/volum/compare/v0.1.10...v0.2.0
 [0.1.10]: https://github.com/sabatesduran/volum/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/sabatesduran/volum/compare/v0.1.8...v0.1.9

@@ -1,6 +1,6 @@
 [package]
 name = "volum-server"
-version = "0.2.0"
+version = "0.3.0"
 description = "Transport-neutral Volum library and Companion server services"
 edition.workspace = true
 license.workspace = true

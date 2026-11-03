@@ -304,7 +304,7 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
     }
     case "delete_assembly_step": Object.values(projectDocs).forEach((docs) => docs.assemblySteps = docs.assemblySteps.filter((step) => step.id !== args.stepId)); return undefined as T;
     case "get_project_photo": return new ArrayBuffer(0) as T;
-    case "inspect_project_package": return { formatVersion: 1, appVersion: "0.2.0", packageProjectId: "demo-package", packageExportId: crypto.randomUUID(), projectName: "Portable demo project", exportedAt: new Date().toISOString(), fileCount: 2, photoCount: 3, bomItemCount: 4, assemblyStepCount: 2, totalBytes: 4_200_000, alreadyImported: false } as T;
+    case "inspect_project_package": return { formatVersion: 1, appVersion: "0.3.0", packageProjectId: "demo-package", packageExportId: crypto.randomUUID(), projectName: "Portable demo project", exportedAt: new Date().toISOString(), fileCount: 2, photoCount: 3, bomItemCount: 4, assemblyStepCount: 2, totalBytes: 4_200_000, alreadyImported: false } as T;
     case "export_project_package": return undefined as T;
     case "import_project_package": return "demo-1" as T;
     case "list_saved_searches": return savedSearches as T;
@@ -407,7 +407,7 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
     case "list_backup_runs": return backupRuns as T;
     case "list_destination_archives": return backupRuns.filter((run) => run.destinationId === args.destinationId && run.status === "complete").map((run) => ({ key: run.filename, filename: run.filename, byteSize: run.byteSize, modifiedAt: run.completedAt })) as T;
     case "prepare_restore_from_path":
-    case "prepare_restore_from_destination": return { token: crypto.randomUUID(), appVersion: "0.2.0", createdAt: new Date().toISOString(), byteSize: 2_400_000, counts: { libraries: 1, models: models.length, collections: collections.length, tags: tags.length, webSources: webSources.length } } as T;
+    case "prepare_restore_from_destination": return { token: crypto.randomUUID(), appVersion: "0.3.0", createdAt: new Date().toISOString(), byteSize: 2_400_000, counts: { libraries: 1, models: models.length, collections: collections.length, tags: tags.length, webSources: webSources.length } } as T;
     case "commit_prepared_restore": return undefined as T;
     case "cancel_prepared_restore": return undefined as T;
     case "open_external_url": window.open(String(args.url), "_blank", "noopener,noreferrer"); return undefined as T;

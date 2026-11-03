@@ -479,11 +479,6 @@ summary:active,
 }
 
 .docs-product-frame {
-  overflow: clip;
-  border: 1px solid var(--volum-night-line);
-  border-radius: 18px;
-  background: var(--volum-night);
-  box-shadow: 0 34px 70px var(--volum-shadow-strong);
   transform: perspective(1400px) rotateY(-2deg) rotateX(1deg);
   transform-origin: center left;
 }
@@ -492,6 +487,7 @@ summary:active,
   width: 100%;
   height: auto;
   display: block;
+  filter: drop-shadow(0 34px 34px var(--volum-shadow-strong));
 }
 
 .docs-hero__visual figcaption {
@@ -656,168 +652,24 @@ summary:active,
 }
 
 .docs-macbook {
-  width: 85%;
+  width: 88%;
+  height: auto;
+  display: block;
   position: absolute;
   top: 50%;
-  left: 0;
+  left: -3%;
   transform: translateY(-50%);
-}
-
-.docs-macbook__lid {
-  position: relative;
-  padding: 1.35% 1.25% 1.55%;
-  border: 1px solid rgb(255 255 255 / 0.18);
-  border-radius: 18px 18px 9px 9px;
-  background: linear-gradient(145deg, #555651 0%, #1b1c19 38%, #363733 76%, #11120f 100%);
-  box-shadow: 0 34px 80px var(--volum-shadow-strong), inset 0 1px rgb(255 255 255 / 0.2);
-}
-
-.docs-macbook__screen {
-  aspect-ratio: 3024 / 1964;
-  overflow: hidden;
-  border-radius: 10px 10px 5px 5px;
-  background: #050605;
-}
-
-.docs-macbook__screen img,
-.docs-phone__screen img {
-  width: 100%;
-  height: 100%;
-  display: block;
-  object-fit: cover;
-}
-
-.docs-macbook__camera {
-  width: 9%;
-  height: 3.3%;
-  position: absolute;
-  top: 1.25%;
-  left: 50%;
-  border-radius: 0 0 8px 8px;
-  transform: translateX(-50%);
-  background: #050605;
-}
-
-.docs-macbook__camera::after {
-  width: 4px;
-  height: 4px;
-  position: absolute;
-  left: 50%;
-  bottom: 3px;
-  border-radius: 50%;
-  content: "";
-  transform: translateX(-50%);
-  background: #17211e;
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.08);
-}
-
-.docs-macbook__base {
-  height: 16px;
-  position: relative;
-  margin: -1px -4% 0;
-  border-top: 1px solid rgb(255 255 255 / 0.28);
-  border-radius: 2px 2px 13px 13px;
-  clip-path: polygon(3.7% 0, 96.3% 0, 100% 78%, 98% 100%, 2% 100%, 0 78%);
-  background: linear-gradient(to bottom, #6a6b67 0%, #393a37 35%, #191a18 80%, #0d0e0c 100%);
-  box-shadow: 0 18px 28px rgb(0 0 0 / 0.34);
-}
-
-.docs-macbook__base::before {
-  width: 14%;
-  height: 4px;
-  position: absolute;
-  top: 0;
-  left: 50%;
-  border-radius: 0 0 5px 5px;
-  content: "";
-  transform: translateX(-50%);
-  background: #1f201d;
+  filter: drop-shadow(0 34px 38px var(--volum-shadow-strong));
 }
 
 .docs-phone {
   width: 25%;
-  aspect-ratio: 71.5 / 149.6;
+  height: auto;
+  display: block;
   position: absolute;
   z-index: 2;
   right: 0;
-  border: 1px solid rgb(255 255 255 / 0.22);
-  border-radius: 14% / 6.7%;
-  background: linear-gradient(110deg, #747570 0%, #272825 18%, #090a09 52%, #464743 82%, #181916 100%);
-  box-shadow: 0 28px 60px var(--volum-shadow-strong), inset 0 0 0 1px rgb(0 0 0 / 0.72), inset 0 0 0 2px rgb(255 255 255 / 0.08);
-}
-
-.docs-phone__screen {
-  position: absolute;
-  inset: 0.8% 2.4%;
-  overflow: hidden;
-  border-radius: 12.5% / 5.9%;
-  background: var(--volum-surface);
-}
-
-.docs-phone__island {
-  width: 27%;
-  height: 3.5%;
-  position: absolute;
-  z-index: 3;
-  top: 1.75%;
-  left: 50%;
-  border-radius: 999px;
-  transform: translateX(-50%);
-  background: #050505;
-  box-shadow: inset -8px 0 12px rgb(255 255 255 / 0.025);
-}
-
-.docs-phone__island::after {
-  width: 6%;
-  aspect-ratio: 1;
-  position: absolute;
-  top: 50%;
-  right: 8%;
-  border-radius: 50%;
-  content: "";
-  transform: translateY(-50%);
-  background: #111b1d;
-  box-shadow: inset 0 0 0 1px rgb(57 76 79 / 0.42);
-}
-
-.docs-phone__button {
-  position: absolute;
-  border: 1px solid rgb(255 255 255 / 0.12);
-  background: #262724;
-}
-
-.docs-phone__button--action,
-.docs-phone__button--volume-up,
-.docs-phone__button--volume-down {
-  width: 1.4%;
-  left: -1.35%;
-  border-radius: 3px 0 0 3px;
-}
-
-.docs-phone__button--action {
-  height: 4.2%;
-  top: 14.5%;
-}
-
-.docs-phone__button--volume-up,
-.docs-phone__button--volume-down {
-  height: 7.5%;
-}
-
-.docs-phone__button--volume-up {
-  top: 22.5%;
-}
-
-.docs-phone__button--volume-down {
-  top: 31.5%;
-}
-
-.docs-phone__button--side {
-  width: 1.4%;
-  height: 12.5%;
-  top: 23%;
-  right: -1.35%;
-  border-radius: 0 3px 3px 0;
+  filter: drop-shadow(0 28px 26px var(--volum-shadow-strong));
 }
 
 .docs-phone--library {

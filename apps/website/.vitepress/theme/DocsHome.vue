@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import libraryScreenshot from "../../assets/screenshots/library.webp";
-import projectScreenshot from "../../assets/screenshots/batraci-mini.webp";
-import mobileLibraryScreenshot from "../../assets/screenshots/mobile-library.png";
-import mobileProjectScreenshot from "../../assets/screenshots/mobile-project-detail.png";
+import libraryMacbookScreenshot from "../../assets/screenshots/desktop-library-macbook-pro-m5.webp";
+import projectMacbookScreenshot from "../../assets/screenshots/desktop-project-macbook-pro-m5.webp";
+import mobileLibraryScreenshot from "../../assets/screenshots/mobile-library-iphone-17-pro-orange.webp";
+import mobileProjectScreenshot from "../../assets/screenshots/mobile-project-detail-iphone-17-pro-orange.webp";
 </script>
 
 <template>
@@ -30,8 +30,8 @@ import mobileProjectScreenshot from "../../assets/screenshots/mobile-project-det
       <figure class="docs-hero__visual">
         <div class="docs-product-frame">
           <img
-            :src="libraryScreenshot"
-            alt="Volum Desktop showing a searchable library of 3D-printing projects"
+            :src="libraryMacbookScreenshot"
+            alt="Volum Desktop showing a searchable library of 3D-printing projects in a MacBook Pro"
             fetchpriority="high"
           >
         </div>
@@ -100,47 +100,24 @@ import mobileProjectScreenshot from "../../assets/screenshots/mobile-project-det
 
     <section class="docs-workbench" aria-labelledby="docs-workbench-title">
       <div class="docs-workbench__visual">
-        <div class="docs-macbook">
-          <div class="docs-macbook__lid">
-            <div class="docs-macbook__screen">
-              <img
-                :src="projectScreenshot"
-                alt="Volum Desktop showing the interactive 3D project viewer and model details"
-                loading="lazy"
-              >
-            </div>
-            <span class="docs-macbook__camera" aria-hidden="true"></span>
-          </div>
-          <div class="docs-macbook__base" aria-hidden="true"></div>
-        </div>
-        <div class="docs-phone docs-phone--library">
-          <div class="docs-phone__screen">
-            <img
-              :src="mobileLibraryScreenshot"
-              alt="Volum mobile library screen"
-              loading="lazy"
-            >
-          </div>
-          <span class="docs-phone__island" aria-hidden="true"></span>
-          <span class="docs-phone__button docs-phone__button--action" aria-hidden="true"></span>
-          <span class="docs-phone__button docs-phone__button--volume-up" aria-hidden="true"></span>
-          <span class="docs-phone__button docs-phone__button--volume-down" aria-hidden="true"></span>
-          <span class="docs-phone__button docs-phone__button--side" aria-hidden="true"></span>
-        </div>
-        <div class="docs-phone docs-phone--project">
-          <div class="docs-phone__screen">
-            <img
-              :src="mobileProjectScreenshot"
-              alt="Volum mobile project detail screen"
-              loading="lazy"
-            >
-          </div>
-          <span class="docs-phone__island" aria-hidden="true"></span>
-          <span class="docs-phone__button docs-phone__button--action" aria-hidden="true"></span>
-          <span class="docs-phone__button docs-phone__button--volume-up" aria-hidden="true"></span>
-          <span class="docs-phone__button docs-phone__button--volume-down" aria-hidden="true"></span>
-          <span class="docs-phone__button docs-phone__button--side" aria-hidden="true"></span>
-        </div>
+        <img
+          class="docs-macbook"
+          :src="projectMacbookScreenshot"
+          alt="Volum Desktop showing the interactive 3D project viewer and model details in a MacBook Pro"
+          loading="lazy"
+        >
+        <img
+          class="docs-phone docs-phone--library"
+          :src="mobileLibraryScreenshot"
+          alt="Volum mobile library screen in an orange iPhone 17 Pro"
+          loading="lazy"
+        >
+        <img
+          class="docs-phone docs-phone--project"
+          :src="mobileProjectScreenshot"
+          alt="Volum mobile project detail screen in an orange iPhone 17 Pro"
+          loading="lazy"
+        >
       </div>
 
       <div class="docs-workbench__copy">

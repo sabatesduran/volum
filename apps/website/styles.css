@@ -194,11 +194,11 @@ main section[id] { scroll-margin-top: 65px; }
 .companion-devices { min-width: 0; min-height: 700px; position: relative; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: center; gap: clamp(10px, 1.5vw, 22px); perspective: 1500px; }
 .companion-devices::before { width: 88%; aspect-ratio: 1; position: absolute; z-index: -1; left: 50%; top: 50%; border-radius: 50%; content: ""; background: radial-gradient(circle, rgb(244 116 82 / .2), transparent 68%); filter: blur(8px); transform: translate(-50%, -50%); }
 .companion-device { min-width: 0; margin: 0; }
-.companion-device img { width: 100%; height: auto; display: block; border: 1px solid rgb(255 255 255 / .16); border-radius: clamp(24px, 2.3vw, 38px); background: #f7f4ed; box-shadow: 0 32px 70px rgb(0 0 0 / .38); }
+.companion-device img { width: 100%; height: auto; display: block; filter: drop-shadow(0 32px 34px rgb(0 0 0 / .38)); }
 .companion-device figcaption { margin-top: 14px; color: var(--faint); text-align: center; text-transform: uppercase; letter-spacing: .12em; font-size: 8px; font-weight: 700; }
 .companion-device--library { transform: rotateY(10deg) translateY(28px); transform-origin: right center; }
 .companion-device--primary { z-index: 2; transform: translateY(-18px) scale(1.07); }
-.companion-device--primary img { border-color: color-mix(in srgb, var(--accent) 60%, white 10%); box-shadow: 0 38px 90px rgb(0 0 0 / .5), 0 0 0 6px rgb(244 116 82 / .07); }
+.companion-device--primary img { filter: drop-shadow(0 38px 42px rgb(0 0 0 / .5)) drop-shadow(0 0 18px rgb(244 116 82 / .12)); }
 .companion-device--primary figcaption { color: var(--accent-bright); }
 .companion-device--detail { transform: rotateY(-10deg) translateY(28px); transform-origin: left center; }
 
@@ -461,7 +461,6 @@ main section[id] { scroll-margin-top: 65px; }
   .card-icon { margin-bottom: 44px; }
   .companion-copy h2 { font-size: 43px; }
   .companion-devices { width: calc(100% + 52px); margin-left: -26px; gap: 6px; }
-  .companion-device img { border-radius: 18px; }
   .companion-device figcaption { display: none; }
   .companion-device--library { transform: rotateY(8deg) translateY(12px); }
   .companion-device--primary { transform: translateY(-8px) scale(1.04); }

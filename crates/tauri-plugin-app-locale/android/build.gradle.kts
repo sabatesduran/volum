@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace = "dev.didac.volum.applocale"
-    compileSdk = 37
+    compileSdk = 36
 
     defaultConfig {
         minSdk = 24

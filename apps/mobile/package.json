@@ -1,7 +1,7 @@
 {
   "name": "volum-companion",
   "private": true,
-  "version": "1.0.0",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "predev": "npm run locales:sync",

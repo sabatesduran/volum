@@ -362,7 +362,7 @@ test("settings tests the connection and shows the app version", async ({ page })
   await settle(page);
   await expect(page).toHaveScreenshot("settings-connection.png");
 
-  const version = page.getByText("v1.0.0 · Protocol 1");
+  const version = page.getByText("v0.3.0 · Protocol 1");
   await version.scrollIntoViewIfNeeded();
   await expect(version).toBeVisible();
   await settle(page);

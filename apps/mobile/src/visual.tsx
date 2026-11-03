@@ -21,7 +21,7 @@ const mediaRequests = new Map<string, number>();
 if (language) setLanguage(resolveLanguage(language));
 
 mockIPC((command, payload) => {
-  if (command === "plugin:app|version") return "1.0.0";
+  if (command === "plugin:app|version") return "0.3.0";
   if (command === "plugin:barcode-scanner|request_permissions") return { camera: "granted" };
   if (command === "plugin:barcode-scanner|scan") return new Promise(() => undefined);
   if (command === "plugin:barcode-scanner|cancel") return undefined;

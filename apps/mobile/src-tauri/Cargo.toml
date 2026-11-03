@@ -1,6 +1,6 @@
 [package]
 name = "volum-companion"
-version = "1.0.0"
+version = "0.3.0"
 description = "Volum Companion for iOS and Android"
 authors = ["Volum contributors"]
 edition = "2021"

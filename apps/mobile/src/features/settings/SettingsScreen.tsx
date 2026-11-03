@@ -56,7 +56,7 @@ export function SettingsScreen({
   const [clearingMedia, setClearingMedia] = useState(false);
   const [completionAlerts, setCompletionAlerts] = useState(completionNotificationsEnabled);
   const [notificationBusy, setNotificationBusy] = useState(false);
-  const [appVersion, setAppVersion] = useState("1.0.0");
+  const [appVersion, setAppVersion] = useState("0.3.0");
   const language = useLanguage();
   const demo = isDemoCredential(credential);
   const offline = useQuery({

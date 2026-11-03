@@ -117,7 +117,11 @@ export async function requestJson<T>(credential: Credential, path: string): Prom
 
 export function mutateJson<T>(credential: Credential, path: string, method: Exclude<JsonMethod, "GET">, body?: unknown): Promise<T> {
   if (isDemoCredential(credential)) return Promise.reject(new CompanionApiError("The demo library is read-only.", 403, "demo_read_only"));
-  requireVerifiedOrigin(credential);
+  try {
+    requireVerifiedOrigin(credential);
+  } catch (reason) {
+    return Promise.reject(reason);
+  }
   return nativeJson<T>(credential.baseUrl, path, credential.token, body, method);
 }
 

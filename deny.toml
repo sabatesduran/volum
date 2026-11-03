@@ -11,6 +11,19 @@ ignore = [
   "RUSTSEC-2026-0370",
   "RUSTSEC-2026-0371",
   "RUSTSEC-2026-0372",
+  # Volum retains the latest stable Tauri 2 Stronghold plugin only as a
+  # read-only bridge for migrating existing beta pairings into the native OS
+  # credential vault. Stronghold 2.4.0 has no patched stable dependency line;
+  # remove these exceptions together with the migration bridge.
+  "RUSTSEC-2024-0436", # paste is unmaintained
+  "RUSTSEC-2025-0141", # bincode is unmaintained
+  "RUSTSEC-2026-0387", # crypto-bigint timing variability
+  # libsodium-sys-stable uses zip 8.6.0 only while building vendored libsodium;
+  # Volum does not invoke that zip version to extract runtime/user archives.
+  "RUSTSEC-2026-0367",
+  "RUSTSEC-2026-0368",
+  "RUSTSEC-2026-0369",
+  "RUSTSEC-2026-0429",
 ]
 
 [licenses]

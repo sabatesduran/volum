@@ -38,14 +38,14 @@ test("pairing address review explains private HTTP", async ({ page }) => {
 test("demo library opens without pairing", async ({ page }) => {
   await page.goto("/visual.html?screen=pairing");
   await page.getByRole("button", { name: "Explore the demo library" }).click();
-  await expect(page.getByText("589 projects")).toBeVisible();
+  await expect(page.getByText("247 projects")).toBeVisible();
   await expect(page.getByText("DEMO LIBRARY")).toHaveCount(0);
 });
 
 test("library grid", async ({ page }) => {
   await page.goto("/visual.html");
-  await expect(page.getByText("589 projects")).toBeVisible();
-  await expect(page.getByText("Modular Drill Dock")).toBeVisible();
+  await expect(page.getByText("247 projects")).toBeVisible();
+  await expect(page.getByText("3DBenchy Calibration Boat")).toBeVisible();
   await expect(page.locator(".mobile-header .brand")).toHaveCount(0);
   await settle(page);
   await expect(page).toHaveScreenshot("library.png");
@@ -53,7 +53,7 @@ test("library grid", async ({ page }) => {
 
 test("library uses a fallback for missing previews", async ({ page }) => {
   await page.goto("/visual.html?media=missing");
-  await expect(page.getByText("589 projects")).toBeVisible();
+  await expect(page.getByText("247 projects")).toBeVisible();
   await expect(page.getByText("No preview").first()).toBeVisible();
   await settle(page);
   await expect(page).toHaveScreenshot("library-missing-previews.png");
@@ -70,7 +70,7 @@ test("connection error offers a clear retry", async ({ page }) => {
 
 test("library filter sheet", async ({ page }) => {
   await page.goto("/visual.html");
-  await expect(page.getByText("589 projects")).toBeVisible();
+  await expect(page.getByText("247 projects")).toBeVisible();
   await page.getByRole("button", { name: "Filter and sort" }).click();
   await expect(page.getByRole("heading", { name: "Filter & sort" })).toBeVisible();
   await settle(page);
@@ -79,7 +79,7 @@ test("library filter sheet", async ({ page }) => {
 
 test("project QR explanation", async ({ page }) => {
   await page.goto("/visual.html");
-  await expect(page.getByText("589 projects")).toBeVisible();
+  await expect(page.getByText("247 projects")).toBeVisible();
   await page.getByRole("button", { name: "Open project scanner" }).click();
   await expect(page.getByRole("heading", { name: "Open a shared project" })).toBeVisible();
   await settle(page);
@@ -88,7 +88,7 @@ test("project QR explanation", async ({ page }) => {
 
 test("project scanner can always be cancelled", async ({ page }) => {
   await page.goto("/visual.html");
-  await expect(page.getByText("589 projects")).toBeVisible();
+  await expect(page.getByText("247 projects")).toBeVisible();
   await page.getByRole("button", { name: "Open project scanner" }).click();
   await page.getByRole("button", { name: "Scan project QR" }).click();
   await expect(page.getByRole("heading", { name: "Scan a project QR" })).toBeVisible();
@@ -108,8 +108,8 @@ test("pairing scanner can always be cancelled", async ({ page }) => {
 
 test("project detail", async ({ page }) => {
   await page.goto("/visual.html");
-  await page.getByRole("button", { name: /Modular Drill Dock/ }).click();
-  await expect(page.getByRole("heading", { name: "Modular Drill Dock" })).toBeVisible();
+  await page.getByRole("button", { name: /3DBenchy Calibration Boat/ }).click();
+  await expect(page.getByRole("heading", { name: "3DBenchy Calibration Boat" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Photo Room" })).toBeVisible();
   await settle(page);
   await expect(page).toHaveScreenshot("project-detail.png");
@@ -117,7 +117,7 @@ test("project detail", async ({ page }) => {
 
 test("project detail opens Photo Room directly", async ({ page }) => {
   await page.goto("/visual.html");
-  await page.getByRole("button", { name: /Modular Drill Dock/ }).click();
+  await page.getByRole("button", { name: /3DBenchy Calibration Boat/ }).click();
   await page.getByRole("button", { name: "Photo Room" }).click();
   await expect(page.getByText("PHOTO ROOM", { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Set the scene" })).toBeVisible();
@@ -127,17 +127,17 @@ test("project detail opens Photo Room directly", async ({ page }) => {
 
 test("Desktop-rendered plate objects can be inspected", async ({ page }) => {
   await page.goto("/visual.html");
-  await page.getByRole("button", { name: /Modular Drill Dock/ }).click();
+  await page.getByRole("button", { name: /3DBenchy Calibration Boat/ }).click();
   await page.getByRole("button", { name: "View in 3D" }).click();
   await expect(page.getByText("Preparing 3D model…")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Open object list" })).toContainText("2 objects");
+  await expect(page.getByRole("button", { name: "Open object list" })).toContainText("1 object");
   await page.locator(".fullscreen-viewer canvas").click({ position: { x: 145, y: 365 } });
-  await expect(page.getByText(/OBJECT [12] OF 2/)).toBeVisible();
+  await expect(page.getByText("OBJECT 1 OF 1")).toBeVisible();
   await page.getByRole("button", { name: "Clear object selection" }).click();
   await page.getByRole("button", { name: "Open object list" }).click();
   await expect(page.getByText("PLATE OBJECTS")).toBeVisible();
-  await page.getByRole("button", { name: /Object 2/ }).click();
-  await expect(page.getByText("OBJECT 2 OF 2")).toBeVisible();
+  await page.getByRole("button", { name: /3DBenchy/ }).click();
+  await expect(page.getByText("OBJECT 1 OF 1")).toBeVisible();
   await page.getByRole("button", { name: "Inspect alone" }).click();
   await expect(page.getByRole("button", { name: "Show all" })).toBeVisible();
   await settle(page);
@@ -150,8 +150,8 @@ test("cached previews survive detail navigation and failed revalidation", async 
   await expect(libraryImages).toHaveCount(4);
   await expect(libraryImages.first()).toBeVisible();
 
-  await page.getByRole("button", { name: /Modular Drill Dock/ }).click();
-  await expect(page.getByRole("heading", { name: "Modular Drill Dock" })).toBeVisible();
+  await page.getByRole("button", { name: /3DBenchy Calibration Boat/ }).click();
+  await expect(page.getByRole("heading", { name: "3DBenchy Calibration Boat" })).toBeVisible();
   await expect(page.locator(".detail-stage .project-image > img")).toBeVisible();
   await expect(page.getByText("No preview available")).toHaveCount(0);
 
@@ -165,7 +165,7 @@ test("cached previews survive detail navigation and failed revalidation", async 
 test("project detail explains a missing preview", async ({ page }) => {
   await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
   await page.goto("/visual.html?media=missing");
-  await page.getByRole("button", { name: /Modular Drill Dock/ }).click();
+  await page.getByRole("button", { name: /3DBenchy Calibration Boat/ }).click();
   await expect(page.getByText("No preview available")).toBeVisible();
   await expect(page.getByText("Open the 3D viewer to explore this file")).toBeVisible();
   await expect(page.getByRole("button", { name: "View in 3D" })).toBeVisible();
@@ -192,26 +192,28 @@ test("capture mode has an unmistakable selected state", async ({ page }) => {
 
 test("local STL preview stays on device until save", async ({ page }) => {
   await page.goto("/visual.html?screen=local-stl");
-  await expect(page.getByRole("heading", { name: "workbench-bracket" })).toBeVisible();
-  await expect(page.getByText("40 mm × 30 mm × 20 mm")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "3DBenchy" })).toBeVisible();
+  await expect(page.getByText("60 mm × 31 mm × 48 mm")).toBeVisible();
   await expect(page.getByText("Nothing is uploaded until you tap Save to Volum.")).toBeVisible();
   await expect(page.getByText("Opening 3D viewer…")).toHaveCount(0);
   await expect(page.getByText("Preparing 3D model…")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Open object list" })).toContainText("2 objects");
+  await expect(page.getByRole("button", { name: "Open object list" })).toContainText("1 object");
   await settle(page);
   await expect(page).toHaveScreenshot("local-stl-preview.png");
 
   await page.locator(".local-stl-stage canvas").click({ position: { x: 165, y: 210 } });
-  await expect(page.getByText("OBJECT 1 OF 2")).toBeVisible();
+  await expect(page.getByText("OBJECT 1 OF 1")).toBeVisible();
   await page.getByRole("button", { name: "Clear object selection" }).click();
 
   await page.getByRole("button", { name: "Open object list" }).click();
   await expect(page.getByRole("heading", { name: "Inspect individual objects" })).toBeVisible();
   await settle(page);
   await expect(page).toHaveScreenshot("local-stl-objects.png");
-  await page.getByRole("button", { name: /Object 2/ }).click();
-  await expect(page.getByText("OBJECT 2 OF 2")).toBeVisible();
-  await expect(page.getByText("12 mm", { exact: true })).toHaveCount(3);
+  await page.getByRole("button", { name: /Object 1/ }).click();
+  await expect(page.getByText("OBJECT 1 OF 1")).toBeVisible();
+  await expect(page.getByText("60 mm", { exact: true })).toBeVisible();
+  await expect(page.getByText("31 mm", { exact: true })).toBeVisible();
+  await expect(page.getByText("48 mm", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Inspect alone" }).click();
   await expect(page.getByRole("button", { name: "Show all" })).toBeVisible();
   await settle(page);
@@ -226,6 +228,7 @@ test("local STL preview stays on device until save", async ({ page }) => {
 });
 
 test("local STL opens in Photo Room", async ({ page }) => {
+  test.setTimeout(90_000);
   await page.goto("/visual.html?screen=local-stl");
   await page.getByRole("button", { name: "Open Photo Room" }).click();
   await expect(page.getByText("PHOTO ROOM", { exact: true })).toBeVisible();
@@ -235,7 +238,7 @@ test("local STL opens in Photo Room", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Choose a format" })).toBeVisible();
   await page.getByRole("button", { name: /Reel \/ Story/ }).click();
   const reelCanvas = page.locator(".photo-room__model canvas");
-  const renderedBounds = await reelCanvas.evaluate((node) => {
+  const readRenderedBounds = () => reelCanvas.evaluate((node) => {
     const canvas = node as HTMLCanvasElement;
     const gl = canvas.getContext("webgl2") ?? canvas.getContext("webgl");
     if (!gl) return null;
@@ -251,6 +254,8 @@ test("local STL opens in Photo Room", async ({ page }) => {
     }
     return maxX < 0 ? null : { minX, maxX, width: canvas.width };
   });
+  await expect.poll(readRenderedBounds).not.toBeNull();
+  const renderedBounds = await readRenderedBounds();
   expect(renderedBounds).not.toBeNull();
   expect(renderedBounds!.minX).toBeGreaterThan(renderedBounds!.width * 0.02);
   expect(renderedBounds!.maxX).toBeLessThan(renderedBounds!.width * 0.98);
@@ -330,13 +335,13 @@ test("local STL opens in Photo Room", async ({ page }) => {
     Object.defineProperty(navigator, "canShare", { configurable: true, value: () => true });
   });
   await page.getByRole("button", { name: "Share photo" }).click();
-  await expect(page.getByText(/workbench-bracket-story\.jpg/)).toBeVisible();
+  await expect(page.getByText(/3DBenchy-story\.jpg/)).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("data-photo-shared", "true");
   await expect(page.getByRole("button", { name: "Share again" })).toBeVisible();
   await page.getByRole("button", { name: "Render MP4" }).click();
-  await expect(page.getByText("workbench-bracket-story.mp4", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("3DBenchy-story.mp4", { exact: true })).toBeVisible({ timeout: 30_000 });
   await page.getByRole("button", { name: "Share again" }).click();
-  await expect(page.locator("html")).toHaveAttribute("data-shared-name", "workbench-bracket-story.mp4");
+  await expect(page.locator("html")).toHaveAttribute("data-shared-name", "3DBenchy-story.mp4");
   await expect(page.locator("html")).toHaveAttribute("data-shared-type", "video/mp4");
   await expect(page.locator("html")).toHaveAttribute("data-shared-signature", "ftyp");
   await expect.poll(() => page.locator("html").getAttribute("data-shared-size").then(Number)).toBeGreaterThan(0);
@@ -357,7 +362,7 @@ test("settings tests the connection and shows the app version", async ({ page })
   await page.getByRole("button", { name: "Settings" }).click();
   await expect(page.locator(".mobile-header .brand")).toHaveCount(0);
   await page.getByRole("button", { name: "Test connection" }).click();
-  await expect(page.getByText("Connected to Workshop Mac")).toBeVisible();
+  await expect(page.getByText("Connected to Studio Mac mini")).toBeVisible();
   await page.evaluate(() => window.scrollTo(0, 0));
   await settle(page);
   await expect(page).toHaveScreenshot("settings-connection.png");
@@ -371,7 +376,7 @@ test("settings tests the connection and shows the app version", async ({ page })
 
 test("Catalan settings", async ({ page }) => {
   await page.goto("/visual.html?language=ca");
-  await expect(page.getByText("589 projectes")).toBeVisible();
+  await expect(page.getByText("247 projectes")).toBeVisible();
   await page.getByRole("button", { name: "Configuració" }).click();
   await expect(page.getByRole("heading", { name: "Configuració" })).toBeVisible();
   await expect(page.locator(".mobile-settings-card").filter({ hasText: "Idioma" }).locator(".lucide-languages")).toBeVisible();

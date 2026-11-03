@@ -17,6 +17,7 @@ const language = parameters.get("language");
 const connectionOffline = parameters.get("connection") === "offline";
 const mediaMissing = parameters.get("media") === "missing";
 const mediaFailsAfterFirstLoad = parameters.get("media") === "fail-after-first";
+const fixtureModel = parameters.get("model") ?? "benchy";
 const mediaRequests = new Map<string, number>();
 if (language) setLanguage(resolveLanguage(language));
 
@@ -43,7 +44,7 @@ mockIPC((command, payload) => {
     if (mediaFailsAfterFirstLoad && count > 0) throw new Error("This media item is not available");
     return visualMediaEnvelope(path);
   }
-  if (command === "companion_preview_local_stl") return visualLocalStlEnvelope();
+  if (command === "companion_preview_local_stl") return visualLocalStlEnvelope(fixtureModel);
   if (command === "companion_take_opened_stls") return [];
   throw new Error(`Unexpected visual fixture command: ${command}`);
 });
@@ -59,7 +60,13 @@ function VisualApp() {
   const [demo, setDemo] = useState(false);
   if (screen === "local-stl") {
     return <LocalStlPreviewScreen
-      file={{ cachePath: "/visual/fixture.stl", filename: "workbench-bracket.stl", byteSize: 1_842_000 }}
+      file={fixtureModel === "flexi-rex"
+        ? { cachePath: "/visual/Flexi-Rex-improved.stl", filename: "Flexi-Rex-improved.stl", byteSize: 745_584 }
+        : fixtureModel === "nasa-wrench"
+          ? { cachePath: "/visual/NASA-Wrench.stl", filename: "NASA-Wrench.stl", byteSize: 728_284 }
+          : fixtureModel === "stealthburner"
+            ? { cachePath: "/visual/Voron-Stealthburner-main-body.stl", filename: "Voron-Stealthburner-main-body.stl", byteSize: 5_740_284 }
+            : { cachePath: "/visual/3DBenchy.stl", filename: "3DBenchy.stl", byteSize: 11_285_384 }}
       credential={visualCredential}
       onSavingStarted={() => undefined}
       onDiscard={() => undefined}

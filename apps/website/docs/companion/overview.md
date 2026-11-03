@@ -8,7 +8,7 @@ description: Browse, organize, and capture projects from iPhone, iPad, or Androi
 Volum Companion is the mobile role of the Volum app. It connects directly to a Desktop host or `volumd` server through Tailscale, another private network or VPN, or trusted HTTPS; there is no Volum account, hosted database, or public relay.
 
 ::: warning Beta availability
-The mobile app is in early access and is not yet generally available through the App Store or Google Play. Use an invited beta or build it from source until public distribution is announced.
+The mobile app is in early access and is not yet available through the App Store or Google Play. Android users can install the signed APK from the Volum website. iPhone and iPad builds use TestFlight; the public invitation link is coming soon.
 :::
 
 ## What you can do

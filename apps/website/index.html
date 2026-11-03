@@ -41,7 +41,7 @@
             "name": "Volum",
             "applicationCategory": "DesignApplication",
             "applicationSubCategory": "3D printing file organizer",
-            "operatingSystem": "macOS 13+, Linux, Windows 10, Windows 11",
+            "operatingSystem": "macOS 13+, Linux, Windows 10, Windows 11, Android 7+, iOS 16+, iPadOS 16+",
             "description": "A free, open-source, local-first library for STL, 3MF, OBJ, and STEP/STP projects.",
             "softwareVersion": "__VOLUM_VERSION__",
             "isAccessibleForFree": true,
@@ -586,6 +586,54 @@
             </article>
           </div>
           <p class="release-note reveal">All releases, checksums, and updater signatures are published on <a href="https://github.com/sabatesduran/volum/releases" rel="noreferrer">GitHub Releases <i class="inline-icon" data-lucide="arrow-up-right" aria-hidden="true"></i></a></p>
+
+          <div class="downloads-heading downloads-heading--mobile reveal" id="mobile-download">
+            <div>
+              <p class="eyebrow eyebrow--dark">Free mobile companion</p>
+              <h2>Take Volum with you.</h2>
+            </div>
+            <p>Browse your private library, capture workshop photos, and keep selected projects available offline from your phone or tablet.</p>
+          </div>
+
+          <div class="download-grid download-grid--mobile">
+            <article class="download-card download-card--available reveal" data-platform-card="android">
+              <div class="download-card__top">
+                <span class="platform-icon" aria-hidden="true"><img src="./assets/os/android.svg" alt="" width="28" height="28" /></span>
+                <span class="availability-badge availability-badge--live">Signed APK</span>
+              </div>
+              <p class="card-kicker">Mobile companion</p>
+              <h3>Android</h3>
+              <p>Install the signed Volum Companion APK directly on a supported Android device.</p>
+              <ul class="platform-details">
+                <li>Android 7 or later</li>
+                <li>ARM64 devices</li>
+                <li>Version __VOLUM_VERSION__</li>
+              </ul>
+              <a class="button button--accent download-card__button" href="https://github.com/sabatesduran/volum/releases/latest/download/Volum_Companion___VOLUM_VERSION___android_arm64.apk" data-download data-download-platform="android" data-download-architecture="arm64" data-download-location="mobile-platform-card">
+                <i data-lucide="download" aria-hidden="true"></i>
+                Download Android APK
+              </a>
+              <small class="download-card__note">Direct installation, outside Google Play. Your browser may ask you to approve this source.</small>
+            </article>
+
+            <article class="download-card reveal" data-platform-card="ios">
+              <div class="download-card__top">
+                <span class="platform-icon" aria-hidden="true"><img src="./assets/os/apple.svg" alt="" width="28" height="28" /></span>
+                <span class="availability-badge">TestFlight</span>
+              </div>
+              <p class="card-kicker">Mobile companion</p>
+              <h3>iPhone &amp; iPad</h3>
+              <p>Volum Companion will be distributed through Apple TestFlight during the beta.</p>
+              <ul class="platform-details">
+                <li>iPhone and iPad</li>
+                <li>Version __VOLUM_VERSION__ · Build 3</li>
+                <li>Public beta link pending</li>
+              </ul>
+              <button class="button download-card__button download-card__button--soon" type="button" disabled>TestFlight coming soon</button>
+              <small class="download-card__note">Already invited? Install the build from the official TestFlight invitation you received.</small>
+            </article>
+          </div>
+          <p class="release-note reveal">The mobile app connects directly to Volum Desktop or your own <code>volumd</code> server. <a href="/docs/companion/install">Read the mobile installation guide <i class="inline-icon" data-lucide="arrow-up-right" aria-hidden="true"></i></a></p>
         </div>
       </section>
 
@@ -635,7 +683,7 @@
             </a>
             <a class="button button--ghost" href="https://github.com/sabatesduran/volum" rel="noreferrer" data-github-location="final-cta">View on GitHub <i data-lucide="arrow-up-right" aria-hidden="true"></i></a>
           </div>
-          <small>macOS, Linux, Windows x64, and Windows ARM64 · Version __VOLUM_VERSION__</small>
+          <small>Desktop for macOS, Linux, and Windows · Companion for Android and iOS · Version __VOLUM_VERSION__</small>
         </div>
       </section>
     </main>

@@ -12,7 +12,7 @@ steps:
   - tool: await-ui-element
     args:
       condition: visible
-      selector: { text: Modular Drill Dock }
+      selector: { text: 3DBenchy Calibration Boat }
       bundleId: com.dsd.volum.companion
       timeoutMs: 8000
   - wait: 500

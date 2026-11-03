@@ -277,7 +277,11 @@ main section[id] { scroll-margin-top: 65px; }
 .downloads-heading { display: grid; grid-template-columns: 1.2fr .8fr; align-items: end; gap: 60px; margin-bottom: 58px; }
 .downloads-heading h2 { margin: 0; font-size: clamp(50px, 6vw, 88px); font-weight: 590; letter-spacing: -.06em; line-height: .95; }
 .downloads-heading > p { max-width: 530px; justify-self: end; margin: 0 0 8px; color: var(--paper-muted); font-size: 18px; line-height: 1.65; }
+.downloads-heading--mobile { scroll-margin-top: 88px; margin-top: clamp(72px, 9vw, 120px); padding-top: clamp(58px, 7vw, 88px); border-top: 1px solid #cac4b8; }
+.downloads-heading--mobile h2 { font-size: clamp(46px, 5vw, 72px); }
 .download-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.download-grid--mobile { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.download-grid--mobile .download-card { min-height: 440px; }
 .download-card { min-height: 460px; display: flex; flex-direction: column; padding: clamp(25px, 3vw, 38px); border: 1px solid #d0cabe; border-radius: var(--radius); background: rgb(248 245 238 / .58); }
 .download-card--available { border-color: var(--night-3); background: var(--night-3); color: var(--ink); box-shadow: 0 28px 55px rgb(44 35 27 / .16); }
 .download-card__top { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 72px; }
@@ -298,7 +302,7 @@ main section[id] { scroll-margin-top: 65px; }
 .download-card__actions { display: grid; gap: 8px; margin-top: auto; }
 .download-card__actions .download-card__button { margin-top: 0; }
 .download-card__note { min-height: 32px; margin-top: 13px; color: var(--faint); font-size: 9px; line-height: 1.55; }
-.download-card__button--soon { border-color: #d0cabe; color: #8a877e; background: rgb(255 255 255 / .24); cursor: default; }
+.download-card__button--soon { border-color: #d0cabe; color: #8a877e; background: rgb(255 255 255 / .24); cursor: not-allowed; }
 .download-card__button--soon:hover { transform: none; }
 .download-card.is-detected { border-color: var(--accent); box-shadow: 0 30px 70px rgb(244 116 82 / .19); }
 .download-card.is-detected .availability-badge::before { content: "Your platform · "; }

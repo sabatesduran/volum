@@ -1,0 +1,35 @@
+steps:
+  - launch: com.dsd.volum.companion
+  - tool: await-ui-element
+    args:
+      condition: visible
+      selector: { role: Button }
+      bundleId: com.dsd.volum.companion
+      timeoutMs: 8000
+  - wait: 500
+  - tool: gesture-tap
+    args: { x: 0.5, y: 0.923 }
+  - tool: await-ui-element
+    args:
+      condition: visible
+      selector: { text: Flexi Rex · Stronger Links }
+      bundleId: com.dsd.volum.companion
+      timeoutMs: 8000
+  - wait: 500
+  - tool: gesture-tap
+    args: { x: 0.5, y: 0.3 }
+  - tool: await-ui-element
+    args:
+      condition: visible
+      selector: { text: Photo Room }
+      bundleId: com.dsd.volum.companion
+      timeoutMs: 8000
+  - tool: gesture-tap
+    args: { x: 0.37, y: 0.266 }
+  - tool: await-ui-element
+    args:
+      condition: visible
+      selector: { text: PHOTO ROOM }
+      bundleId: com.dsd.volum.companion
+      timeoutMs: 8000
+  - wait: 3000

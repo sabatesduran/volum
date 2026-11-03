@@ -1,11 +1,11 @@
 {
-  "subtitle": "Tu biblioteca 3D del taller",
-  "description": "Consulta tu biblioteca privada de Volum desde el taller. Encuentra proyectos, revisa archivos y detalles 3D y ten cada montaje a mano sin cuenta ni relay en la nube de Volum.",
+  "subtitle": "Tu biblioteca privada de impresión 3D",
+  "description": "Ten cada proyecto de impresión 3D a mano. Consulta vistas previas reales, revisa archivos y datos de impresión, organiza colecciones y conecta directamente con tu biblioteca privada de Volum sin una cuenta en la nube.",
   "scenes": {
-    "library": { "headline": "Tu taller, a mano", "subhead": "Consulta proyectos, archivos y favoritos desde el banco de trabajo." },
-    "detail": { "headline": "Cada detalle, a mano", "subhead": "Archivos, medidas, notas, piezas y vistas 3D en un solo lugar." },
-    "filters": { "headline": "Encuentra la impresión ideal", "subhead": "Busca, filtra y ordena cientos de proyectos en segundos." },
-    "collections": { "headline": "Montajes bien organizados", "subhead": "Agrupa piezas e ideas sin mover ningún archivo." },
-    "private": { "headline": "Privado por diseño", "subhead": "Conecta directamente con el ordenador, sin cuenta, nube ni relay público." }
+    "library": { "headline": "Toda tu biblioteca 3D.", "subhead": "Vistas previas, formatos y favoritos, listos en el taller." },
+    "detail": { "headline": "Conócelo antes de imprimir.", "subhead": "Medidas, archivos, perfiles, material y coste en un solo lugar." },
+    "filters": { "headline": "Encuentra la próxima impresión. Ya.", "subhead": "Filtra por carpeta, formato, etiqueta, disponibilidad o búsqueda guardada." },
+    "collections": { "headline": "De la cola a la colección.", "subhead": "Organiza calibraciones, mejoras del taller e impresiones de fin de semana." },
+    "photo-room": { "headline": "Haz que cada modelo luzca.", "subhead": "Prepara la escena, la luz y el movimiento, y exporta fotos o vídeos." }
   }
 }

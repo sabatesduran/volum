@@ -13,6 +13,7 @@
     "test": "vitest run",
     "test:visual": "playwright test",
     "test:visual:update": "playwright test --update-snapshots",
+    "demo:generate": "node scripts/generate-demo-fixtures.mjs",
     "locale:add": "node scripts/locales.mjs add",
     "locales:sync": "node scripts/locales.mjs sync",
     "locales:check": "node scripts/locales.mjs check",

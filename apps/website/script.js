@@ -24,6 +24,7 @@ import {
   ListChecks,
   ListFilter,
   Menu,
+  Monitor,
   MonitorCog,
   PanelsTopLeft,
   Plus,
@@ -31,9 +32,11 @@ import {
   Ruler,
   Search,
   Send,
+  Server,
   Share2,
   Shield,
   ShieldCheck,
+  Smartphone,
   X
 } from "lucide";
 import { capture, initAnalytics } from "./analytics.js";
@@ -64,6 +67,7 @@ createIcons({
     ListChecks,
     ListFilter,
     Menu,
+    Monitor,
     MonitorCog,
     PanelsTopLeft,
     Plus,
@@ -71,9 +75,11 @@ createIcons({
     Ruler,
     Search,
     Send,
+    Server,
     Share2,
     Shield,
     ShieldCheck,
+    Smartphone,
     X
   }
 });
@@ -84,6 +90,16 @@ const version = document.body.dataset.version || "unknown";
 let detectedPlatform = "unknown";
 
 const platformDownloads = {
+  android: {
+    architecture: "arm64",
+    href: `https://github.com/sabatesduran/volum/releases/latest/download/Volum_Companion_${version}_android_arm64.apk`,
+    label: "Download Android APK"
+  },
+  ios: {
+    architecture: "arm64",
+    href: "#mobile-download",
+    label: "View iOS beta"
+  },
   macos: {
     architecture: "universal",
     href: `https://github.com/sabatesduran/volum/releases/latest/download/Volum_${version}_universal.dmg`,
@@ -110,7 +126,8 @@ const platformDownloads = {
 const detectPlatform = async () => {
   const ua = navigator.userAgent || "";
   const platform = navigator.userAgentData?.platform || navigator.platform || "";
-  if (/iphone|ipad|android/i.test(ua) || (/mac/i.test(platform) && navigator.maxTouchPoints > 1)) return "unknown";
+  if (/android/i.test(ua)) return "android";
+  if (/iphone|ipad|ipod/i.test(ua) || (/mac/i.test(platform) && navigator.maxTouchPoints > 1)) return "ios";
   if (/mac/i.test(platform) || /macintosh/i.test(ua)) return "macos";
   if (/win/i.test(platform) || /windows/i.test(ua)) {
     try {

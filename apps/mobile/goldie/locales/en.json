@@ -1,11 +1,11 @@
 {
-  "subtitle": "Your 3D workshop library",
-  "description": "Browse your private Volum library from the workshop. Find projects, inspect files and 3D details, and keep every build close without a Volum account or cloud relay.",
+  "subtitle": "Your private 3D print library",
+  "description": "Keep every 3D print project within reach. Browse real previews, inspect files and print details, organize collections, and connect directly to your private Volum library without a cloud account.",
   "scenes": {
-    "library": { "headline": "Your workshop library", "subhead": "Browse every project, file, and favorite from the bench." },
-    "detail": { "headline": "Every detail, at hand", "subhead": "Files, dimensions, notes, parts, and 3D previews in one place." },
-    "filters": { "headline": "Find the right print", "subhead": "Search, filter, and sort hundreds of projects in seconds." },
-    "collections": { "headline": "Keep builds organized", "subhead": "Group parts and ideas without moving a single file." },
-    "private": { "headline": "Private by design", "subhead": "Connect directly to Desktop—no account, cloud, or public relay." }
+    "library": { "headline": "Your whole print library.", "subhead": "Real previews, formats, and favorites—ready at the bench." },
+    "detail": { "headline": "Know it before you print.", "subhead": "Dimensions, files, profiles, material, and cost in one place." },
+    "filters": { "headline": "Find the next print. Fast.", "subhead": "Filter by folder, format, tag, availability, or saved search." },
+    "collections": { "headline": "From queue to collection.", "subhead": "Keep calibration runs, workshop upgrades, and weekend prints organized." },
+    "photo-room": { "headline": "Make every model look its best.", "subhead": "Stage, light, rotate, and export polished photos or turntable video." }
   }
 }

@@ -153,7 +153,7 @@ export async function requestMediaResponse(
   path: string,
   ifNoneMatch?: string,
 ): Promise<MediaResponse> {
-  if (isDemoCredential(credential)) return parseMediaEnvelope(demoMediaEnvelope(path));
+  if (isDemoCredential(credential)) return parseMediaEnvelope(await demoMediaEnvelope(path));
   requireVerifiedOrigin(credential);
   const envelope = await invoke<ArrayBuffer>("companion_media_request", {
     request: {

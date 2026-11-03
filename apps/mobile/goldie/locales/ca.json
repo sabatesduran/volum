@@ -1,11 +1,11 @@
 {
-  "subtitle": "La biblioteca 3D del taller",
-  "description": "Consulta la teva biblioteca privada de Volum des del taller. Troba projectes, revisa fitxers i detalls 3D i tingues cada muntatge a mà sense compte ni relay al núvol de Volum.",
+  "subtitle": "La teva biblioteca privada d'impressió 3D",
+  "description": "Tingues cada projecte d'impressió 3D a mà. Consulta previsualitzacions reals, revisa fitxers i dades d'impressió, organitza col·leccions i connecta directament amb la teva biblioteca privada de Volum sense cap compte al núvol.",
   "scenes": {
-    "library": { "headline": "El teu taller, a mà", "subhead": "Consulta projectes, fitxers i preferits des del banc de treball." },
-    "detail": { "headline": "Cada detall, a mà", "subhead": "Fitxers, mides, notes, peces i vistes 3D en un sol lloc." },
-    "filters": { "headline": "Troba la impressió ideal", "subhead": "Cerca, filtra i ordena centenars de projectes en segons." },
-    "collections": { "headline": "Muntatges ben organitzats", "subhead": "Agrupa peces i idees sense moure cap fitxer." },
-    "private": { "headline": "Privat per disseny", "subhead": "Connecta directament amb l'ordinador, sense compte, núvol ni relay públic." }
+    "library": { "headline": "Tota la biblioteca 3D.", "subhead": "Previsualitzacions, formats i preferits, a punt al taller." },
+    "detail": { "headline": "Coneix-lo abans d'imprimir.", "subhead": "Mides, fitxers, perfils, material i cost en un sol lloc." },
+    "filters": { "headline": "Troba la pròxima impressió. Ràpid.", "subhead": "Filtra per carpeta, format, etiqueta, disponibilitat o cerca desada." },
+    "collections": { "headline": "De la cua a la col·lecció.", "subhead": "Organitza calibratges, millores del taller i impressions de cap de setmana." },
+    "photo-room": { "headline": "Fes lluir cada model.", "subhead": "Prepara l'escena, la llum i el moviment, i exporta fotos o vídeos." }
   }
 }

@@ -1,15 +1,25 @@
 ---
 title: Install the mobile beta
-description: Understand the current iOS and Android beta distribution options.
+description: Install the Android beta or understand the current iOS TestFlight availability.
 ---
 
 # Install the mobile beta
 
-Volum Companion is currently an early-access application. Public App Store and Google Play listings are not available yet.
+Volum Companion is currently an early-access application. Android is available as a signed APK, while iPhone and iPad builds are distributed through Apple TestFlight. Public App Store and Google Play listings are not available yet.
 
-## Recommended: invited beta
+## Android: install the signed APK
 
-If you received an official testing invitation, install the build using the platform instructions included with that invitation. Keep automatic beta updates enabled so the app remains compatible with the server protocol.
+Volum publishes a signed ARM64 APK with each GitHub release. Open the [mobile download section](https://volum.didac.dev/#mobile-download) on your Android device and select **Download Android APK**.
+
+Android may ask you to allow your browser to install apps from this source. Approve the request for this installation, open the downloaded APK, and confirm the installation. Volum requires Android 7 or later on an ARM64 device.
+
+The APK and its SHA-256 checksum are published together on [GitHub Releases](https://github.com/sabatesduran/volum/releases). Future APK releases must be installed from the website or GitHub because this beta does not use Google Play updates.
+
+## iPhone and iPad: TestFlight
+
+Volum Companion 0.3.0 (build 3) is prepared for TestFlight. The public beta invitation link is not available yet; the website will enable its TestFlight button when the link is ready.
+
+If you received an official testing invitation, open it on your iPhone or iPad and follow Apple's TestFlight instructions. Keep automatic beta updates enabled so the app remains compatible with the server protocol.
 
 Do not install mobile packages from unofficial mirrors. Pairing tokens grant access to private library metadata and should only be handled by builds you trust.
 

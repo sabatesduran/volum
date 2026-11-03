@@ -21,7 +21,9 @@ use std::{
         Arc, Mutex as StdMutex,
     },
 };
-use tauri::{ipc::Channel, Emitter, Manager};
+#[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
+use tauri::Emitter;
+use tauri::{ipc::Channel, Manager};
 use tauri_plugin_fs::{FilePath, FsExt, OpenOptions};
 use tokio::sync::{watch, Mutex};
 use tokio_util::io::ReaderStream;
@@ -1405,6 +1407,8 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building Volum Companion");
     app.run(|app, event| {
+        #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "macos")))]
+        let _ = (&app, &event);
         #[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
         if let tauri::RunEvent::Opened { urls } = event {
             let state = app.state::<MobileState>();

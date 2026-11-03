@@ -1,0 +1,21 @@
+steps:
+  - launch: com.dsd.volum.companion
+  - tool: await-ui-element
+    args:
+      condition: visible
+      selector: { role: Button }
+      bundleId: com.dsd.volum.companion
+      timeoutMs: 8000
+  - wait: 500
+  - tool: gesture-tap
+    args: { x: 0.5, y: 0.923 }
+  - tool: await-ui-element
+    args:
+      condition: visible
+      selector: { text: Modular Drill Dock }
+      bundleId: com.dsd.volum.companion
+      timeoutMs: 8000
+  - wait: 500
+  - tool: gesture-tap
+    args: { x: 0.885, y: 0.12 }
+  - wait: 1000

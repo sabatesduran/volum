@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+      <dict>
+        <key>CFBundleTypeName</key>
+        <string>STL model</string>
+        <key>CFBundleTypeRole</key>
+        <string>Viewer</string>
+        <key>LSHandlerRank</key>
+        <string>Alternate</string>
+        <key>LSItemContentTypes</key>
+        <array>
+          <string>public.standard-tesselated-geometry-format</string>
+        </array>
+      </dict>
+    </array>
+    <key>LSSupportsOpeningDocumentsInPlace</key>
+    <true/>
+    <key>NSCameraUsageDescription</key>
+    <string>Volum scans pairing and project codes and captures workshop photos you choose to add to a project.</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>Volum lets you attach selected photos to projects in your private library.</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Volum connects directly to your desktop through your chosen private network or HTTPS.</string>
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
+  <!-- BEGIN GENERATED MOBILE LOCALES -->
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>en</string>
+    <string>ca</string>
+    <string>es</string>
+  </array>
+  <!-- END GENERATED MOBILE LOCALES -->
+  </dict>
+</plist>

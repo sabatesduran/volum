@@ -1,0 +1,46 @@
+[package]
+name = "volum-server"
+version = "0.3.0"
+description = "Transport-neutral Volum library and Companion server services"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+log.workspace = true
+walkdir = "2"
+notify = "8"
+blake3 = "1"
+zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
+quick-xml = "0.42"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+open = "5"
+thiserror = "2"
+regex = "1"
+reqwest = { workspace = true, features = ["brotli", "deflate", "gzip", "json", "query", "rustls", "stream"] }
+tokio-util.workspace = true
+percent-encoding = "2"
+trash = "5"
+axum = "0.8"
+tower = { version = "0.5", features = ["limit", "util"] }
+tower-http = { version = "0.6", features = ["fs", "request-id", "timeout", "trace"] }
+base64.workspace = true
+rand.workspace = true
+futures-util.workspace = true
+argon2 = "0.5"
+fs2 = "0.4"
+
+[target.'cfg(not(all(target_os = "windows", target_arch = "aarch64")))'.dependencies]
+cadrum = { version = "0.8.20", default-features = false }
+
+[target.'cfg(all(target_os = "windows", target_arch = "aarch64"))'.dependencies]
+cadrum = { version = "0.8.20", default-features = false, features = ["source"] }
+
+[dev-dependencies]
+tempfile = "3"

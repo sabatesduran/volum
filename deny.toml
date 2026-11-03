@@ -1,0 +1,61 @@
+[graph]
+all-features = true
+
+[advisories]
+ignore = [
+  # Linux-only GTK 3 transitive dependency of the latest stable Tauri 2 release.
+  # There is no patched proc-macro-error release or stable Tauri migration yet.
+  "RUSTSEC-2024-0370",
+  # zbus 5 split these crates out; zbus 6 merged them back. The latest stable
+  # Tauri 2 plugins still require zbus 5 and no compatible patched line exists.
+  "RUSTSEC-2026-0370",
+  "RUSTSEC-2026-0371",
+  "RUSTSEC-2026-0372",
+  # Volum retains the latest stable Tauri 2 Stronghold plugin only as a
+  # read-only bridge for migrating existing beta pairings into the native OS
+  # credential vault. Stronghold 2.4.0 has no patched stable dependency line;
+  # remove these exceptions together with the migration bridge.
+  "RUSTSEC-2024-0436", # paste is unmaintained
+  "RUSTSEC-2025-0141", # bincode is unmaintained
+  "RUSTSEC-2026-0387", # crypto-bigint timing variability
+  # libsodium-sys-stable uses zip 8.6.0 only while building vendored libsodium;
+  # Volum does not invoke that zip version to extract runtime/user archives.
+  "RUSTSEC-2026-0367",
+  "RUSTSEC-2026-0368",
+  "RUSTSEC-2026-0369",
+  "RUSTSEC-2026-0429",
+]
+
+[licenses]
+confidence-threshold = 0.8
+allow = [
+  "0BSD",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-1-Clause",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "BSL-1.0",
+  "CC0-1.0",
+  "CDLA-Permissive-2.0",
+  "GPL-3.0-or-later",
+  "ISC",
+  "LGPL-2.1-or-later",
+  "MIT",
+  "MIT-0",
+  "MPL-2.0",
+  "Unicode-3.0",
+  "Unlicense",
+  "Zlib",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

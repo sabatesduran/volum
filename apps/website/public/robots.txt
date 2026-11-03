@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://volum.didac.dev/sitemap.xml
+Sitemap: https://volum.didac.dev/docs/sitemap.xml

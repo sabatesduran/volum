@@ -1,0 +1,9 @@
+steps:
+  - launch: com.dsd.volum.companion
+  - tool: await-ui-element
+    args:
+      condition: visible
+      selector: { role: Button }
+      bundleId: com.dsd.volum.companion
+      timeoutMs: 8000
+  - wait: 500

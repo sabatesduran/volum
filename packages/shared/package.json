@@ -1,0 +1,20 @@
+{
+  "name": "@volum/shared",
+  "private": true,
+  "version": "0.3.0",
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./cache": "./cache.ts",
+    "./format": "./format.ts",
+    "./i18n": "./i18n.ts",
+    "./project-qr": "./projectQr.ts"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "vitest": "^5.0.1"
+  }
+}

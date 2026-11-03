@@ -1,0 +1,5 @@
+{
+  "NSCameraUsageDescription": "Volum scans pairing and project codes and captures workshop photos you choose to add to a project.",
+  "NSPhotoLibraryUsageDescription": "Volum lets you attach selected photos to projects in your private library.",
+  "NSLocalNetworkUsageDescription": "Volum connects directly to your desktop through your chosen private network or HTTPS."
+}

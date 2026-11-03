@@ -1,0 +1,11 @@
+{
+  "subtitle": "Tu biblioteca 3D del taller",
+  "description": "Consulta tu biblioteca privada de Volum desde el taller. Encuentra proyectos, revisa archivos y detalles 3D y ten cada montaje a mano sin cuenta ni relay en la nube de Volum.",
+  "scenes": {
+    "library": { "headline": "Tu taller, a mano", "subhead": "Consulta proyectos, archivos y favoritos desde el banco de trabajo." },
+    "detail": { "headline": "Cada detalle, a mano", "subhead": "Archivos, medidas, notas, piezas y vistas 3D en un solo lugar." },
+    "filters": { "headline": "Encuentra la impresión ideal", "subhead": "Busca, filtra y ordena cientos de proyectos en segundos." },
+    "collections": { "headline": "Montajes bien organizados", "subhead": "Agrupa piezas e ideas sin mover ningún archivo." },
+    "private": { "headline": "Privado por diseño", "subhead": "Conecta directamente con el ordenador, sin cuenta, nube ni relay público." }
+  }
+}

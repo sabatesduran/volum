@@ -1,0 +1,17 @@
+[package]
+name = "tauri-plugin-app-locale"
+version = "0.1.0"
+description = "Read and open the native per-app language settings"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+links = "tauri-plugin-app-locale"
+
+[build-dependencies]
+tauri-plugin = { version = "2.7.1", features = ["build"] }
+
+[dependencies]
+tauri.workspace = true
+
+[target.'cfg(target_os = "ios")'.dependencies]
+tauri = { workspace = true, features = ["wry"] }

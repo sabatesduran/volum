@@ -1,0 +1,3 @@
+"NSCameraUsageDescription" = "Volum escanea códigos de vinculación y de proyecto y captura las fotos del taller que decidas añadir a un proyecto.";
+"NSPhotoLibraryUsageDescription" = "Volum te permite adjuntar las fotos que elijas a los proyectos de tu biblioteca privada.";
+"NSLocalNetworkUsageDescription" = "Volum se conecta directamente con tu ordenador mediante la red privada que elijas o HTTPS.";

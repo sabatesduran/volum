@@ -1,0 +1,7 @@
+{
+  "description": "Take your private Volum library to the workbench. Browse projects, favorites, files, dimensions, notes, collections, and 3D previews from iPhone or iPad.\n\nVolum connects directly to Volum Desktop through Tailscale, another private network or VPN, or trusted HTTPS. It verifies the expected server identity before pairing. There is no Volum account, model upload service, cloud library, or public relay.\n\nExplore the included read-only demo library before pairing. When connected, you can keep selected projects available offline and capture workshop photos or files when your desktop allows it.\n\nRequires Volum Desktop for your own library. Volum is free and open source.",
+  "keywords": "3d printing,stl,3mf,step,cad,models,library,workshop,files,offline",
+  "marketingUrl": "https://volum.didac.dev/",
+  "promotionalText": "Your private 3D library, from desktop to workbench—without a Volum account, cloud library, or public relay.",
+  "supportUrl": "https://github.com/sabatesduran/volum/issues"
+}

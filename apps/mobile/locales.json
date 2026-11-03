@@ -1,0 +1,41 @@
+{
+  "default": "en",
+  "languages": [
+    {
+      "code": "en",
+      "locale": "en",
+      "intl": "en-US",
+      "ios": "en",
+      "android": "en",
+      "store": "en-US",
+      "capture": "en-US",
+      "nativeName": "English",
+      "direction": "ltr",
+      "aliases": ["en-US", "en-GB"]
+    },
+    {
+      "code": "ca",
+      "locale": "ca",
+      "intl": "ca-ES",
+      "ios": "ca",
+      "android": "ca",
+      "store": "ca",
+      "capture": "ca-ES",
+      "nativeName": "Català",
+      "direction": "ltr",
+      "aliases": ["ca-ES"]
+    },
+    {
+      "code": "es",
+      "locale": "es-ES",
+      "intl": "es-ES",
+      "ios": "es",
+      "android": "es-ES",
+      "store": "es-ES",
+      "capture": "es-ES",
+      "nativeName": "Español (España)",
+      "direction": "ltr",
+      "aliases": ["es"]
+    }
+  ]
+}

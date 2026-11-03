@@ -33,7 +33,7 @@ def main() -> None:
     package_dir = Path(__file__).resolve().parent
     repository = package_dir.parents[1]
     desktop = package_dir / "volum.desktop"
-    icon = repository / "src-tauri" / "icons" / "128x128.png"
+    icon = repository / "apps" / "desktop" / "src-tauri" / "icons" / "128x128.png"
     template = (package_dir / "PKGBUILD.template").read_text()
     replacements = {
         "@VERSION@": args.version,

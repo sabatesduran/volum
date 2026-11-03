@@ -1,0 +1,26 @@
+{
+  "name": "@volum/photo-room",
+  "private": true,
+  "version": "0.3.0",
+  "type": "module",
+  "exports": {
+    ".": "./PhotoRoomEditor.tsx",
+    "./core": "./core.ts",
+    "./i18n": "./i18n.ts"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "lucide-react": "^0.544.0",
+    "mediabunny": "^1.64.0",
+    "react": "19.2.0"
+  },
+  "devDependencies": {
+    "lucide-react": "^0.544.0",
+    "mediabunny": "^1.64.0",
+    "react": "19.2.0",
+    "typescript": "^5.9.2",
+    "vitest": "^5.0.1"
+  }
+}

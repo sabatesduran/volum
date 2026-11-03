@@ -1,0 +1,31 @@
+{
+  "fill": {
+    "automatic-gradient": "display-p3:0.05098,0.05098,0.04706,1.00000"
+  },
+  "groups": [
+    {
+      "layers": [
+        {
+          "image-name": "Volum.png",
+          "name": "Volum",
+          "glass": false
+        }
+      ],
+      "lighting": "combined",
+      "shadow": {
+        "kind": "none",
+        "opacity": 0.5
+      },
+      "specular": false,
+      "translucency": {
+        "enabled": false,
+        "value": 0.5
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": [
+      "macOS"
+    ]
+  }
+}

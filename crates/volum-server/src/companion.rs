@@ -1240,6 +1240,7 @@ impl CompanionController {
 fn companion_router(state: ApiState, web_dir: Option<PathBuf>) -> Router {
     let protected = Router::new()
         .route("/api/v1/status", get(api_status))
+        .route("/api/v1/device", delete(revoke_current_device))
         .route(
             "/api/v1/projects",
             get(list_projects)
@@ -1636,6 +1637,28 @@ async fn revoke_admin_device(
             message: "The paired device no longer exists.".into(),
             retryable: false,
         });
+    }
+    persist_config(&inner.config_path, &inner.config).map_err(ApiError::from_library)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn revoke_current_device(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    let token = bearer_token(&headers)
+        .ok_or_else(|| ApiError::unauthorized("Pair this device with Volum Desktop."))?;
+    let requested_hash = token_hash(token);
+    let mut inner = state.controller.lock().await;
+    let previous = inner.config.devices.len();
+    inner
+        .config
+        .devices
+        .retain(|device| device.token_hash != requested_hash);
+    if previous == inner.config.devices.len() {
+        return Err(ApiError::unauthorized(
+            "This device is no longer paired with Volum Desktop.",
+        ));
     }
     persist_config(&inner.config_path, &inner.config).map_err(ApiError::from_library)?;
     Ok(StatusCode::NO_CONTENT)
@@ -5614,6 +5637,78 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(revoked.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn device_can_revoke_its_own_token_without_revoking_other_devices() {
+        let (_directory, state, another_token) = authenticated_test_state().await;
+        let secret = "single-use-pairing-secret";
+        state.controller.lock().await.pairing = Some(PairingSession {
+            secret: secret.into(),
+            expires_at: Utc::now() + chrono::Duration::minutes(5),
+            role: "client".into(),
+        });
+        let router = companion_router(state, None);
+        let paired = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/pair")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "secret": secret,
+                            "deviceName": "Second phone",
+                            "platform": "test"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(paired.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(paired.into_body(), 1024)
+            .await
+            .unwrap();
+        let paired: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let token = paired["token"].as_str().unwrap();
+
+        let revoked = router
+            .clone()
+            .oneshot(authenticated_request(
+                Method::DELETE,
+                "/api/v1/device",
+                token,
+                Body::empty(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(revoked.status(), StatusCode::NO_CONTENT);
+
+        let revoked_status = router
+            .clone()
+            .oneshot(authenticated_request(
+                Method::GET,
+                "/api/v1/status",
+                token,
+                Body::empty(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(revoked_status.status(), StatusCode::UNAUTHORIZED);
+
+        let other_status = router
+            .oneshot(authenticated_request(
+                Method::GET,
+                "/api/v1/status",
+                &another_token,
+                Body::empty(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(other_status.status(), StatusCode::OK);
     }
 
     #[tokio::test]

@@ -717,7 +717,8 @@ Rules:
 - Every `/api/v1` request requires a bearer token.
 - Tokens belong to one device and can be revoked independently.
 - Scope checks happen before route handlers.
-- Revoked devices receive a stable `device_revoked` error.
+- Revoked or unknown devices receive `401 unauthorized`.
+- A paired device can revoke itself with `DELETE /api/v1/device`; successful self-revocation returns `204 No Content`.
 - Pairing endpoints have strict attempt and time limits.
 - Do not use cookies; this avoids ambient browser credentials and CSRF behavior.
 - CORS is denied by default. Development-only browser mocks run separately.

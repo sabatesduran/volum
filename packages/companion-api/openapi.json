@@ -10,6 +10,19 @@
     }
   ],
   "paths": {
+    "/api/v1/device": {
+      "delete": {
+        "operationId": "deleteDevice",
+        "responses": {
+          "204": {
+            "description": "Device revoked"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
     "/api/v1/admin/devices": {
       "get": {
         "operationId": "adminDevices",

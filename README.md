@@ -59,7 +59,13 @@ Download the [latest Desktop release](https://github.com/sabatesduran/volum/rele
 
 Volum does not require an account or activation key. Follow the [Desktop installation guide](https://volum.didac.dev/docs/getting-started/install-desktop), then [create your first library](https://volum.didac.dev/docs/getting-started/first-library).
 
-Volum Companion for iPhone, iPad, and Android is currently distributed as an invited beta or built from source. See the [mobile overview](https://volum.didac.dev/docs/companion/overview) for availability and requirements.
+Volum Companion for iPhone, iPad, and Android is currently distributed as an invited beta or built from source. Each GitHub release includes a signed Android APK for sideloading; iOS remains a source/TestFlight build. See the [mobile overview](https://volum.didac.dev/docs/companion/overview) for availability and requirements.
+
+To enable signed Android release APKs, configure the GitHub Actions secrets `ANDROID_KEYSTORE_BASE64` (base64-encoded keystore), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD`. Generate a release keystore with:
+
+```sh
+keytool -genkeypair -v -keystore volum-release.jks -alias volum -keyalg RSA -keysize 4096 -validity 10000
+```
 
 ## Self-host with `volumd`
 

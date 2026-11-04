@@ -1,6 +1,6 @@
 ---
 title: Install the mobile beta
-description: Install the Android beta or understand the current iOS TestFlight availability.
+description: Install the Android beta or join the iOS beta through TestFlight.
 ---
 
 # Install the mobile beta
@@ -17,9 +17,9 @@ The APK and its SHA-256 checksum are published together on [GitHub Releases](htt
 
 ## iPhone and iPad: TestFlight
 
-Volum Companion 0.3.0 (build 3) is prepared for TestFlight. The public beta invitation link is not available yet; the website will enable its TestFlight button when the link is ready.
+Open the [Volum Companion public beta](https://testflight.apple.com/join/Vcet13mC) on your iPhone or iPad. Install Apple’s free TestFlight app if prompted, then select **Accept** and **Install**.
 
-If you received an official testing invitation, open it on your iPhone or iPad and follow Apple's TestFlight instructions. Keep automatic beta updates enabled so the app remains compatible with the server protocol.
+Keep automatic beta updates enabled so the app remains compatible with the server protocol. Apple may limit access when the beta reaches its tester capacity.
 
 Do not install mobile packages from unofficial mirrors. Pairing tokens grant access to private library metadata and should only be handled by builds you trust.
 

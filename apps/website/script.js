@@ -97,8 +97,8 @@ const platformDownloads = {
   },
   ios: {
     architecture: "arm64",
-    href: "#mobile-download",
-    label: "View iOS beta"
+    href: "https://testflight.apple.com/join/Vcet13mC",
+    label: "Join the iOS beta"
   },
   macos: {
     architecture: "universal",

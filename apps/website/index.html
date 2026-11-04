@@ -616,21 +616,24 @@
               <small class="download-card__note">Direct installation, outside Google Play. Your browser may ask you to approve this source.</small>
             </article>
 
-            <article class="download-card reveal" data-platform-card="ios">
+            <article class="download-card download-card--available reveal" data-platform-card="ios">
               <div class="download-card__top">
                 <span class="platform-icon" aria-hidden="true"><img src="./assets/os/apple.svg" alt="" width="28" height="28" /></span>
-                <span class="availability-badge">TestFlight</span>
+                <span class="availability-badge availability-badge--live">TestFlight</span>
               </div>
               <p class="card-kicker">Mobile companion</p>
               <h3>iPhone &amp; iPad</h3>
-              <p>Volum Companion will be distributed through Apple TestFlight during the beta.</p>
+              <p>Install Volum Companion through Apple TestFlight and receive beta updates automatically.</p>
               <ul class="platform-details">
                 <li>iPhone and iPad</li>
                 <li>Version __VOLUM_VERSION__ · Build 3</li>
-                <li>Public beta link pending</li>
+                <li>Public beta</li>
               </ul>
-              <button class="button download-card__button download-card__button--soon" type="button" disabled>TestFlight coming soon</button>
-              <small class="download-card__note">Already invited? Install the build from the official TestFlight invitation you received.</small>
+              <a class="button button--accent download-card__button" href="https://testflight.apple.com/join/Vcet13mC" data-download data-download-platform="ios" data-download-architecture="arm64" data-download-location="mobile-platform-card">
+                <i data-lucide="smartphone" aria-hidden="true"></i>
+                Join the iOS beta
+              </a>
+              <small class="download-card__note">Requires Apple’s free TestFlight app. Beta places may be limited.</small>
             </article>
           </div>
           <p class="release-note reveal">The mobile app connects directly to Volum Desktop or your own <code>volumd</code> server. <a href="/docs/companion/install">Read the mobile installation guide <i class="inline-icon" data-lucide="arrow-up-right" aria-hidden="true"></i></a></p>

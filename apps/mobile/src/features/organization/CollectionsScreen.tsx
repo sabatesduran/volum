@@ -1,3 +1,4 @@
+import { confirmAction } from "../../lib/confirm";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Boxes, Check, ChevronRight, CircleAlert, CloudCheck, CloudDownload, LoaderCircle, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -63,7 +64,7 @@ export function CollectionsScreen({ credential, canWrite, verified, onSelect, on
     finally { setSaving(false); }
   };
   const removeCollection = async () => {
-    if (!editing || editing === "new" || !window.confirm(t("Delete “{name}”? Projects and files will not be deleted.", { name: editing.name }))) return;
+    if (!editing || editing === "new" || !await confirmAction(t("Delete “{name}”? Projects and files will not be deleted.", { name: editing.name }))) return;
     const activeEditor = editing;
     const previous = queryClient.getQueryData<Collection[]>(["collections"]);
     setSaving(true); setError("");

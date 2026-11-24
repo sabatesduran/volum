@@ -1,3 +1,4 @@
+import { confirmAction } from "../../lib/confirm";
 import { getVersion } from "@tauri-apps/api/app";
 import { openAppSettings } from "@tauri-apps/plugin-barcode-scanner";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -79,7 +80,7 @@ export function SettingsScreen({
     setConnectionTest(undefined);
     try {
       const candidate = normalizeServerUrl(address);
-      if (candidate.startsWith("http://") && candidate !== credential.baseUrl && !window.confirm(t("This private HTTP connection relies on your network or VPN for encryption. Continue?"))) return;
+      if (candidate.startsWith("http://") && candidate !== credential.baseUrl && !await confirmAction(t("This private HTTP connection relies on your network or VPN for encryption. Continue?"))) return;
       const baseUrl = await verifyServerIdentity(candidate, credential.serverId);
       const next = { ...credential, baseUrl };
       const nextStatus = await requestJson<ServerStatus>(next, "/api/v1/status");
@@ -102,7 +103,7 @@ export function SettingsScreen({
     setConnectionTest(undefined);
     try {
       const candidate = normalizeServerUrl(address);
-      if (candidate.startsWith("http://") && candidate !== credential.baseUrl && !window.confirm(t("This private HTTP connection relies on your network or VPN for encryption. Continue?"))) return;
+      if (candidate.startsWith("http://") && candidate !== credential.baseUrl && !await confirmAction(t("This private HTTP connection relies on your network or VPN for encryption. Continue?"))) return;
       const baseUrl = await verifyServerIdentity(candidate, credential.serverId);
       const nextStatus = await requestJson<ServerStatus>({ ...credential, baseUrl }, "/api/v1/status");
       if (nextStatus.serverId !== credential.serverId) {
@@ -120,7 +121,7 @@ export function SettingsScreen({
   };
 
   const clearCache = async () => {
-    if (!offline.data?.length || !window.confirm(t("Remove {count} offline {projects} from this device?", {
+    if (!offline.data?.length || !await confirmAction(t("Remove {count} offline {projects} from this device?", {
       count: offline.data.length,
       projects: t(offline.data.length === 1 ? "project" : "projects"),
     }))) return;
@@ -138,7 +139,7 @@ export function SettingsScreen({
   };
 
   const clearTransientMedia = async () => {
-    if (!media.data?.count || !window.confirm(t(
+    if (!media.data?.count || !await confirmAction(t(
       "Remove {size} of recently viewed media from this device? Offline projects will remain available.",
       { size: formatBytes(media.data.byteSize) },
     ))) return;

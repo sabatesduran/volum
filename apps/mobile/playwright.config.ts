@@ -11,7 +11,8 @@ export default defineConfig({
     toHaveScreenshot: {
       animations: "disabled",
       caret: "hide",
-      maxDiffPixelRatio: 0.0001,
+      // Bold button labels antialias slightly differently between macOS runner images.
+      maxDiffPixelRatio: 0.0005,
     },
   },
   use: {

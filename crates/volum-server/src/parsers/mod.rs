@@ -156,7 +156,7 @@ fn parse_obj(path: &Path) -> Result<AssetMetadata, String> {
                     }
                 }
             }
-            Some("f") => faces += values.len().saturating_sub(3) as u64 + 1,
+            Some("f") => faces += values.len().saturating_sub(3) as u64,
             Some("usemtl") if values.len() > 1 => {
                 let name = values[1..].join(" ");
                 if !materials.contains(&name) {
@@ -992,6 +992,15 @@ mod tests {
         let cursor = writer.finish().unwrap();
         let mut archive = ZipArchive::new(cursor).unwrap();
         assert!(validate_archive(&mut archive).is_err());
+    }
+
+    #[test]
+    fn counts_obj_triangles_per_face() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(b"v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nf 1 2 3\nf 1 2 3 4\n")
+            .unwrap();
+        let metadata = parse_obj(file.path()).unwrap();
+        assert_eq!(metadata.triangle_count, Some(3));
     }
 
     #[test]

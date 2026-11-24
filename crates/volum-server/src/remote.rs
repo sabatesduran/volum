@@ -149,6 +149,9 @@ struct LocalMirrorAsset {
     modified_at: String,
     content_hash: String,
     mirror_path: String,
+    /// Modification time of the mirrored file when `content_hash` was last verified.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    local_modified_ns: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1029,14 +1032,17 @@ impl RemoteController {
         for asset in &remote.assets {
             let target = checked_mirror_path(&root, &asset.mirror_path)?;
             ensure_mirror_parent(&root, &target)?;
-            let identity = self.remote_file_identity(&endpoint, &token, asset).await?;
+            let identity = match manifest_file_identity(asset) {
+                Some(identity) => identity,
+                None => self.remote_file_identity(&endpoint, &token, asset).await?,
+            };
             let previous_asset = previous_by_id.get(&asset.id);
             if let Some(previous_asset) =
                 previous_asset.filter(|old| old.mirror_path != asset.mirror_path)
             {
                 let previous_target = checked_mirror_path(&root, &previous_asset.mirror_path)?;
                 if previous_target.is_file() {
-                    let old_hash = hash_path(&previous_target).await?;
+                    let old_hash = mirrored_file_hash(&previous_target, previous_asset).await?;
                     if old_hash == previous_asset.content_hash
                         && identity.content_hash == previous_asset.content_hash
                         && !target.exists()
@@ -1059,7 +1065,11 @@ impl RemoteController {
                 .map(|old| old.content_hash.as_str());
             let mut final_identity = identity;
             if target.is_file() {
-                let local_hash = hash_path(&target).await?;
+                let local_hash =
+                    match previous_asset.filter(|old| old.mirror_path == asset.mirror_path) {
+                        Some(previous_asset) => mirrored_file_hash(&target, previous_asset).await?,
+                        None => hash_path(&target).await?,
+                    };
                 if local_hash == final_identity.content_hash {
                     report.unchanged += 1;
                 } else if previous_hash == Some(local_hash.as_str()) {
@@ -1147,6 +1157,7 @@ impl RemoteController {
                 modified_at: asset.modified_at.clone(),
                 content_hash: final_identity.content_hash,
                 mirror_path: asset.mirror_path.clone(),
+                local_modified_ns: settled_modified_ns(&target, final_identity.byte_size),
             });
         }
         for stale in previous_by_id
@@ -1157,7 +1168,7 @@ impl RemoteController {
             if !stale_path.is_file() {
                 continue;
             }
-            if hash_path(&stale_path).await? == stale.content_hash {
+            if mirrored_file_hash(&stale_path, stale).await? == stale.content_hash {
                 tokio::fs::remove_file(&stale_path).await.map_err(|error| {
                     format!("Could not remove a deleted server file from the mirror: {error}")
                 })?;
@@ -2227,6 +2238,53 @@ fn write_local_manifest(path: &Path, manifest: &LocalMirrorManifest) -> RemoteRe
         .map_err(|error| format!("Could not activate the local mirror manifest: {error}"))
 }
 
+fn manifest_file_identity(asset: &SyncAsset) -> Option<RemoteFileIdentity> {
+    let content_hash = asset.content_hash.as_deref()?;
+    (content_hash.len() == 64
+        && content_hash
+            .chars()
+            .all(|character| character.is_ascii_hexdigit()))
+    .then(|| RemoteFileIdentity {
+        byte_size: asset.byte_size,
+        content_hash: content_hash.to_string(),
+    })
+}
+
+fn modified_ns(metadata: &std::fs::Metadata) -> Option<u64> {
+    let elapsed = metadata
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?;
+    u64::try_from(elapsed.as_nanos()).ok()
+}
+
+/// Returns the file's modification time once it is old enough that a later
+/// write is guaranteed to change it, so it can stand in for a content hash.
+fn settled_modified_ns(path: &Path, byte_size: u64) -> Option<u64> {
+    const SETTLE: std::time::Duration = std::time::Duration::from_secs(2);
+    let metadata = std::fs::metadata(path).ok()?;
+    if metadata.len() != byte_size {
+        return None;
+    }
+    let age = std::time::SystemTime::now()
+        .duration_since(metadata.modified().ok()?)
+        .ok()?;
+    (age >= SETTLE).then(|| modified_ns(&metadata)).flatten()
+}
+
+/// Hashes a mirrored file, reusing the recorded hash while its size and
+/// modification time still match the last verified state.
+async fn mirrored_file_hash(path: &Path, recorded: &LocalMirrorAsset) -> RemoteResult<String> {
+    if let (Some(recorded_ns), Ok(metadata)) = (recorded.local_modified_ns, std::fs::metadata(path))
+    {
+        if metadata.len() == recorded.byte_size && modified_ns(&metadata) == Some(recorded_ns) {
+            return Ok(recorded.content_hash.clone());
+        }
+    }
+    hash_path(path).await
+}
+
 async fn hash_path(path: &Path) -> RemoteResult<String> {
     let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || {
@@ -2320,6 +2378,42 @@ mod tests {
     use sqlx::Row;
     use std::net::{Ipv4Addr, SocketAddrV4};
     use walkdir::WalkDir;
+
+    #[tokio::test]
+    async fn mirrored_file_hash_reuses_verified_hash_until_the_file_changes() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("part.stl");
+        std::fs::write(&path, b"first").unwrap();
+        assert_eq!(settled_modified_ns(&path, 5), None);
+        let settled = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(settled)
+            .unwrap();
+        let recorded = LocalMirrorAsset {
+            id: "asset".into(),
+            project_id: "project".into(),
+            project_name: "Project".into(),
+            filename: "part.stl".into(),
+            byte_size: 5,
+            modified_at: String::new(),
+            content_hash: "recorded".into(),
+            mirror_path: "part.stl".into(),
+            local_modified_ns: settled_modified_ns(&path, 5),
+        };
+        assert!(recorded.local_modified_ns.is_some());
+        assert_eq!(
+            mirrored_file_hash(&path, &recorded).await.unwrap(),
+            "recorded"
+        );
+        std::fs::write(&path, b"other").unwrap();
+        assert_eq!(
+            mirrored_file_hash(&path, &recorded).await.unwrap(),
+            blake3::hash(b"other").to_hex().to_string()
+        );
+    }
 
     #[test]
     fn remote_urls_require_https_or_private_transport() {

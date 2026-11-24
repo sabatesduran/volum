@@ -33,6 +33,42 @@ afterEach(async () => {
 });
 
 describe("transient media cache", () => {
+  it("keeps entries cached by the previous database version", async () => {
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.deleteDatabase("volum-companion-media-cache");
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.open("volum-companion-media-cache", 1);
+      request.onupgradeneeded = () => {
+        const store = request.result.createObjectStore("media", { keyPath: "key" });
+        store.createIndex("serverId", "serverId");
+        store.put({
+          key: "server-a:/cover",
+          serverId: "server-a",
+          path: "/cover",
+          etag: "\"one\"",
+          contentType: "image/png",
+          bytes: bytes(1, 2, 3),
+          byteSize: 3,
+          lastAccessedAt: 1,
+        });
+      };
+      request.onsuccess = () => { request.result.close(); resolve(); };
+      request.onerror = () => reject(request.error);
+    });
+    const desktop = credential("server-a");
+
+    expect(await mediaCacheStats("server-a")).toEqual({ count: 1, byteSize: 3 });
+    const fetcher: MediaFetcher = async (_credential, _path, etag) =>
+      ({ status: 304, etag, contentType: "image/png", bytes: bytes() });
+    const blob = await requestCachedBlob(desktop, "/cover", "image/png", fetcher);
+    expect(new Uint8Array(await blob.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
+    expect(await pruneMediaCache(0, 0)).toEqual({ byteSize: 0, count: 0, removed: 1 });
+    expect(await mediaCacheStats("server-a")).toEqual({ count: 0, byteSize: 0 });
+  });
+
   it("revalidates cached media with its ETag", async () => {
     const desktop = credential("server-a");
     const seenEtags: Array<string | undefined> = [];

@@ -213,16 +213,18 @@ fn ensure_watcher(
             let app = app.clone();
             runtime.spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(850)).await;
-                pending.store(false, Ordering::SeqCst);
-                if !context
+                // Changes that land while a scan is running are picked up by a follow-up scan.
+                while context
                     .scans
                     .read()
                     .await
                     .get(&root_id)
                     .is_some_and(|status| status.state == "scanning")
                 {
-                    launch_scan(root_id, root_path, root_kind, context, app).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 }
+                pending.store(false, Ordering::SeqCst);
+                launch_scan(root_id, root_path, root_kind, context, app).await;
             });
         })
         .map_err(|error| error.to_string())?;
@@ -1310,9 +1312,20 @@ async fn refresh_duplicate_hashes(pool: &SqlitePool) -> Result<(), String> {
         let id: String = row.get("id");
         let path = PathBuf::from(row.get::<String, _>("root_path"))
             .join(row.get::<String, _>("relative_path"));
-        let hash = tokio::task::spawn_blocking(move || parsers::full_hash(&path))
+        let hash_path = path.clone();
+        let hash = match tokio::task::spawn_blocking(move || parsers::full_hash(&hash_path))
             .await
-            .map_err(|error| error.to_string())??;
+            .map_err(|error| error.to_string())?
+        {
+            Ok(hash) => hash,
+            Err(error) => {
+                log::warn!(
+                    "Skipping duplicate hash for unreadable file {}: {error}",
+                    path.display()
+                );
+                continue;
+            }
+        };
         sqlx::query("UPDATE assets SET content_hash = ? WHERE id = ?")
             .bind(hash)
             .bind(id)
@@ -1526,6 +1539,31 @@ mod tests {
             changed_assets.len(),
             started.elapsed().as_millis()
         );
+    }
+
+    #[tokio::test]
+    async fn duplicate_hashing_skips_unreadable_files() {
+        let data = tempfile::tempdir().unwrap();
+        let library = tempfile::tempdir().unwrap();
+        std::fs::write(library.path().join("present.stl"), "solid a\nendsolid").unwrap();
+        let state = AppState::initialize(data.path()).await.unwrap();
+        let timestamp = now();
+        sqlx::query("INSERT INTO library_roots (id, path, display_name, status, created_at, updated_at) VALUES ('root', ?, 'Models', 'online', ?, ?)")
+            .bind(library.path().to_string_lossy().to_string()).bind(&timestamp).bind(&timestamp).execute(&state.pool).await.unwrap();
+        sqlx::query("INSERT INTO folders (id, root_id, relative_path, name) VALUES ('folder', 'root', '', 'Models')")
+            .execute(&state.pool).await.unwrap();
+        for name in ["gone.stl", "present.stl"] {
+            sqlx::query("INSERT INTO assets (id, root_id, folder_id, relative_path, filename, extension, byte_size, modified_at, partial_fingerprint) VALUES (?, 'root', 'folder', ?, ?, 'stl', 15, ?, 'same')")
+                .bind(name).bind(name).bind(name).bind(&timestamp).execute(&state.pool).await.unwrap();
+        }
+        refresh_duplicate_hashes(&state.pool).await.unwrap();
+        let hashes: Vec<(String, Option<String>)> =
+            sqlx::query_as("SELECT id, content_hash FROM assets ORDER BY id")
+                .fetch_all(&state.pool)
+                .await
+                .unwrap();
+        assert_eq!(hashes[0].1, None);
+        assert!(hashes[1].1.is_some());
     }
 
     #[tokio::test]

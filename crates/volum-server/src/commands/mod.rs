@@ -2507,7 +2507,7 @@ fn model_cursor_condition(sort: Option<&str>, cursor: &ModelPageCursor) -> Comma
 fn encode_model_cursor(sort: Option<&str>, item: &ModelSummary) -> CommandResult<String> {
     let sort = model_sort_name(sort);
     let primary = match sort {
-        "name" => item.display_name.to_lowercase(),
+        "name" => item.display_name.clone(),
         "added" => item.added_at.clone(),
         "opened" => item.last_opened_at.clone().unwrap_or_default(),
         _ => item.modified_at.clone(),
@@ -2520,7 +2520,8 @@ fn encode_model_cursor(sort: Option<&str>, item: &ModelSummary) -> CommandResult
         } else {
             String::new()
         },
-        name: item.display_name.to_lowercase(),
+        // SQLite NOCASE folds ASCII only, so the cursor keeps the stored name.
+        name: item.display_name.clone(),
         id: item.id.clone(),
     })
     .map_err(|error| error.to_string())
@@ -3366,6 +3367,43 @@ mod tests {
             ..Default::default()
         })
         .is_err());
+    }
+
+    #[tokio::test]
+    async fn name_paging_keeps_projects_with_non_ascii_uppercase_names() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = AppState::initialize(directory.path()).await.unwrap();
+        let timestamp = now();
+        sqlx::query("INSERT INTO library_roots (id, path, display_name, status, created_at, updated_at) VALUES ('root', ?, 'Root', 'online', ?, ?)")
+            .bind(directory.path().to_string_lossy().to_string()).bind(&timestamp).bind(&timestamp).execute(&state.pool).await.unwrap();
+        sqlx::query("INSERT INTO folders (id, root_id, relative_path, name) VALUES ('folder', 'root', '', 'Root')")
+            .execute(&state.pool).await.unwrap();
+        let names = ["Éa", "Éb", "éa"];
+        for name in names {
+            sqlx::query("INSERT INTO models (id, folder_id, display_name, grouping_key, version_key, added_at, updated_at) VALUES (?, 'folder', ?, ?, ?, ?, ?)")
+                .bind(name).bind(name).bind(name).bind(name).bind(&timestamp).bind(&timestamp).execute(&state.pool).await.unwrap();
+        }
+        let mut seen = Vec::new();
+        let mut cursor = None;
+        loop {
+            let page = list_models_impl(
+                ModelQuery {
+                    sort: Some("name".into()),
+                    limit: Some(1),
+                    cursor,
+                    ..Default::default()
+                },
+                &state,
+            )
+            .await
+            .unwrap();
+            seen.extend(page.items.into_iter().map(|item| item.display_name));
+            cursor = page.next_cursor;
+            if cursor.is_none() {
+                break;
+            }
+        }
+        assert_eq!(seen, names);
     }
 
     #[tokio::test]

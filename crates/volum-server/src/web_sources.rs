@@ -35,10 +35,12 @@ pub async fn list_web_sources(state: &AppState) -> CommandResult<Vec<WebSource>>
 }
 
 pub(crate) async fn list_web_sources_impl(state: &AppState) -> CommandResult<Vec<WebSource>> {
-    let rows = sqlx::query(&format!("{WEB_SOURCE_SELECT} ORDER BY ws.updated_at DESC"))
-        .fetch_all(&state.pool)
-        .await
-        .map_err(db_error)?;
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "{WEB_SOURCE_SELECT} ORDER BY ws.updated_at DESC"
+    )))
+    .fetch_all(&state.pool)
+    .await
+    .map_err(db_error)?;
     let sources = rows
         .into_iter()
         .map(web_source_from_row)
@@ -337,9 +339,9 @@ pub async fn source_for_model(
     model_id: &str,
     state: &AppState,
 ) -> CommandResult<Option<WebSource>> {
-    let row = sqlx::query(&format!(
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
         "{WEB_SOURCE_SELECT} WHERE ws.model_id = ? OR EXISTS (SELECT 1 FROM assets linked_a JOIN model_assets linked_ma ON linked_ma.asset_id = linked_a.id WHERE linked_ma.model_id = ? AND linked_a.root_id = ws.root_id AND linked_a.relative_path = ws.relative_path) ORDER BY ws.updated_at DESC LIMIT 1"
-    ))
+    )))
     .bind(model_id)
     .bind(model_id)
     .fetch_optional(&state.pool)
@@ -351,12 +353,14 @@ pub async fn source_for_model(
 const WEB_SOURCE_SELECT: &str = "SELECT ws.id, ws.provider, ws.remote_id, ws.canonical_url, ws.title, ws.creator, ws.description, ws.license, ws.image_url, ws.filament_grams, ws.status, ws.root_id, ws.relative_path, ws.fetched_at, ws.created_at, ws.updated_at, COALESCE(ws.model_id, (SELECT linked_ma.model_id FROM assets linked_a JOIN model_assets linked_ma ON linked_ma.asset_id = linked_a.id WHERE linked_a.root_id = ws.root_id AND linked_a.relative_path = ws.relative_path LIMIT 1)) resolved_model_id FROM web_sources ws";
 
 async fn get_web_source(id: &str, pool: &sqlx::SqlitePool) -> CommandResult<WebSource> {
-    let row = sqlx::query(&format!("{WEB_SOURCE_SELECT} WHERE ws.id = ?"))
-        .bind(id)
-        .fetch_optional(pool)
-        .await
-        .map_err(db_error)?
-        .ok_or_else(|| "Saved web model not found".to_string())?;
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "{WEB_SOURCE_SELECT} WHERE ws.id = ?"
+    )))
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(db_error)?
+    .ok_or_else(|| "Saved web model not found".to_string())?;
     Ok(web_source_from_row(row))
 }
 

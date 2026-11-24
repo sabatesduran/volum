@@ -1437,7 +1437,7 @@ async fn transform_snapshot(
         .map_err(|error| error.to_string())?;
     let result: MigrationResult<()> = async {
         for table in ["thumbnails", "viewer_meshes", "backup_runs", "backup_destinations", "ignored_asset_paths", "file_operation_jobs", "watched_import_folders", "user_overrides", "asset_origins"] {
-            sqlx::query(&format!("DELETE FROM {table}")).execute(&mut *connection).await.map_err(|error| error.to_string())?;
+            sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM {table}"))).execute(&mut *connection).await.map_err(|error| error.to_string())?;
         }
         sqlx::query("DELETE FROM folders").execute(&mut *connection).await.map_err(|error| error.to_string())?;
         sqlx::query("DELETE FROM library_roots").execute(&mut *connection).await.map_err(|error| error.to_string())?;

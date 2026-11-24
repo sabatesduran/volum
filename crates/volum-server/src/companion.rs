@@ -3498,7 +3498,7 @@ async fn build_sync_manifest(
         ""
     };
     let statement = format!("SELECT a.id, ma.model_id project_id, m.display_name project_name, a.filename, a.byte_size, a.modified_at, a.content_hash FROM assets a JOIN model_assets ma ON ma.asset_id = a.id JOIN models m ON m.id = ma.model_id WHERE a.missing_since IS NULL AND m.trashed_at IS NULL{project_filter} ORDER BY lower(m.display_name), lower(a.filename), a.id");
-    let mut query = sqlx::query(&statement);
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(statement));
     if let Some(selected_json) = selected_json {
         query = query.bind(selected_json);
     }

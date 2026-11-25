@@ -634,24 +634,31 @@ fn parse_3mf(bytes: &[u8]) -> Result<Mesh, String> {
     if paths.is_empty() {
         return Err("3MF has no model document".into());
     }
-    let root_path = paths
-        .iter()
-        .find(|path| {
-            path.trim_start_matches('/')
-                .replace('\\', "/")
-                .eq_ignore_ascii_case("3D/3dmodel.model")
-        })
-        .or_else(|| {
-            paths.iter().find(|path| {
-                !path
+    let declared_root = match archive.by_name("_rels/.rels") {
+        Ok(relationships) => three_mf_start_part(relationships)?,
+        Err(zip::result::ZipError::FileNotFound) => None,
+        Err(error) => return Err(error.to_string()),
+    };
+    let root_path = declared_root.unwrap_or_else(|| {
+        paths
+            .iter()
+            .find(|path| {
+                path.trim_start_matches('/')
                     .replace('\\', "/")
-                    .to_ascii_lowercase()
-                    .contains("/objects/")
+                    .eq_ignore_ascii_case("3D/3dmodel.model")
             })
-        })
-        .unwrap_or(&paths[0])
-        .trim_start_matches('/')
-        .replace('\\', "/");
+            .or_else(|| {
+                paths.iter().find(|path| {
+                    !path
+                        .replace('\\', "/")
+                        .to_ascii_lowercase()
+                        .contains("/objects/")
+                })
+            })
+            .unwrap_or(&paths[0])
+            .trim_start_matches('/')
+            .replace('\\', "/")
+    });
     let mut parts = HashMap::new();
     let mut source_vertices = 0_usize;
     let mut source_triangles = 0_usize;
@@ -712,6 +719,35 @@ fn parse_3mf(bytes: &[u8]) -> Result<Mesh, String> {
         )?;
     }
     ensure_mesh(mesh)
+}
+
+fn three_mf_start_part(source: impl Read) -> Result<Option<String>, String> {
+    let mut reader = Reader::from_reader(BufReader::new(source));
+    let mut buffer = Vec::new();
+    let mut target = None;
+    loop {
+        match reader.read_event_into(&mut buffer) {
+            Ok(Event::Start(event) | Event::Empty(event))
+                if xml_name(event.name().as_ref()) == "Relationship"
+                    && xml_attr(&event, "Type").as_deref()
+                        == Some("http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel") =>
+            {
+                if target.is_some() || xml_attr(&event, "TargetMode").as_deref() == Some("External")
+                {
+                    return Err("3MF has an invalid StartPart relationship".into());
+                }
+                let path = xml_attr(&event, "Target")
+                    .and_then(|path| super::percent_decode_filename(path.trim_start_matches('/')))
+                    .filter(|path| !path.is_empty())
+                    .ok_or_else(|| "3MF StartPart has no model path".to_string())?;
+                target = Some(path);
+            }
+            Ok(Event::Eof) => return Ok(target),
+            Err(error) => return Err(format!("Invalid 3MF relationships: {error}")),
+            _ => {}
+        }
+        buffer.clear();
+    }
 }
 
 fn parse_3mf_part<R: Read>(source: R) -> Result<ThreeMfPart, String> {
@@ -1464,6 +1500,22 @@ mod tests {
             })
             .sum();
         assert_eq!(doubled_area, 20.0);
+    }
+
+    #[test]
+    fn previews_the_3mf_start_part_instead_of_the_default_filename() {
+        use std::io::Write as _;
+
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        writer.start_file("_rels/.rels", options).unwrap();
+        writer.write_all(br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="r1" Target="/3D/Primary%20Part.model" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>"#).unwrap();
+        writer.start_file("3D/3dmodel.model", options).unwrap();
+        writer.write_all(b"<model/>").unwrap();
+        writer.start_file("3D/Primary Part.model", options).unwrap();
+        writer.write_all(br#"<model><resources><object id="1"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources><build><item objectid="1"/></build></model>"#).unwrap();
+        let archive = writer.finish().unwrap();
+        assert_eq!(parse_3mf(archive.get_ref()).unwrap().triangles.len(), 1);
     }
 
     #[test]

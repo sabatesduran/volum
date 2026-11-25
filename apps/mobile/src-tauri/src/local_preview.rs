@@ -477,7 +477,7 @@ fn triangulate_obj_face(
         .max_by(|&a, &b| normal[a].abs().total_cmp(&normal[b].abs()))
         .unwrap();
     if normal[axis] == 0.0 {
-        return Err("OBJ polygon has no area".into());
+        return Ok(());
     }
     let winding = normal[axis].signum();
     let turn = |a, b, c| {
@@ -1482,6 +1482,12 @@ mod tests {
         let preview = model_preview(source, "obj").unwrap();
         assert_eq!(preview.triangle_count, 2);
         assert_eq!(&preview.payload[..4], b"VLM5");
+    }
+
+    #[test]
+    fn skips_a_collapsed_obj_polygon_without_losing_valid_faces() {
+        let source = b"v 0 0 0\nv 1 0 0\nv 2 0 0\nv 3 0 0\nv 0 1 0\nf 1 2 3 4\nf 1 2 5\n";
+        assert_eq!(parse_obj(source).unwrap().triangles, [[0, 1, 4]]);
     }
 
     #[test]

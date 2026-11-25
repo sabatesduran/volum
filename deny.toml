@@ -18,12 +18,6 @@ ignore = [
   "RUSTSEC-2024-0436", # paste is unmaintained
   "RUSTSEC-2025-0141", # bincode is unmaintained
   "RUSTSEC-2026-0387", # crypto-bigint timing variability
-  # libsodium-sys-stable uses zip 8.6.0 only while building vendored libsodium;
-  # Volum does not invoke that zip version to extract runtime/user archives.
-  "RUSTSEC-2026-0367",
-  "RUSTSEC-2026-0368",
-  "RUSTSEC-2026-0369",
-  "RUSTSEC-2026-0429",
 ]
 
 [licenses]

@@ -1,3 +1,4 @@
+use crate::timestamps;
 use crate::{
     domain::{
         AssemblyStep, CustomFieldDefinition, ProjectBomItem, ProjectCustomValue,
@@ -6,7 +7,6 @@ use crate::{
     indexing, parsers,
     state::AppState,
 };
-use chrono::{NaiveDate, Utc};
 use image::ImageFormat;
 use serde::Deserialize;
 use serde_json::Value;
@@ -1352,8 +1352,9 @@ pub(crate) fn validate_custom_value(
         }
         "date" => {
             let date = validate_string(value, 10, "Date field values")?;
-            NaiveDate::parse_from_str(date, "%Y-%m-%d")
-                .map_err(|_| "Date fields need a valid calendar date".to_string())?;
+            if !timestamps::is_calendar_date(date) {
+                return Err("Date fields need a valid calendar date".into());
+            }
         }
         "boolean" if value.is_boolean() => {}
         "boolean" => return Err("Checkbox fields need true or false".into()),
@@ -1468,7 +1469,7 @@ fn normalize_url(value: Option<&str>) -> CommandResult<Option<String>> {
 }
 
 fn now() -> String {
-    Utc::now().to_rfc3339()
+    timestamps::now_rfc3339()
 }
 
 fn db_error(error: sqlx::Error) -> String {

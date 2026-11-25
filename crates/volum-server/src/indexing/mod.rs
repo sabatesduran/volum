@@ -1,8 +1,8 @@
+use crate::timestamps::{self, Timestamp};
 use crate::{
     domain::ScanStatus, events::EventEmitter, geometry, parsers, project_docs, project_storage,
     state::AppState,
 };
-use chrono::{DateTime, Utc};
 use notify::{
     event::{AccessKind, AccessMode},
     EventKind, RecursiveMode, Watcher,
@@ -591,15 +591,15 @@ fn discover(root: &Path) -> Result<Vec<DiscoveredFile>, String> {
             .map_err(|error| error.to_string())?
             .to_string_lossy()
             .replace('\\', "/");
-        let modified: DateTime<Utc> = metadata
+        let modified = metadata
             .modified()
-            .map(DateTime::<Utc>::from)
-            .unwrap_or_else(|_| Utc::now());
+            .map(timestamps::from_system_time)
+            .unwrap_or_else(|_| Timestamp::now());
         files.push(DiscoveredFile {
             absolute: entry.path().to_path_buf(),
             relative,
             size: metadata.len(),
-            modified: modified.to_rfc3339(),
+            modified: timestamps::rfc3339(modified),
             extension,
         });
     }
@@ -653,10 +653,10 @@ pub async fn index_imported_files(
             return Err(format!("Unsupported imported project format: {extension}"));
         }
         let metadata = canonical.metadata().map_err(|error| error.to_string())?;
-        let modified: DateTime<Utc> = metadata
+        let modified = metadata
             .modified()
-            .map(DateTime::<Utc>::from)
-            .unwrap_or_else(|_| Utc::now());
+            .map(timestamps::from_system_time)
+            .unwrap_or_else(|_| Timestamp::now());
         let outcome = index_file(
             root_id,
             root_path,
@@ -665,7 +665,7 @@ pub async fn index_imported_files(
                 absolute: canonical,
                 relative: relative.clone(),
                 size: metadata.len(),
-                modified: modified.to_rfc3339(),
+                modified: timestamps::rfc3339(modified),
                 extension,
             },
             pool,
@@ -1324,7 +1324,7 @@ async fn refresh_duplicate_hashes(pool: &SqlitePool) -> Result<(), String> {
 }
 
 fn now() -> String {
-    Utc::now().to_rfc3339()
+    timestamps::now_rfc3339()
 }
 fn db_error(error: sqlx::Error) -> String {
     error.to_string()

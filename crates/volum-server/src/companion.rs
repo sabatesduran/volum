@@ -1,3 +1,4 @@
+use crate::timestamps::{self, SignedDuration, Timestamp};
 use crate::{
     commands,
     domain::{
@@ -20,7 +21,6 @@ use axum::{
     Json, Router,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use chrono::{DateTime, Utc};
 use futures_util::StreamExt;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -94,7 +94,7 @@ struct ControllerInner {
 
 struct PairingSession {
     secret: String,
-    expires_at: DateTime<Utc>,
+    expires_at: Timestamp,
     role: String,
 }
 
@@ -1577,7 +1577,7 @@ async fn web_login(
         name: device_name.to_string(),
         platform: "Web".into(),
         token_hash: token_hash(&token),
-        paired_at: Utc::now().to_rfc3339(),
+        paired_at: timestamps::now_rfc3339(),
         last_seen_at: None,
         role: "admin".into(),
         migration_id: None,
@@ -1736,7 +1736,7 @@ async fn pair(
         message: "Create a new pairing code on Volum Desktop.".into(),
         retryable: false,
     })?;
-    if pairing.expires_at < Utc::now() {
+    if pairing.expires_at < Timestamp::now() {
         inner.pairing = None;
         return Err(ApiError {
             status: StatusCode::GONE,
@@ -1756,7 +1756,7 @@ async fn pair(
         name: device_name.to_string(),
         platform: platform.to_string(),
         token_hash: token_hash(&token),
-        paired_at: Utc::now().to_rfc3339(),
+        paired_at: timestamps::now_rfc3339(),
         last_seen_at: None,
         role,
         migration_id: None,
@@ -1842,7 +1842,7 @@ async fn authorize_headers(
         .ok_or_else(|| ApiError::unauthorized("Pair this device with Volum Desktop."))?;
     let requested_hash = token_hash(token);
     let mut inner = state.controller.lock().await;
-    let now = Utc::now();
+    let now = Timestamp::now();
     let Some(device) = inner
         .config
         .devices
@@ -1887,14 +1887,10 @@ async fn authorize_headers(
     let should_persist = device
         .last_seen_at
         .as_deref()
-        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
-        .is_none_or(|seen| {
-            now.signed_duration_since(seen.with_timezone(&Utc))
-                .num_seconds()
-                >= 60
-        });
+        .and_then(timestamps::parse_rfc3339)
+        .is_none_or(|seen| now.duration_since(seen).as_secs() >= 60);
     if should_persist {
-        device.last_seen_at = Some(now.to_rfc3339());
+        device.last_seen_at = Some(timestamps::rfc3339(now));
         let _ = persist_config(&inner.config_path, &inner.config);
     }
     drop(inner);
@@ -2388,7 +2384,7 @@ async fn update_project(
         ids.sort();
         ids.dedup();
     }
-    let timestamp = Utc::now().to_rfc3339();
+    let timestamp = timestamps::now_rfc3339();
     let mut transaction = state
         .library
         .pool
@@ -2716,7 +2712,7 @@ async fn claim_project_revision(
             "Refresh this project before editing it.",
         ));
     }
-    let claimed_revision = Utc::now().to_rfc3339();
+    let claimed_revision = timestamps::now_rfc3339();
     let result = sqlx::query(
         "UPDATE models SET updated_at = ? WHERE id = ? AND trashed_at IS NULL AND updated_at = ?",
     )
@@ -3498,7 +3494,7 @@ async fn build_sync_manifest(
         ""
     };
     let statement = format!("SELECT a.id, ma.model_id project_id, m.display_name project_name, a.filename, a.byte_size, a.modified_at, a.content_hash FROM assets a JOIN model_assets ma ON ma.asset_id = a.id JOIN models m ON m.id = ma.model_id WHERE a.missing_since IS NULL AND m.trashed_at IS NULL{project_filter} ORDER BY lower(m.display_name), lower(a.filename), a.id");
-    let mut query = sqlx::query(&statement);
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(statement.as_str()));
     if let Some(selected_json) = selected_json {
         query = query.bind(selected_json);
     }
@@ -4418,7 +4414,7 @@ fn create_pairing_locked(
         .clone()
         .ok_or_else(|| "Companion Access is not running".to_string())?;
     let secret = random_secret();
-    let expires_at = Utc::now() + chrono::Duration::seconds(PAIRING_LIFETIME_SECONDS);
+    let expires_at = Timestamp::now() + SignedDuration::from_secs(PAIRING_LIFETIME_SECONDS);
     let server_name = server_name(inner);
     let transport = transport_for_url(&base_url);
     let payload = serde_json::json!({
@@ -4427,7 +4423,7 @@ fn create_pairing_locked(
         "serverName": server_name,
         "baseUrl": base_url,
         "secret": secret,
-        "expiresAt": expires_at.to_rfc3339(),
+        "expiresAt": timestamps::rfc3339(expires_at),
         "transport": transport,
         "purpose": if role == "migration" { "library-migration" } else { "client" }
     });
@@ -4441,7 +4437,7 @@ fn create_pairing_locked(
         server_name,
         base_url,
         secret,
-        expires_at: expires_at.to_rfc3339(),
+        expires_at: timestamps::rfc3339(expires_at),
         transport: transport.to_string(),
         qr_payload: payload.to_string(),
     })
@@ -4916,7 +4912,7 @@ mod tests {
                 name: "Phone".into(),
                 platform: "iOS".into(),
                 token_hash: token_hash(&client_token),
-                paired_at: Utc::now().to_rfc3339(),
+                paired_at: timestamps::now_rfc3339(),
                 last_seen_at: None,
                 role: "client".into(),
                 migration_id: None,
@@ -4994,7 +4990,7 @@ mod tests {
                 name: "Migrating Desktop".into(),
                 platform: "desktop".into(),
                 token_hash: token_hash(&token),
-                paired_at: Utc::now().to_rfc3339(),
+                paired_at: timestamps::now_rfc3339(),
                 last_seen_at: None,
                 role: "migration".into(),
                 migration_id: None,
@@ -5036,7 +5032,7 @@ mod tests {
                     name: id.into(),
                     platform: "desktop".into(),
                     token_hash: token_hash(value),
-                    paired_at: Utc::now().to_rfc3339(),
+                    paired_at: timestamps::now_rfc3339(),
                     last_seen_at: None,
                     role: "migration".into(),
                     migration_id: None,
@@ -5052,7 +5048,7 @@ mod tests {
         let manifest = serde_json::json!({
             "formatVersion": library_migration::MIGRATION_FORMAT_VERSION,
             "id": migration_id,
-            "createdAt": Utc::now().to_rfc3339(),
+            "createdAt": timestamps::now_rfc3339(),
             "schemaVersion": schema_version,
             "allowMissing": false,
             "stats": {
@@ -5141,7 +5137,7 @@ mod tests {
                 name: "Migrating Desktop".into(),
                 platform: "desktop".into(),
                 token_hash: token_hash(&token),
-                paired_at: Utc::now().to_rfc3339(),
+                paired_at: timestamps::now_rfc3339(),
                 last_seen_at: None,
                 role: "migration".into(),
                 migration_id: Some(migration_id.clone()),
@@ -5151,7 +5147,7 @@ mod tests {
                 name: "Another Desktop".into(),
                 platform: "desktop".into(),
                 token_hash: token_hash(&other_token),
-                paired_at: Utc::now().to_rfc3339(),
+                paired_at: timestamps::now_rfc3339(),
                 last_seen_at: None,
                 role: "migration".into(),
                 migration_id: None,
@@ -5163,7 +5159,7 @@ mod tests {
             .join("library-migrations")
             .join(&migration_id);
         std::fs::create_dir_all(&job_directory).unwrap();
-        let timestamp = Utc::now().to_rfc3339();
+        let timestamp = timestamps::now_rfc3339();
         std::fs::write(
             job_directory.join("job.json"),
             serde_json::to_vec(&serde_json::json!({
@@ -5645,7 +5641,7 @@ mod tests {
         let secret = "single-use-pairing-secret";
         state.controller.lock().await.pairing = Some(PairingSession {
             secret: secret.into(),
-            expires_at: Utc::now() + chrono::Duration::minutes(5),
+            expires_at: Timestamp::now() + SignedDuration::from_mins(5),
             role: "client".into(),
         });
         let router = companion_router(state, None);
@@ -5920,7 +5916,7 @@ mod tests {
         let (_directory, state, _token) = authenticated_test_state().await;
         state.controller.lock().await.pairing = Some(PairingSession {
             secret: "valid-pairing-secret".into(),
-            expires_at: Utc::now() + chrono::Duration::minutes(5),
+            expires_at: Timestamp::now() + SignedDuration::from_mins(5),
             role: "client".into(),
         });
 

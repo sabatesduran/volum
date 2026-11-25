@@ -1,10 +1,10 @@
 use crate::events::EventEmitter;
+use crate::timestamps;
 use crate::{
     domain::{AssemblyStep, CustomFieldDefinition, ProjectBomItem, ProjectCustomValue},
     indexing, project_docs,
     state::AppState,
 };
-use chrono::Utc;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sqlx::Row;
 use std::{
@@ -970,8 +970,8 @@ fn validate_manifest(manifest: &ProjectPackageManifest) -> CommandResult<()> {
     {
         return Err("The project package identity is invalid".into());
     }
-    chrono::DateTime::parse_from_rfc3339(&manifest.exported_at)
-        .map_err(|_| "The project package export date is invalid".to_string())?;
+    timestamps::parse_rfc3339(&manifest.exported_at)
+        .ok_or_else(|| "The project package export date is invalid".to_string())?;
     if manifest.project.name.trim().is_empty() || manifest.project.name.chars().count() > 160 {
         return Err("The project package has an invalid project name".into());
     }
@@ -2126,7 +2126,7 @@ fn valid_color(value: &str) -> bool {
 }
 
 fn now() -> String {
-    Utc::now().to_rfc3339()
+    timestamps::now_rfc3339()
 }
 
 fn db_error(error: sqlx::Error) -> String {

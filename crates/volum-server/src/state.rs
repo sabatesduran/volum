@@ -65,7 +65,7 @@ impl AppState {
             ));
             if !backup.exists() {
                 let escaped = backup.to_string_lossy().replace('\'', "''");
-                sqlx::query(&format!("VACUUM INTO '{escaped}'"))
+                sqlx::query(sqlx::AssertSqlSafe(format!("VACUUM INTO '{escaped}'")))
                     .execute(&pool)
                     .await
                     .map_err(|error| error.to_string())?;
@@ -137,9 +137,7 @@ mod tests {
                     .cloned()
                     .collect(),
             ),
-            ignore_missing: false,
-            locking: true,
-            no_tx: false,
+            ..sqlx::migrate::Migrator::DEFAULT
         };
         through_nine.run(&pool).await.unwrap();
         pool.close().await;
@@ -183,9 +181,7 @@ mod tests {
                         .cloned()
                         .collect(),
                 ),
-                ignore_missing: false,
-                locking: true,
-                no_tx: false,
+                ..sqlx::migrate::Migrator::DEFAULT
             };
             partial.run(&pool).await.unwrap();
             pool.close().await;

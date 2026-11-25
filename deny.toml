@@ -18,6 +18,9 @@ ignore = [
   "RUSTSEC-2024-0436", # paste is unmaintained
   "RUSTSEC-2025-0141", # bincode is unmaintained
   "RUSTSEC-2026-0387", # crypto-bigint timing variability
+  # chrono is unmaintained with no safe upgrade. The tailscale crate pulls it
+  # in transitively; Volum's own timestamp code uses jiff.
+  "RUSTSEC-2026-0543",
 ]
 
 [licenses]

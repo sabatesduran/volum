@@ -345,10 +345,6 @@ async fn companion_stage_local_stl(
             false,
         )
     };
-    let filename = local_model_filename(request.suggested_filename.as_deref(), &file_path)?;
-    let extension = model_extension(&filename)
-        .ok_or_else(|| "Choose an STL, 3MF, OBJ, STEP, or STP file".to_string())?
-        .to_string();
     let mut options = OpenOptions::new();
     options.read(true);
     let mut source = if trusted_open {
@@ -357,19 +353,30 @@ async fn companion_stage_local_stl(
         open_selected_file(&app, &file_path, options)
     }
     .map_err(|_| "The selected 3D file is no longer available".to_string())?;
-    let staged = copy_local_model(&app, &state, &mut source, &extension);
+    let suggested = request.suggested_filename.as_deref();
+    #[cfg(target_os = "android")]
+    let display_name = match &file_path {
+        FilePath::Url(url) if url.scheme() == "content" => android_model_display_name(url.as_str()),
+        _ => None,
+    };
+    #[cfg(target_os = "android")]
+    let suggested = display_name.as_deref().or(suggested);
+    let staged = (|| {
+        let (filename, extension) = local_model_filename(suggested, &file_path)?;
+        let (cache_path, byte_size) = copy_local_model(&app, &state, &mut source, extension)?;
+        Ok(LocalStlFile {
+            cache_path: cache_path.to_string_lossy().into_owned(),
+            filename,
+            extension: extension.into(),
+            byte_size,
+        })
+    })();
     drop(source);
     #[cfg(target_os = "ios")]
     if let FilePath::Url(url) = file_path {
         let _ = app.fs().stop_accessing_security_scoped_resource(url);
     }
-    let (cache_path, byte_size) = staged?;
-    Ok(LocalStlFile {
-        cache_path: cache_path.to_string_lossy().into_owned(),
-        filename,
-        extension,
-        byte_size,
-    })
+    staged
 }
 
 fn copy_local_model(
@@ -487,43 +494,31 @@ fn companion_remove_local_stl(cache_path: String, app: tauri::AppHandle) -> Resu
     }
 }
 
-fn local_model_filename(suggested: Option<&str>, path: &FilePath) -> Result<String, String> {
-    let candidate = suggested
-        .filter(|value| !value.trim().is_empty())
-        .map(str::to_string)
-        .or_else(|| match path {
-            FilePath::Path(path) => path
-                .file_name()
-                .and_then(|value| value.to_str())
-                .map(str::to_string),
-            FilePath::Url(url) => url
-                .path_segments()
-                .and_then(Iterator::last)
-                .filter(|value| !value.is_empty())
-                .and_then(percent_decode_filename),
+fn local_model_filename(
+    suggested: Option<&str>,
+    path: &FilePath,
+) -> Result<(String, &'static str), String> {
+    let path_filename = match path {
+        FilePath::Path(path) => path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(str::to_string),
+        FilePath::Url(url) => url
+            .path_segments()
+            .and_then(Iterator::last)
+            .and_then(percent_decode_filename),
+    };
+    suggested
+        .into_iter()
+        .chain(path_filename.as_deref())
+        .find_map(|candidate| {
+            let basename = candidate.rsplit(['/', '\\', ':']).next()?.trim();
+            model_extension(basename).map(|extension| (basename.to_owned(), extension))
         })
-        .unwrap_or_else(|| "Shared model".into());
-    let basename = PathBuf::from(candidate)
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("Shared model")
-        .trim()
-        .rsplit(':')
-        .next()
-        .unwrap_or("Shared model")
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or("Shared model")
-        .trim()
-        .to_string();
-    if model_extension(&basename).is_some() {
-        Ok(basename)
-    } else {
-        Err("Choose an STL, 3MF, OBJ, STEP, or STP file".into())
-    }
+        .ok_or_else(|| "Choose an STL, 3MF, OBJ, STEP, or STP file".into())
 }
 
-fn model_extension(filename: &str) -> Option<&str> {
+fn model_extension(filename: &str) -> Option<&'static str> {
     let extension = filename.rsplit_once('.')?.1;
     SUPPORTED_MODEL_EXTENSIONS
         .iter()
@@ -1224,6 +1219,39 @@ fn platform_vault_password(legacy: Option<&str>) -> Result<String, String> {
 }
 
 #[cfg(target_os = "android")]
+fn android_model_display_name(url: &str) -> Option<String> {
+    use jni::objects::{JObject, JString, JValue};
+    use std::mem::ManuallyDrop;
+
+    let context = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(context.vm().cast()) }.ok()?;
+    let mut env = vm.attach_current_thread().ok()?;
+    let context_object = ManuallyDrop::new(unsafe { JObject::from_raw(context.context().cast()) });
+    let result = env.with_local_frame(4, |env| -> jni::errors::Result<Option<String>> {
+        let class = env.get_object_class(&*context_object)?;
+        let uri = env.new_string(url)?;
+        let value = env
+            .call_static_method(
+                class,
+                "modelDisplayName",
+                "(Landroid/content/Context;Ljava/lang/String;)Ljava/lang/String;",
+                &[JValue::Object(&*context_object), JValue::Object(&uri)],
+            )?
+            .l()?;
+        if value.is_null() {
+            return Ok(None);
+        }
+        let value = JString::from(value);
+        let name = env.get_string(&value)?.into();
+        Ok(Some(name))
+    });
+    if result.is_err() && env.exception_check().unwrap_or(false) {
+        let _ = env.exception_clear();
+    }
+    result.ok().flatten()
+}
+
+#[cfg(target_os = "android")]
 fn platform_vault_password(legacy: Option<&str>) -> Result<String, String> {
     use jni::objects::{JObject, JString, JValue};
     use std::mem::ManuallyDrop;
@@ -1601,6 +1629,25 @@ mod tests {
         }
         assert!(model_extension("part.zip").is_none());
         assert!(model_extension("part.stl.exe").is_none());
+    }
+
+    #[test]
+    fn resolves_display_names_for_opaque_model_uris() {
+        let opaque = FilePath::Url("content://provider/document/128".parse().unwrap());
+        assert_eq!(
+            local_model_filename(Some("Build plate.3MF"), &opaque).unwrap(),
+            ("Build plate.3MF".into(), "3mf")
+        );
+        assert!(local_model_filename(None, &opaque).is_err());
+        let named = FilePath::Url(
+            "content://provider/document/Download%3Agear.obj"
+                .parse()
+                .unwrap(),
+        );
+        assert_eq!(
+            local_model_filename(Some("128"), &named).unwrap(),
+            ("gear.obj".into(), "obj")
+        );
     }
 
     #[test]

@@ -28,7 +28,9 @@ export function UploadScreen({
         multiple: false,
         directory: false,
         title: t("Choose an STL, 3MF, OBJ, STEP, or STP file"),
-        filters: [{ name: t("3D files"), extensions: ["stl", "3mf", "obj", "step", "stp"] }],
+        filters: /android/i.test(navigator.userAgent)
+          ? undefined
+          : [{ name: t("3D files"), extensions: ["stl", "3mf", "obj", "step", "stp"] }],
       });
       if (!selected || Array.isArray(selected)) return;
       await onPreviewStl(selected, filenameFromFilePath(selected));

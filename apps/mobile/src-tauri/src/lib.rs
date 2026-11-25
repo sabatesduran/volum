@@ -625,11 +625,20 @@ fn looks_like_model(path: &std::path::Path, byte_size: u64, extension: &str) -> 
             (has_record(&text, "v") || has_record(&tail, "v"))
                 && (has_record(&text, "f") || has_record(&tail, "f"))
         }
-        "step" | "stp" => {
-            text.contains("iso-10303-21") && text.contains("header;") && text.contains("data;")
-        }
+        "step" | "stp" => looks_like_step(&text),
         _ => false,
     }
+}
+
+fn looks_like_step(text: &str) -> bool {
+    text.contains("iso-10303-21")
+        && text.contains("header;")
+        && text.split(';').any(|statement| {
+            statement
+                .trim_start()
+                .strip_prefix("data")
+                .is_some_and(|tail| tail.trim().is_empty() || tail.trim_start().starts_with('('))
+        })
 }
 
 fn validated_local_model_path(app: &tauri::AppHandle, value: &str) -> Result<PathBuf, String> {
@@ -1676,6 +1685,15 @@ mod tests {
             local_model_filename(Some("128"), &named).unwrap(),
             ("gear.obj".into(), "obj")
         );
+    }
+
+    #[test]
+    fn recognizes_named_step_data_sections() {
+        assert!(looks_like_step(
+            "iso-10303-21;\nheader;\nendsec;\ndata('parts',('example_schema'));"
+        ));
+        assert!(looks_like_step("iso-10303-21; header; endsec; data;"));
+        assert!(!looks_like_step("iso-10303-21; header; endsec; metadata;"));
     }
 
     #[test]

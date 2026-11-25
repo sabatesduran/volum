@@ -467,10 +467,10 @@ fn triangulate_obj_face(
     for index in 0..face.len() {
         let p = position(index);
         let q = position((index + 1) % face.len());
-        for axis in 0..3 {
+        for (axis, component) in normal.iter_mut().enumerate() {
             let a = (axis + 1) % 3;
             let b = (axis + 2) % 3;
-            normal[axis] += p[a] * q[b] - p[b] * q[a];
+            *component += p[a] * q[b] - p[b] * q[a];
         }
     }
     let axis = (0..3)

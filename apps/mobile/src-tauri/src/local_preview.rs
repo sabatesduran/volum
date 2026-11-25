@@ -753,6 +753,7 @@ fn three_mf_start_part(source: impl Read) -> Result<Option<String>, String> {
 fn parse_3mf_part<R: Read>(source: R) -> Result<ThreeMfPart, String> {
     let mut reader = Reader::from_reader(BufReader::new(source));
     reader.config_mut().trim_text(true);
+    reader.config_mut().expand_empty_elements = true;
     let mut part = ThreeMfPart::default();
     let mut current: Option<(u32, ThreeMfObject)> = None;
     let mut unit_scale = 1.0_f32;
@@ -773,9 +774,6 @@ fn parse_3mf_part<R: Read>(source: R) -> Result<ThreeMfPart, String> {
                         .map_err(|_| "3MF object has an invalid id".to_string())?;
                     current = Some((id, ThreeMfObject::default()));
                 }
-                _ => {}
-            },
-            Ok(Event::Empty(event)) => match xml_name(event.name().as_ref()) {
                 "vertex" => {
                     if let Some((_, object)) = current.as_mut() {
                         let point = Vec3::new(
@@ -813,15 +811,6 @@ fn parse_3mf_part<R: Read>(source: R) -> Result<ThreeMfPart, String> {
                 }
                 "item" => {
                     part.build.push(parse_3mf_instance(&event, unit_scale)?);
-                }
-                "object" => {
-                    let id = xml_attr(&event, "id")
-                        .ok_or_else(|| "3MF object is missing its id".to_string())?
-                        .parse()
-                        .map_err(|_| "3MF object has an invalid id".to_string())?;
-                    if part.objects.insert(id, ThreeMfObject::default()).is_some() {
-                        return Err(format!("3MF contains duplicate object id {id}"));
-                    }
                 }
                 _ => {}
             },
@@ -1516,6 +1505,16 @@ mod tests {
         writer.write_all(br#"<model><resources><object id="1"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources><build><item objectid="1"/></build></model>"#).unwrap();
         let archive = writer.finish().unwrap();
         assert_eq!(parse_3mf(archive.get_ref()).unwrap().triangles.len(), 1);
+    }
+
+    #[test]
+    fn parses_3mf_geometry_and_instances_with_separate_end_tags() {
+        let model = br#"<model><resources><object id="1"><mesh><vertices><vertex x="0" y="0" z="0"></vertex><vertex x="1" y="0" z="0"></vertex><vertex x="0" y="1" z="0"></vertex></vertices><triangles><triangle v1="0" v2="1" v3="2"></triangle></triangles></mesh></object><object id="2"><components><component objectid="1"></component></components></object></resources><build><item objectid="2"></item></build></model>"#;
+        let part = parse_3mf_part(model.as_slice()).unwrap();
+        assert_eq!(part.objects[&1].mesh.vertices.len(), 3);
+        assert_eq!(part.objects[&1].mesh.triangles, [[0, 1, 2]]);
+        assert_eq!(part.objects[&2].components[0].object_id, 1);
+        assert_eq!(part.build[0].object_id, 2);
     }
 
     #[test]

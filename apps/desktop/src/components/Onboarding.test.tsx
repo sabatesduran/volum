@@ -9,12 +9,14 @@ const mocks = vi.hoisted(() => ({
   addRoot: vi.fn(),
   configureManagedLibrary: vi.fn(),
   prepareRestoreFromPath: vi.fn(),
-  startScan: vi.fn()
+  startScan: vi.fn(),
+  connectRemote: vi.fn()
 }));
 
 vi.mock("../lib/tauri/api", () => ({
   isTauri: () => false,
-  api: mocks
+  api: mocks,
+  connectRemote: mocks.connectRemote
 }));
 
 vi.mock("../features/backups/BackupSettings", () => ({
@@ -53,6 +55,38 @@ describe("first-run onboarding", () => {
 
     await waitFor(() => expect(mocks.configureManagedLibrary).toHaveBeenCalledWith("/Users/you/Volum"));
     expect(onComplete).toHaveBeenCalledOnce();
+  });
+
+  it("connects a fresh Desktop to a server without creating a local library", async () => {
+    const status = { mode: "remote", configured: true, online: true };
+    mocks.connectRemote.mockResolvedValue(status);
+    const onComplete = vi.fn();
+    const onConnected = vi.fn();
+    render(<Onboarding onComplete={onComplete} onConnected={onConnected} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect to a Volum server" }));
+    const pairButton = screen.getByRole("button", { name: "Pair and connect" });
+    expect((pairButton as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Server pairing data"), { target: { value: "pairing-payload" } });
+    fireEvent.click(pairButton);
+
+    await waitFor(() => expect(onConnected).toHaveBeenCalledWith(status));
+    expect(mocks.connectRemote).toHaveBeenCalledWith("pairing-payload");
+    expect(mocks.addRoot).not.toHaveBeenCalled();
+    expect(mocks.configureManagedLibrary).not.toHaveBeenCalled();
+    expect(onComplete).not.toHaveBeenCalled();
+  });
+
+  it("keeps the pairing dialog open with the server error", async () => {
+    mocks.connectRemote.mockRejectedValueOnce(new Error("The pairing code has expired."));
+    render(<Onboarding onComplete={vi.fn()} onConnected={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect to a Volum server" }));
+    fireEvent.change(screen.getByLabelText("Server pairing data"), { target: { value: "stale" } });
+    fireEvent.click(screen.getByRole("button", { name: "Pair and connect" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("The pairing code has expired.");
+    expect(screen.getByLabelText("Server pairing data")).toBeTruthy();
   });
 
   it("shows setup failures inline and allows another attempt", async () => {

@@ -442,14 +442,89 @@ fn parse_obj(bytes: &[u8]) -> Result<Mesh, String> {
                 if face.len() < 3 {
                     continue;
                 }
-                for index in 1..face.len() - 1 {
-                    mesh.triangles.push([face[0], face[index], face[index + 1]]);
-                }
+                triangulate_obj_face(&face, &mesh.vertices, &mut mesh.triangles)?;
             }
             _ => {}
         }
     }
     ensure_mesh(mesh)
+}
+
+fn triangulate_obj_face(
+    face: &[usize],
+    vertices: &[Vec3],
+    triangles: &mut Vec<[usize; 3]>,
+) -> Result<(), String> {
+    if face.len() == 3 {
+        triangles.push([face[0], face[1], face[2]]);
+        return Ok(());
+    }
+    let position = |index: usize| {
+        let p = vertices[face[index]];
+        [f64::from(p.x), f64::from(p.y), f64::from(p.z)]
+    };
+    let mut normal = [0.0_f64; 3];
+    for index in 0..face.len() {
+        let p = position(index);
+        let q = position((index + 1) % face.len());
+        for axis in 0..3 {
+            let a = (axis + 1) % 3;
+            let b = (axis + 2) % 3;
+            normal[axis] += p[a] * q[b] - p[b] * q[a];
+        }
+    }
+    let axis = (0..3)
+        .max_by(|&a, &b| normal[a].abs().total_cmp(&normal[b].abs()))
+        .unwrap();
+    if normal[axis] == 0.0 {
+        return Err("OBJ polygon has no area".into());
+    }
+    let winding = normal[axis].signum();
+    let turn = |a, b, c| {
+        let [p, q, r] = [position(a), position(b), position(c)];
+        let x = (axis + 1) % 3;
+        let y = (axis + 2) % 3;
+        winding * ((q[x] - p[x]) * (r[y] - p[y]) - (q[y] - p[y]) * (r[x] - p[x]))
+    };
+    if (0..face.len()).all(|i| turn(i, (i + 1) % face.len(), (i + 2) % face.len()) >= 0.0) {
+        triangles.extend((1..face.len() - 1).map(|i| [face[0], face[i], face[i + 1]]));
+        return Ok(());
+    }
+    let mut corners = (0..face.len()).collect::<Vec<_>>();
+    let mut checks = 0;
+    while corners.len() > 3 {
+        let mut ear = None;
+        for i in 0..corners.len() {
+            let a = corners[(i + corners.len() - 1) % corners.len()];
+            let b = corners[i];
+            let c = corners[(i + 1) % corners.len()];
+            if turn(a, b, c) <= 0.0 {
+                continue;
+            }
+            checks += corners.len();
+            if checks > MAX_PREVIEW_TRIANGLES * 4 {
+                return Err("OBJ polygon is too complex for on-device preview".into());
+            }
+            if !corners.iter().copied().any(|p| {
+                p != a
+                    && p != b
+                    && p != c
+                    && turn(a, b, p) >= 0.0
+                    && turn(b, c, p) >= 0.0
+                    && turn(c, a, p) >= 0.0
+            }) {
+                ear = Some((i, [face[a], face[b], face[c]]));
+                break;
+            }
+        }
+        let Some((index, triangle)) = ear else {
+            return Err("OBJ polygon could not be triangulated".into());
+        };
+        triangles.push(triangle);
+        corners.remove(index);
+    }
+    triangles.push([face[corners[0]], face[corners[1]], face[corners[2]]]);
+    Ok(())
 }
 
 #[derive(Clone, Copy)]
@@ -1371,6 +1446,24 @@ mod tests {
         let preview = model_preview(source, "obj").unwrap();
         assert_eq!(preview.triangle_count, 2);
         assert_eq!(&preview.payload[..4], b"VLM5");
+    }
+
+    #[test]
+    fn triangulates_concave_obj_faces_without_crossing_the_notch() {
+        let source = b"v 0 0 0\nv 4 0 0\nv 4 4 0\nv 2 1 0\nv 0 4 0\nf 1 2 3 4 5\n";
+        let mesh = parse_obj(source).unwrap();
+        assert_eq!(mesh.triangles.len(), 3);
+        let doubled_area: f32 = mesh
+            .triangles
+            .iter()
+            .map(|triangle| {
+                let [a, b, c] = triangle.map(|index| mesh.vertices[index]);
+                let area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+                assert!(area > 0.0);
+                area
+            })
+            .sum();
+        assert_eq!(doubled_area, 20.0);
     }
 
     #[test]

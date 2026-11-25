@@ -14,6 +14,7 @@ pub mod project_storage;
 pub mod recovery;
 pub mod remote;
 pub mod state;
+pub mod timestamps;
 pub mod web_admin;
 pub mod web_sources;
 
@@ -177,7 +178,7 @@ pub async fn seed_defaults(state: &AppState) -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     if count == 0 {
         let id = uuid::Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = timestamps::now_rfc3339();
         sqlx::query("INSERT INTO materials (id, name, material_type, color_name, color_hex, spool_price_minor, currency, spool_weight_g, density, created_at, updated_at) VALUES (?, 'Generic PLA', 'PLA', 'Natural', '#e9e2d3', 1599, 'EUR', 1000, 1.24, ?, ?)")
             .bind(id).bind(&now).bind(&now).execute(&state.pool).await.map_err(|error| error.to_string())?;
     }

@@ -1,9 +1,9 @@
+use crate::timestamps;
 use crate::{
     companion::CompanionController,
     remote::{BackendConnectionStatus, RemoteController},
 };
 use crate::{events::EventEmitter, indexing, project_storage, state::AppState};
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
@@ -607,7 +607,7 @@ async fn prepare_client_migration(
         manifest: MigrationManifest {
             format_version: MIGRATION_FORMAT_VERSION,
             id,
-            created_at: Utc::now().to_rfc3339(),
+            created_at: timestamps::now_rfc3339(),
             schema_version,
             allow_missing,
             stats,
@@ -923,7 +923,7 @@ pub async fn create_server_job(
         .map_err(|error| error.to_string())?;
     let library_stage = server_library_stage(Path::new(&target_library_path), &manifest.id);
     ensure_server_library_layout(&library_stage)?;
-    let now = Utc::now().to_rfc3339();
+    let now = timestamps::now_rfc3339();
     let job = ServerMigrationJob {
         manifest,
         state: "receiving".into(),
@@ -980,7 +980,7 @@ fn reset_failed_server_job(job: &mut ServerMigrationJob, data_dir: &Path) -> Mig
     job.state = "receiving".into();
     job.error = None;
     job.completed_at = None;
-    job.updated_at = Utc::now().to_rfc3339();
+    job.updated_at = timestamps::now_rfc3339();
     write_json_atomic(&server_job_path(data_dir, &job.manifest.id), job)
 }
 
@@ -997,7 +997,7 @@ pub fn cancel_server_job(data_dir: &Path, id: &str) -> MigrationResult<Migration
         let _ = fs::remove_dir_all(library_stage.parent().unwrap_or(library_stage.as_path()));
         job.state = "cancelled".into();
         job.error = None;
-        job.updated_at = Utc::now().to_rfc3339();
+        job.updated_at = timestamps::now_rfc3339();
         write_json_atomic(&path, &job)?;
     }
     server_job_status(&job, data_dir)
@@ -1069,7 +1069,7 @@ pub fn append_server_chunk(
     output.write_all(bytes).map_err(|error| error.to_string())?;
     output.sync_data().map_err(|error| error.to_string())?;
     let uploaded_bytes = current + bytes.len() as u64;
-    job.updated_at = Utc::now().to_rfc3339();
+    job.updated_at = timestamps::now_rfc3339();
     write_json_atomic(&path, &job)?;
     Ok(MigrationUploadStatus {
         uploaded_bytes,
@@ -1090,7 +1090,7 @@ pub async fn verify_server_job(data_dir: &Path, id: &str) -> MigrationResult<Mig
     }
     job.state = "verifying".into();
     job.error = None;
-    job.updated_at = Utc::now().to_rfc3339();
+    job.updated_at = timestamps::now_rfc3339();
     write_json_atomic(&path, &job)?;
     let result = verify_server_files_and_database(data_dir, &job).await;
     let mut latest: ServerMigrationJob = read_json(&path)?;
@@ -1104,7 +1104,7 @@ pub async fn verify_server_job(data_dir: &Path, id: &str) -> MigrationResult<Mig
             latest.error = Some(error);
         }
     }
-    latest.updated_at = Utc::now().to_rfc3339();
+    latest.updated_at = timestamps::now_rfc3339();
     write_json_atomic(&path, &latest)?;
     server_job_status(&latest, data_dir)
 }
@@ -1125,7 +1125,7 @@ pub fn prepare_server_activation(data_dir: &Path, id: &str) -> MigrationResult<M
     };
     write_json_atomic(&data_dir.join(ACTIVATION_FILENAME), &marker)?;
     job.state = "activating".into();
-    job.updated_at = Utc::now().to_rfc3339();
+    job.updated_at = timestamps::now_rfc3339();
     write_json_atomic(&path, &job)?;
     server_job_status(&job, data_dir)
 }
@@ -1187,8 +1187,8 @@ pub fn apply_pending_activation(data_dir: &Path, library_dir: &Path) -> Migratio
 
     job.state = "complete".into();
     job.error = None;
-    job.completed_at = Some(Utc::now().to_rfc3339());
-    job.updated_at = Utc::now().to_rfc3339();
+    job.completed_at = Some(timestamps::now_rfc3339());
+    job.updated_at = timestamps::now_rfc3339();
     write_json_atomic(&job_path, &job)?;
     let _ = fs::remove_file(marker_path);
     let _ = fs::remove_dir_all(stage_library.parent().unwrap_or(&stage_library));
@@ -1442,7 +1442,7 @@ async fn transform_snapshot(
         sqlx::query("DELETE FROM folders").execute(&mut *connection).await.map_err(|error| error.to_string())?;
         sqlx::query("DELETE FROM library_roots").execute(&mut *connection).await.map_err(|error| error.to_string())?;
         let root_id = Uuid::new_v4().to_string();
-        let now = Utc::now().to_rfc3339();
+        let now = timestamps::now_rfc3339();
         sqlx::query("INSERT INTO library_roots (id, path, display_name, status, root_kind, created_at, updated_at) VALUES (?, '/library', 'Volum NAS', 'online', 'managed', ?, ?)")
             .bind(&root_id).bind(&now).bind(&now).execute(&mut *connection).await.map_err(|error| error.to_string())?;
         for project in &plan.projects {
@@ -2093,7 +2093,7 @@ mod tests {
         let manifest = MigrationManifest {
             format_version: MIGRATION_FORMAT_VERSION,
             id: id.clone(),
-            created_at: Utc::now().to_rfc3339(),
+            created_at: timestamps::now_rfc3339(),
             schema_version,
             allow_missing: false,
             stats,
@@ -2180,7 +2180,7 @@ mod tests {
         fs::write(data.join("media/photos/photo.jpg"), b"photo").unwrap();
         fs::write(data.join("media/photo-thumbnails/photo.jpg"), b"thumb").unwrap();
         let state = AppState::initialize(&data).await.unwrap();
-        let now = Utc::now().to_rfc3339();
+        let now = timestamps::now_rfc3339();
         let project_id = Uuid::new_v4().to_string();
         let asset_id = Uuid::new_v4().to_string();
         sqlx::query("INSERT INTO library_roots (id, path, display_name, status, root_kind, created_at, updated_at) VALUES ('linked-root', ?, 'Linked', 'online', 'linked', ?, ?)")

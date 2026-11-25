@@ -10,6 +10,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      app: ${{ github.ref_type == 'tag' || steps.filter.outputs.app == 'true' }}
+      website: ${{ github.ref_type == 'tag' || steps.filter.outputs.website == 'true' }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          predicate-quantifier: every
+          filters: |
+            app:
+              - "**"
+              - "!apps/website/**"
+              - "!CHANGELOG.md"
+            website:
+              - "{apps/website/**,CHANGELOG.md,.github/workflows/ci.yml}"
+
   workflow-lint:
     runs-on: ubuntu-latest
     steps:
@@ -51,6 +73,8 @@ jobs:
           --verbose
 
   frontend:
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -68,6 +92,8 @@ jobs:
       - run: npm run budget
 
   shared-packages:
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -88,6 +114,8 @@ jobs:
       - run: npm test
 
   photo-room:
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -103,6 +131,8 @@ jobs:
       - run: npm test
 
   server-admin:
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -120,6 +150,8 @@ jobs:
       - run: npm run budget
 
   website:
+    needs: changes
+    if: needs.changes.outputs.website == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -135,6 +167,8 @@ jobs:
       - run: npm run build
 
   server-image:
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -210,6 +244,8 @@ jobs:
           command: check advisories bans licenses sources
 
   rust:
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
@@ -225,6 +261,8 @@ jobs:
       - run: cargo test --workspace --all-features
 
   headless-rust:
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -246,6 +284,8 @@ jobs:
           fi
 
   linux-bundle:
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
@@ -305,6 +345,8 @@ jobs:
           test -f "$RUNNER_TEMP/volum-aur/PKGBUILD"
 
   windows-bundle:
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     strategy:
       fail-fast: false
       matrix:

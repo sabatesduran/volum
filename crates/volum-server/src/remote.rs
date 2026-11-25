@@ -1,5 +1,5 @@
 use crate::credentials::SharedCredentialStore;
-use chrono::{DateTime, Utc};
+use crate::timestamps::{self, Timestamp};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -460,10 +460,9 @@ impl RemoteController {
         {
             return Err("This is not a compatible Volum pairing payload".into());
         }
-        let expires_at = DateTime::parse_from_rfc3339(&payload.expires_at)
-            .map_err(|_| "The pairing expiry is invalid".to_string())?
-            .with_timezone(&Utc);
-        if expires_at <= Utc::now() {
+        let expires_at = timestamps::parse_rfc3339(&payload.expires_at)
+            .ok_or_else(|| "The pairing expiry is invalid".to_string())?;
+        if expires_at <= Timestamp::now() {
             return Err("This pairing payload has expired".into());
         }
         let base_url = validate_base_url(&payload.base_url)?;
@@ -750,7 +749,7 @@ impl RemoteController {
             inner.config.retired_local = Some(RetiredLocalLibrary {
                 migration_id: migration_id.to_string(),
                 server_id,
-                retired_at: Utc::now().to_rfc3339(),
+                retired_at: timestamps::now_rfc3339(),
             });
             persist_config(&inner.path, &inner.config)?;
         }
@@ -1181,7 +1180,7 @@ impl RemoteController {
                 report.conflicts += 1;
             }
         }
-        report.completed_at = Utc::now().to_rfc3339();
+        report.completed_at = timestamps::now_rfc3339();
         write_local_manifest(
             &local_path,
             &LocalMirrorManifest {
@@ -2319,7 +2318,7 @@ async fn preserve_conflict(root: &Path, source: &Path, relative: &str) -> Remote
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or("asset");
-    let stamp = Utc::now().format("%Y%m%dT%H%M%SZ");
+    let stamp = timestamps::compact(Timestamp::now());
     let conflict_name = format!("{filename}.local-{stamp}");
     let mut conflict_relative = relative.clone();
     conflict_relative.set_file_name(conflict_name);

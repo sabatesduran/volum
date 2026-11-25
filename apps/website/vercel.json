@@ -1,10 +1,16 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "npm run build",
+  "ignoreCommand": "[ -n \"$VERCEL_GIT_PREVIOUS_SHA\" ] && git diff --quiet \"$VERCEL_GIT_PREVIOUS_SHA\" HEAD -- . ../../CHANGELOG.md",
   "outputDirectory": "dist",
   "cleanUrls": true,
   "trailingSlash": false,
   "redirects": [
+    {
+      "source": "/changelog",
+      "destination": "/docs/changelog",
+      "permanent": false
+    },
     {
       "source": "/:path*",
       "has": [

@@ -1,10 +1,10 @@
+use crate::timestamps;
 use crate::{
     domain::{WebSource, WebSourcePreview},
     events::EventEmitter,
     indexing,
     state::AppState,
 };
-use chrono::Utc;
 use regex::Regex;
 use reqwest::{header, redirect, Client, StatusCode, Url};
 use sqlx::{sqlite::SqliteRow, Row};
@@ -874,7 +874,7 @@ fn provider_label(provider: &str) -> &'static str {
 }
 
 fn now() -> String {
-    Utc::now().to_rfc3339()
+    timestamps::now_rfc3339()
 }
 
 fn db_error(error: sqlx::Error) -> String {

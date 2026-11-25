@@ -137,9 +137,6 @@ mod tests {
                     .cloned()
                     .collect(),
             ),
-            ignore_missing: false,
-            locking: true,
-            no_tx: false,
             ..sqlx::migrate::Migrator::DEFAULT
         };
         through_nine.run(&pool).await.unwrap();
@@ -184,9 +181,6 @@ mod tests {
                         .cloned()
                         .collect(),
                 ),
-                ignore_missing: false,
-                locking: true,
-                no_tx: false,
                 ..sqlx::migrate::Migrator::DEFAULT
             };
             partial.run(&pool).await.unwrap();

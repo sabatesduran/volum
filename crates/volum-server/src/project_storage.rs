@@ -1,10 +1,10 @@
+use crate::timestamps::{self, Timestamp};
 use crate::{
     domain::{AssetMetadata, LibraryRoot},
     events::EventEmitter,
     indexing, parsers, project_docs,
     state::AppState,
 };
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 use std::{
@@ -1709,10 +1709,10 @@ async fn recover_project_sidecar(
             }
             file.asset_id.clone()
         };
-        let modified: DateTime<Utc> = metadata
+        let modified = metadata
             .modified()
-            .map(DateTime::<Utc>::from)
-            .unwrap_or_else(|_| Utc::now());
+            .map(timestamps::from_system_time)
+            .unwrap_or_else(|_| Timestamp::now());
         sqlx::query("INSERT INTO assets (id, root_id, folder_id, relative_path, filename, extension, byte_size, modified_at, parse_status, metadata_json, missing_since) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', '{}', NULL) ON CONFLICT(id) DO UPDATE SET root_id = excluded.root_id, folder_id = excluded.folder_id, relative_path = excluded.relative_path, filename = excluded.filename, extension = excluded.extension, byte_size = excluded.byte_size, modified_at = excluded.modified_at, missing_since = NULL")
             .bind(&asset_id)
             .bind(root_id)
@@ -1721,7 +1721,7 @@ async fn recover_project_sidecar(
             .bind(filename)
             .bind(&extension)
             .bind(metadata.len() as i64)
-            .bind(modified.to_rfc3339())
+            .bind(timestamps::rfc3339(modified))
             .execute(pool)
             .await
             .map_err(db_error)?;
@@ -1834,10 +1834,10 @@ async fn import_into_project(
         }
         let extension = extension_for_path(&staged_path)?;
         let metadata = staged_path.metadata().map_err(|error| error.to_string())?;
-        let modified: DateTime<Utc> = metadata
+        let modified = metadata
             .modified()
-            .map(DateTime::<Utc>::from)
-            .unwrap_or_else(|_| Utc::now());
+            .map(timestamps::from_system_time)
+            .unwrap_or_else(|_| Timestamp::now());
         let parsed: AssetMetadata = parsers::parse_metadata(&staged_path, &extension);
         let parse_status = if parsed.warning.is_some() {
             "warning"
@@ -1859,7 +1859,7 @@ async fn import_into_project(
             filename,
             extension,
             byte_size: metadata.len() as i64,
-            modified_at: modified.to_rfc3339(),
+            modified_at: timestamps::rfc3339(modified),
             partial_fingerprint: partial,
             content_hash: source_hash,
             parse_status: parse_status.into(),
@@ -3680,7 +3680,7 @@ async fn set_operation_state(
 }
 
 fn now() -> String {
-    Utc::now().to_rfc3339()
+    timestamps::now_rfc3339()
 }
 
 fn db_error(error: sqlx::Error) -> String {

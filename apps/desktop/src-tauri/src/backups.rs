@@ -1,4 +1,3 @@
-use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use percent_encoding::percent_decode_str;
 use regex::Regex;
 use reqwest::{Client, Method, StatusCode, Url};
@@ -17,6 +16,7 @@ use tokio::io::AsyncWriteExt;
 use tokio_util::io::ReaderStream;
 use uuid::Uuid;
 use volum_server::state::AppState;
+use volum_server::timestamps::{self, SignedDuration, Timestamp};
 use walkdir::WalkDir;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
@@ -28,7 +28,7 @@ const MAX_RESTORE_ENTRIES: usize = 100_000;
 const MAX_RESTORE_BYTES: u64 = 32 * 1024 * 1024 * 1024;
 const MAX_RESTORE_ARCHIVE_BYTES: u64 = MAX_RESTORE_BYTES + 64 * 1024 * 1024;
 const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
-const SCHEDULE_RETRY_DELAY: ChronoDuration = ChronoDuration::hours(1);
+const SCHEDULE_RETRY_DELAY: SignedDuration = SignedDuration::from_hours(1);
 
 type CommandResult<T> = Result<T, String>;
 
@@ -167,7 +167,7 @@ fn default_true() -> bool {
 }
 
 fn now() -> String {
-    Utc::now().to_rfc3339()
+    timestamps::now_rfc3339()
 }
 
 fn db_error(error: sqlx::Error) -> String {
@@ -478,7 +478,7 @@ async fn perform_backup(
 ) -> BackupRun {
     let started_at = now();
     let run_id = Uuid::new_v4().to_string();
-    let timestamp = Utc::now().format("%Y%m%dT%H%M%SZ");
+    let timestamp = timestamps::compact(Timestamp::now());
     let filename = format!(
         "{BACKUP_PREFIX}{timestamp}-{}-{}.zip",
         destination_key(&destination.id),
@@ -1003,8 +1003,8 @@ async fn folder_archives(destination: &BackupDestination) -> CommandResult<Vec<B
             modified_at: metadata
                 .modified()
                 .ok()
-                .map(DateTime::<Utc>::from)
-                .map(|value| value.to_rfc3339()),
+                .map(timestamps::from_system_time)
+                .map(timestamps::rfc3339),
         });
     }
     output.sort_by(|left, right| right.filename.cmp(&left.filename));
@@ -1447,7 +1447,7 @@ pub async fn commit_prepared_restore(
         .map_err(|error| error.to_string())?;
     let safety = recovery.join(format!(
         "volum-before-restore-{}-{}.zip",
-        Utc::now().format("%Y%m%dT%H%M%SZ"),
+        timestamps::compact(Timestamp::now()),
         &Uuid::new_v4().to_string()[..8]
     ));
     create_backup_archive(&safety, &state).await?;
@@ -1613,11 +1613,11 @@ async fn webdav_request(
     Ok(request)
 }
 
-fn schedule_due(destination: &BackupDestination, current: DateTime<Utc>) -> bool {
+fn schedule_due(destination: &BackupDestination, current: Timestamp) -> bool {
     let interval = match destination.schedule.as_str() {
-        "daily" => ChronoDuration::days(1),
-        "weekly" => ChronoDuration::weeks(1),
-        "monthly" => ChronoDuration::days(30),
+        "daily" => SignedDuration::from_hours(24),
+        "weekly" => SignedDuration::from_hours(7 * 24),
+        "monthly" => SignedDuration::from_hours(30 * 24),
         _ => return false,
     };
     let retrying = destination.last_error.is_some();
@@ -1629,8 +1629,7 @@ fn schedule_due(destination: &BackupDestination, current: DateTime<Utc>) -> bool
             .as_deref()
             .or(destination.last_attempt_at.as_deref())
     }
-    .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
-    .map(|value| value.with_timezone(&Utc));
+    .and_then(timestamps::parse_rfc3339);
     let due_after = if retrying {
         SCHEDULE_RETRY_DELAY
     } else {
@@ -1649,7 +1648,7 @@ pub fn start_scheduler(app: AppHandle) {
             if let Ok(destinations) = destinations {
                 let due = destinations
                     .into_iter()
-                    .filter(|destination| schedule_due(destination, Utc::now()))
+                    .filter(|destination| schedule_due(destination, Timestamp::now()))
                     .collect::<Vec<_>>();
                 if !due.is_empty() {
                     let _guard = state.backup_lock.lock().await;
@@ -1752,30 +1751,22 @@ mod tests {
         };
         assert!(schedule_due(
             &destination,
-            DateTime::parse_from_rfc3339("2026-09-21T12:00:01Z")
-                .unwrap()
-                .with_timezone(&Utc)
+            timestamps::parse_rfc3339("2026-09-21T12:00:01Z").unwrap()
         ));
         assert!(!schedule_due(
             &destination,
-            DateTime::parse_from_rfc3339("2026-09-20T18:00:00Z")
-                .unwrap()
-                .with_timezone(&Utc)
+            timestamps::parse_rfc3339("2026-09-20T18:00:00Z").unwrap()
         ));
         let mut retrying = destination.clone();
         retrying.last_error = Some("NAS unavailable".into());
         retrying.last_attempt_at = Some("2026-09-21T10:00:00Z".into());
         assert!(!schedule_due(
             &retrying,
-            DateTime::parse_from_rfc3339("2026-09-21T10:59:59Z")
-                .unwrap()
-                .with_timezone(&Utc)
+            timestamps::parse_rfc3339("2026-09-21T10:59:59Z").unwrap()
         ));
         assert!(schedule_due(
             &retrying,
-            DateTime::parse_from_rfc3339("2026-09-21T11:00:00Z")
-                .unwrap()
-                .with_timezone(&Utc)
+            timestamps::parse_rfc3339("2026-09-21T11:00:00Z").unwrap()
         ));
     }
 

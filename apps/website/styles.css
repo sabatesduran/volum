@@ -51,7 +51,7 @@ button { color: inherit; }
 .site-nav a:hover { color: var(--ink); }
 .site-nav a:hover::after, .site-nav a[aria-current="location"]::after { transform: scaleX(1); transform-origin: left; }
 .site-nav a[aria-current="location"] { color: var(--ink); }
-.nav-download { justify-self: end; }
+.nav-download { justify-self: end; white-space: nowrap; }
 .nav-toggle { display: none; width: 42px; height: 42px; place-items: center; padding: 10px; border: 1px solid var(--line); border-radius: 50%; background: var(--night-2); }
 .nav-toggle svg { width: 18px; height: 18px; }
 .nav-toggle__close { display: none; }
@@ -83,6 +83,8 @@ h1 em, h2 em { color: var(--accent); font-style: normal; }
 .hero-actions--center { justify-content: center; }
 .platform-note { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 17px 0 0; color: var(--faint); font-size: 11px; }
 .platform-note strong { color: #cbc9c2; font-weight: 650; }
+.platform-note a { color: inherit; text-decoration: none; }
+.platform-note a:hover strong, .platform-note a:focus-visible strong { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
 .platform-note span::before { margin-right: 16px; color: var(--line-bright); content: "·"; }
 .hero-trust { display: flex; flex-wrap: wrap; gap: 18px; padding: 0; margin: 27px 0 0; color: var(--faint); list-style: none; font-size: 12px; }
 .hero-trust li { display: flex; align-items: center; gap: 7px; }
@@ -369,6 +371,7 @@ main section[id] { scroll-margin-top: 65px; }
   .hero-product { max-width: 900px; margin-inline: auto; }
   .hero-product .shot-button { transform: none; }
   .site-nav { gap: 18px; }
+  .nav-shell { gap: 20px; }
   .intro .section-shell, .faq-shell { grid-template-columns: 1fr; }
   .intro-copy { max-width: 760px; }
   .feature-layout, .imports-grid, .project-showcase, .backup-shell, .companion-shell { grid-template-columns: 1fr; }
@@ -393,12 +396,16 @@ main section[id] { scroll-margin-top: 65px; }
   .support-card .button { grid-column: 2; }
 }
 
+@media (min-width: 801px) and (max-width: 960px) {
+  .site-nav { gap: 13px; font-size: 12.5px; }
+}
+
 @media (max-width: 800px) {
   :root { --shell: calc(100% - 32px); }
   .site-header, .site-header.is-scrolled { height: 66px; }
   .nav-shell { grid-template-columns: 1fr auto; }
   .nav-toggle { display: grid; justify-self: end; }
-  .site-nav { position: fixed; inset: 66px 12px auto; display: grid; gap: 0; padding: 8px; border: 1px solid var(--line); border-radius: 15px; transform: translateY(-14px); visibility: hidden; opacity: 0; background: rgb(19 20 17 / .97); box-shadow: 0 22px 60px rgb(0 0 0 / .45); transition: 160ms ease; }
+  .site-nav { position: fixed; inset: 66px 12px auto; display: grid; gap: 0; max-height: calc(100dvh - 78px); overflow-y: auto; overscroll-behavior: contain; padding: 8px; border: 1px solid var(--line); border-radius: 15px; transform: translateY(-14px); visibility: hidden; opacity: 0; background: rgb(19 20 17 / .97); box-shadow: 0 22px 60px rgb(0 0 0 / .45); transition: 160ms ease; }
   .site-nav.is-open { transform: none; visibility: visible; opacity: 1; }
   .site-nav a { padding: 13px 12px; border-radius: 8px; }
   .site-nav a:hover, .site-nav a[aria-current="location"] { background: var(--night-3); }

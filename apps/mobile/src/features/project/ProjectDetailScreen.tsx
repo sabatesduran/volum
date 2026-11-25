@@ -1,3 +1,4 @@
+import { confirmAction } from "../../lib/confirm";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
@@ -229,7 +230,7 @@ export function ProjectDetailScreen({ credential, id, canWrite: writesAllowed, o
     finally { setTagEditorBusy(false); }
   };
   const deleteManagedTag = async () => {
-    if (!tagEditor || !window.confirm(t("Delete “{name}”? It will be removed from {count} projects.", { name: tagEditor.tag.name, count: tagEditor.tag.modelCount }))) return;
+    if (!tagEditor || !await confirmAction(t("Delete “{name}”? It will be removed from {count} projects.", { name: tagEditor.tag.name, count: tagEditor.tag.modelCount }))) return;
     setTagEditorBusy(true); setEditError("");
     try {
       await mutateJson<void>(credential, `/api/v1/tags/${encodeURIComponent(tagEditor.tag.id)}`, "DELETE");
@@ -263,7 +264,7 @@ export function ProjectDetailScreen({ credential, id, canWrite: writesAllowed, o
     if (await saveDocumentation(`/api/v1/projects/${encodeURIComponent(id)}/bom`, "POST", bomDraft, "bom")) setBomDraft(undefined);
   };
   const removeBomItem = async (item: ProjectBomItem) => {
-    if (!window.confirm(t("Delete “{name}” from the bill of materials?", { name: item.name }))) return;
+    if (!await confirmAction(t("Delete “{name}” from the bill of materials?", { name: item.name }))) return;
     await saveDocumentation(`/api/v1/projects/${encodeURIComponent(id)}/bom/${encodeURIComponent(item.id)}`, "DELETE", {}, `bom:${item.id}`);
   };
   const moveBomItem = async (item: ProjectBomItem, direction: -1 | 1) => {
@@ -282,7 +283,7 @@ export function ProjectDetailScreen({ credential, id, canWrite: writesAllowed, o
     if (await saveDocumentation(`/api/v1/projects/${encodeURIComponent(id)}/assembly-steps`, "POST", stepDraft, "step")) setStepDraft(undefined);
   };
   const removeStep = async (step: AssemblyStep) => {
-    if (!window.confirm(t("Delete “{name}”?", { name: step.title || t("this assembly step") }))) return;
+    if (!await confirmAction(t("Delete “{name}”?", { name: step.title || t("this assembly step") }))) return;
     await saveDocumentation(`/api/v1/projects/${encodeURIComponent(id)}/assembly-steps/${encodeURIComponent(step.id)}`, "DELETE", {}, `step:${step.id}`);
   };
   const moveStep = async (step: AssemblyStep, direction: -1 | 1) => {
@@ -404,7 +405,7 @@ export function ProjectDetailScreen({ credential, id, canWrite: writesAllowed, o
     }
   };
   const removePhoto = async (photo: ProjectPhoto) => {
-    if (!window.confirm(t("Delete “{name}”?", { name: photo.caption || photo.originalFilename }))) return;
+    if (!await confirmAction(t("Delete “{name}”?", { name: photo.caption || photo.originalFilename }))) return;
     await saveDocumentation(`/api/v1/projects/${encodeURIComponent(id)}/photos/${encodeURIComponent(photo.id)}`, "DELETE", {}, `photo:${photo.id}`);
   };
   const movePhoto = async (photo: ProjectPhoto, direction: -1 | 1) => {

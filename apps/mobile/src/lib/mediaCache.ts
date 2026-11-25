@@ -4,7 +4,9 @@ import { isConnectionError, requestMediaResponse, type MediaResponse } from "./t
 
 const DATABASE_NAME = "volum-companion-media-cache";
 const STORE_NAME = "media";
-const DATABASE_VERSION = 1;
+// Sizes and access times live apart from the payloads, so pruning and stats never load media bytes.
+const META_STORE_NAME = "media-meta";
+const DATABASE_VERSION = 2;
 const MAX_CACHE_BYTES = 96 * 1024 * 1024;
 const MAX_CACHE_ENTRIES = 192;
 
@@ -18,6 +20,17 @@ interface CachedMediaEntry {
   blob?: Blob;
   byteSize: number;
   lastAccessedAt: number;
+}
+
+interface CachedMediaMeta {
+  key: string;
+  serverId: string;
+  byteSize: number;
+  lastAccessedAt: number;
+}
+
+function entryMeta(entry: CachedMediaEntry, lastAccessedAt = entry.lastAccessedAt): CachedMediaMeta {
+  return { key: entry.key, serverId: entry.serverId, byteSize: entry.byteSize, lastAccessedAt };
 }
 
 export type MediaFetcher = (
@@ -58,9 +71,19 @@ function database(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
     request.onupgradeneeded = () => {
-      if (!request.result.objectStoreNames.contains(STORE_NAME)) {
-        const store = request.result.createObjectStore(STORE_NAME, { keyPath: "key" });
+      const db = request.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        const store = db.createObjectStore(STORE_NAME, { keyPath: "key" });
         store.createIndex("serverId", "serverId");
+      }
+      if (!db.objectStoreNames.contains(META_STORE_NAME)) {
+        const meta = db.createObjectStore(META_STORE_NAME, { keyPath: "key" });
+        const cursor = request.transaction!.objectStore(STORE_NAME).openCursor();
+        cursor.onsuccess = () => {
+          if (!cursor.result) return;
+          meta.put(entryMeta(cursor.result.value as CachedMediaEntry));
+          cursor.result.continue();
+        };
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -68,14 +91,16 @@ function database(): Promise<IDBDatabase> {
   });
 }
 
-async function transaction<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore) => IDBRequest<T>) {
+async function transaction<T>(
+  mode: IDBTransactionMode,
+  run: (media: IDBObjectStore, meta: IDBObjectStore) => IDBRequest<T> | void,
+) {
   const db = await database();
   return new Promise<T>((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, mode);
-    const request = run(tx.objectStore(STORE_NAME));
+    const tx = db.transaction([STORE_NAME, META_STORE_NAME], mode);
+    const request = run(tx.objectStore(STORE_NAME), tx.objectStore(META_STORE_NAME));
     let result!: T;
-    request.onsuccess = () => { result = request.result; };
-    request.onerror = () => reject(request.error ?? new Error("Media cache could not be updated."));
+    if (request) request.onsuccess = () => { result = request.result; };
     tx.oncomplete = () => { db.close(); resolve(result); };
     tx.onerror = () => { db.close(); reject(tx.error ?? new Error("Media cache could not be updated.")); };
     tx.onabort = () => { db.close(); reject(tx.error ?? new Error("Media cache could not be updated.")); };
@@ -83,32 +108,39 @@ async function transaction<T>(mode: IDBTransactionMode, run: (store: IDBObjectSt
 }
 
 function getCachedMedia(serverId: string, path: string) {
-  return transaction<CachedMediaEntry | undefined>("readonly", (store) => store.get(cacheKey(serverId, path)));
+  return transaction<CachedMediaEntry | undefined>("readonly", (media) => media.get(cacheKey(serverId, path)));
+}
+
+function allCachedMeta() {
+  return transaction<CachedMediaMeta[]>("readonly", (_media, meta) => meta.getAll());
+}
+
+function putEntry(entry: CachedMediaEntry) {
+  return transaction<void>("readwrite", (media, meta) => {
+    media.put(entry);
+    meta.put(entryMeta(entry));
+  });
 }
 
 async function putCachedMedia(entry: CachedMediaEntry, generation: number) {
-  await queueCacheMutation(entry.serverId, generation, async () => {
-    await transaction("readwrite", (store) => store.put(entry));
-  });
+  await queueCacheMutation(entry.serverId, generation, () => putEntry(entry));
 }
 
 async function touchCachedMedia(entry: CachedMediaEntry, generation: number) {
   await queueCacheMutation(entry.serverId, generation, async () => {
     const current = await getCachedMedia(entry.serverId, entry.path);
     if (!current || current.etag !== entry.etag) return;
-    await transaction("readwrite", (store) => store.put({ ...current, lastAccessedAt: Date.now() }));
+    await transaction<void>("readwrite", (_media, meta) => { meta.put(entryMeta(current, Date.now())); });
   });
 }
 
 async function deleteEntries(keys: string[]) {
   if (!keys.length) return;
-  const db = await database();
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, "readwrite");
-    const store = tx.objectStore(STORE_NAME);
-    keys.forEach((key) => store.delete(key));
-    tx.oncomplete = () => { db.close(); resolve(); };
-    tx.onerror = () => { db.close(); reject(tx.error ?? new Error("Media cache could not be pruned.")); };
+  await transaction<void>("readwrite", (media, meta) => {
+    keys.forEach((key) => {
+      media.delete(key);
+      meta.delete(key);
+    });
   });
 }
 
@@ -116,7 +148,7 @@ export async function pruneMediaCache(
   maximumBytes = MAX_CACHE_BYTES,
   maximumEntries = MAX_CACHE_ENTRIES,
 ) {
-  const entries = await transaction<CachedMediaEntry[]>("readonly", (store) => store.getAll());
+  const entries = await allCachedMeta();
   const removedEntries = lruRemovals(entries, maximumBytes, maximumEntries);
   const removals = removedEntries.map((entry) => entry.key);
   const removedBytes = removedEntries.reduce((total, entry) => total + entry.byteSize, 0);
@@ -146,13 +178,13 @@ async function cachedEntryBlob(entry: CachedMediaEntry, fallbackContentType: str
     await queueCacheMutation(entry.serverId, generation, async () => {
       const current = await getCachedMedia(entry.serverId, entry.path);
       if (!current || current.etag !== entry.etag || current.bytes instanceof ArrayBuffer) return;
-      await transaction("readwrite", (store) => store.put({
-          ...current,
-          bytes,
-          blob: undefined,
-          byteSize: bytes.byteLength,
-          lastAccessedAt: Date.now(),
-        }));
+      await putEntry({
+        ...current,
+        bytes,
+        blob: undefined,
+        byteSize: bytes.byteLength,
+        lastAccessedAt: Date.now(),
+      });
     }).catch(() => undefined);
     return new Blob([bytes], { type: entry.contentType || entry.blob.type || fallbackContentType });
   }
@@ -282,13 +314,13 @@ export async function clearMediaCache(serverId: string) {
     if (key.startsWith(prefix)) inFlight.delete(key);
   }
   await queueCacheMutation(serverId, undefined, async () => {
-    const entries = await transaction<CachedMediaEntry[]>("readonly", (store) => store.getAll());
+    const entries = await allCachedMeta();
     await deleteEntries(entries.filter((entry) => entry.serverId === serverId).map((entry) => entry.key));
   });
 }
 
 export async function mediaCacheStats(serverId?: string) {
-  const entries = await transaction<CachedMediaEntry[]>("readonly", (store) => store.getAll());
+  const entries = await allCachedMeta();
   const selected = serverId ? entries.filter((entry) => entry.serverId === serverId) : entries;
   return {
     count: selected.length,

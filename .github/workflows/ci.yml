@@ -2,7 +2,12 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   changes:
@@ -367,6 +372,21 @@ jobs:
         with:
           workspaces: ". -> target"
           shared-key: volum-windows-${{ matrix.target }}
+      # cadrum has no prebuilt OpenCASCADE for Windows ARM and builds it from source
+      # (about an hour) into target/, which rust-cache does not keep.
+      - name: Locate OpenCASCADE build
+        if: matrix.target == 'aarch64-pc-windows-msvc'
+        id: occt
+        shell: bash
+        run: |
+          version=$(grep -A1 '^name = "cadrum"$' Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "OCCT_ROOT=${{ github.workspace }}/.occt/cadrum-$version" >> "$GITHUB_ENV"
+      - uses: actions/cache@v4
+        if: matrix.target == 'aarch64-pc-windows-msvc'
+        with:
+          path: .occt
+          key: occt-${{ matrix.target }}-cadrum-${{ steps.occt.outputs.version }}
       - run: npm ci --prefix apps/desktop
       - name: Build Windows installer
         run: npm --prefix apps/desktop run tauri -- build --target ${{ matrix.target }} --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":false}}'

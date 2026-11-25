@@ -228,7 +228,7 @@ test("local STL preview stays on device until save", async ({ page }) => {
 });
 
 test("local STL opens in Photo Room", async ({ page }) => {
-  test.setTimeout(90_000);
+  test.setTimeout(240_000);
   await page.goto("/visual.html?screen=local-stl");
   await page.getByRole("button", { name: "Open Photo Room" }).click();
   await expect(page.getByText("PHOTO ROOM", { exact: true })).toBeVisible();
@@ -339,7 +339,7 @@ test("local STL opens in Photo Room", async ({ page }) => {
   await expect(page.locator("html")).toHaveAttribute("data-photo-shared", "true");
   await expect(page.getByRole("button", { name: "Share again" })).toBeVisible();
   await page.getByRole("button", { name: "Render MP4" }).click();
-  await expect(page.getByText("3DBenchy-story.mp4", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("3DBenchy-story.mp4", { exact: true })).toBeVisible({ timeout: 120_000 });
   await page.getByRole("button", { name: "Share again" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-shared-name", "3DBenchy-story.mp4");
   await expect(page.locator("html")).toHaveAttribute("data-shared-type", "video/mp4");

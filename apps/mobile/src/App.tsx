@@ -1,3 +1,4 @@
+import { confirmAction } from "./lib/confirm";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -412,7 +413,7 @@ export function App() {
       setVerified(false);
       return;
     }
-    if (!window.confirm(t("Unpair this device and remove its cached credentials?"))) return;
+    if (!await confirmAction(t("Unpair this device and remove its cached credentials?"))) return;
     let cacheError = "";
     let revokeError = false;
     if (credential && !isDemoCredential(credential)) {

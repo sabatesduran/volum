@@ -6,9 +6,6 @@ ignore = [
   # Linux-only GTK 3 transitive dependency of the latest stable Tauri 2 release.
   # There is no patched proc-macro-error release or stable Tauri migration yet.
   "RUSTSEC-2024-0370",
-  # chrono is flagged as unmaintained with no patched release. It is used for
-  # timestamps here and by the trash crate on Linux; no vulnerability is reported.
-  "RUSTSEC-2026-0543",
   # zbus 5 split these crates out; zbus 6 merged them back. The latest stable
   # Tauri 2 plugins still require zbus 5 and no compatible patched line exists.
   "RUSTSEC-2026-0370",

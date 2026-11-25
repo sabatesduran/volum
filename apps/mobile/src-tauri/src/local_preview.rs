@@ -392,33 +392,37 @@ fn parse_obj(bytes: &[u8]) -> Result<Mesh, String> {
     let source = std::str::from_utf8(bytes).map_err(|_| "OBJ is not valid UTF-8".to_string())?;
     let mut mesh = Mesh::default();
     for line in source.lines() {
-        let values = line
+        let mut values = line
             .split('#')
             .next()
             .unwrap_or_default()
-            .split_whitespace()
-            .collect::<Vec<_>>();
-        match values.first().copied() {
-            Some("v") if values.len() >= 4 => {
+            .split_whitespace();
+        match values.next() {
+            Some("v") => {
+                let (Some(x), Some(y), Some(z)) = (values.next(), values.next(), values.next())
+                else {
+                    continue;
+                };
                 if mesh.vertices.len() >= MAX_PREVIEW_TRIANGLES * 3 {
                     return Err("This OBJ is too detailed for an on-device preview. You can still save it to Volum Desktop.".into());
                 }
                 let point = Vec3::new(
-                    values[1].parse().map_err(|_| "Invalid OBJ vertex")?,
-                    values[2].parse().map_err(|_| "Invalid OBJ vertex")?,
-                    values[3].parse().map_err(|_| "Invalid OBJ vertex")?,
+                    x.parse().map_err(|_| "Invalid OBJ vertex")?,
+                    y.parse().map_err(|_| "Invalid OBJ vertex")?,
+                    z.parse().map_err(|_| "Invalid OBJ vertex")?,
                 );
                 if !point.finite() {
                     return Err("OBJ contains invalid coordinates".into());
                 }
                 mesh.vertices.push(point);
             }
-            Some("f") if values.len() >= 4 => {
-                if values.len() > MAX_PREVIEW_TRIANGLES + 3 {
-                    return Err("This OBJ is too detailed for an on-device preview. You can still save it to Volum Desktop.".into());
-                }
-                let mut face = Vec::with_capacity(values.len() - 1);
-                for value in &values[1..] {
+            Some("f") => {
+                let face_limit = MAX_PREVIEW_TRIANGLES - mesh.triangles.len() + 2;
+                let mut face = Vec::new();
+                for value in values {
+                    if face.len() == face_limit {
+                        return Err("This OBJ is too detailed for an on-device preview. You can still save it to Volum Desktop.".into());
+                    }
                     let raw: i64 = value
                         .split('/')
                         .next()
@@ -435,10 +439,10 @@ fn parse_obj(bytes: &[u8]) -> Result<Mesh, String> {
                     }
                     face.push(index as usize);
                 }
+                if face.len() < 3 {
+                    continue;
+                }
                 for index in 1..face.len() - 1 {
-                    if mesh.triangles.len() >= MAX_PREVIEW_TRIANGLES {
-                        return Err("This OBJ is too detailed for an on-device preview. You can still save it to Volum Desktop.".into());
-                    }
                     mesh.triangles.push([face[0], face[index], face[index + 1]]);
                 }
             }

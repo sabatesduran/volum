@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 export interface LocalStlFile {
   cachePath: string;
   filename: string;
+  extension: "stl" | "3mf" | "obj" | "step" | "stp";
   byteSize: number;
 }
 
@@ -57,7 +58,7 @@ export function parseLocalPreviewEnvelope(response: ArrayBuffer | Uint8Array): L
     : response.buffer.slice(response.byteOffset, response.byteOffset + response.byteLength) as ArrayBuffer;
   const bytes = new Uint8Array(envelope);
   if (bytes.byteLength < 44 || String.fromCharCode(...bytes.subarray(0, 4)) !== "VLP1") {
-    throw new Error("The local STL preview is invalid.");
+    throw new Error("The local 3D preview is invalid.");
   }
   const view = new DataView(envelope);
   const triangleCount = view.getUint32(4, true);
@@ -65,12 +66,12 @@ export function parseLocalPreviewEnvelope(response: ArrayBuffer | Uint8Array): L
   const payloadBytes = new Uint8Array(payload);
   const version = String.fromCharCode(...payloadBytes.subarray(0, 4));
   if (version !== "VLM4" && version !== "VLM5") {
-    throw new Error("The local STL preview is invalid.");
+    throw new Error("The local 3D preview is invalid.");
   }
   const payloadView = new DataView(payload);
   const bounds = Array.from({ length: 6 }, (_, index) => payloadView.getFloat32(12 + index * 4, true));
   if (!triangleCount || !bounds.every(Number.isFinite)) {
-    throw new Error("The local STL preview is invalid.");
+    throw new Error("The local 3D preview is invalid.");
   }
   const dimensions: [number, number, number] = [
     bounds[3] - bounds[0],
@@ -78,15 +79,15 @@ export function parseLocalPreviewEnvelope(response: ArrayBuffer | Uint8Array): L
     bounds[5] - bounds[2],
   ];
   if (dimensions.some((value) => value < 0 || !Number.isFinite(value))) {
-    throw new Error("The local STL preview is invalid.");
+    throw new Error("The local 3D preview is invalid.");
   }
   const objects: LocalStlObject[] = [];
   if (version === "VLM5") {
-    if (payload.byteLength < 40) throw new Error("The local STL preview is invalid.");
+    if (payload.byteLength < 40) throw new Error("The local 3D preview is invalid.");
     const objectCount = payloadView.getUint32(36, true);
     const headerLength = 40 + objectCount * 32;
     if (objectCount > 4_096 || headerLength > payload.byteLength) {
-      throw new Error("The local STL preview is invalid.");
+      throw new Error("The local 3D preview is invalid.");
     }
     let objectTriangles = 0;
     for (let index = 0; index < objectCount; index += 1) {
@@ -96,7 +97,7 @@ export function parseLocalPreviewEnvelope(response: ArrayBuffer | Uint8Array): L
       const objectBounds = Array.from({ length: 6 }, (_, bound) => payloadView.getFloat32(offset + 8 + bound * 4, true)) as LocalStlObject["bounds"];
       if (id !== index + 1 || !objectTriangleCount || !objectBounds.every(Number.isFinite)
         || objectBounds[3] < objectBounds[0] || objectBounds[4] < objectBounds[1] || objectBounds[5] < objectBounds[2]) {
-        throw new Error("The local STL preview is invalid.");
+        throw new Error("The local 3D preview is invalid.");
       }
       const objectDimensions: LocalStlObject["dimensions"] = [
         objectBounds[3] - objectBounds[0],
@@ -117,7 +118,7 @@ export function parseLocalPreviewEnvelope(response: ArrayBuffer | Uint8Array): L
       objectTriangles += objectTriangleCount;
     }
     if (objects.length && objectTriangles !== triangleCount) {
-      throw new Error("The local STL preview is invalid.");
+      throw new Error("The local 3D preview is invalid.");
     }
   }
   return { payload, triangleCount, dimensions, objects };

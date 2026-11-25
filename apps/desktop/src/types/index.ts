@@ -493,9 +493,13 @@ export interface CompanionStatus {
   devices: CompanionDevice[];
   organizationWrites: boolean;
   photoUploads: boolean;
-  networkMode: "automatic" | "custom";
+  networkMode: "embedded-tailscale" | "system-tailscale" | "custom";
   bindAddress?: string;
   publicUrl?: string;
+  tailnetAvailable: boolean;
+  tailnetState: "signed-out" | "stopped" | "needs-login" | "connecting" | "connected" | "error" | "inactive";
+  tailnetAuthUrl?: string;
+  tailnetHostname: string;
   transport?: "tailscale-http" | "private-http" | "https";
   lastError?: string;
 }

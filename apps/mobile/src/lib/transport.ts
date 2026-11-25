@@ -275,7 +275,7 @@ export function normalizeServerUrl(value: string): string {
   if (url.username || url.password || url.search || url.hash || (url.pathname && url.pathname !== "/")) {
     throw new CompanionError("Enter only the Volum server origin, without a path, query, or credentials.");
   }
-  if (!url.port && url.protocol === "http:") url.port = "43821";
+  if (!hasScheme && !url.port && url.protocol === "http:") url.port = "43821";
   return url.origin;
 }
 

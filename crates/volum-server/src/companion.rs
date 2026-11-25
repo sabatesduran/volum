@@ -67,6 +67,20 @@ const MAX_VIEWER_MESH_BYTES: usize = 30 * 1024 * 1024;
 const MAX_CONCURRENT_REQUESTS: usize = 128;
 const REQUEST_TIMEOUT_SECONDS: u64 = 15 * 60;
 const PAIRING_REQUEST_TIMEOUT_SECONDS: u64 = 15;
+#[cfg(all(
+    feature = "embedded-tailscale",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(
+            target_os = "linux",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        ),
+        all(target_os = "windows", target_arch = "x86_64")
+    )
+))]
+const TAILNET_START_TIMEOUT_SECONDS: u64 = 20;
+const EMBEDDED_TAILNET_PORT: u16 = 80;
+const DEFAULT_TAILNET_HOSTNAME: &str = "volum";
 const SUPPORTED_UPLOAD_EXTENSIONS: &[&str] = &["stl", "3mf", "obj", "step", "stp"];
 const SUPPORTED_PHOTO_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp"];
 
@@ -83,11 +97,14 @@ pub struct CompanionController {
 struct ControllerInner {
     config: CompanionConfig,
     config_path: PathBuf,
+    tailnet_state_path: PathBuf,
     pairing: Option<PairingSession>,
     server: Option<RunningServer>,
     tailnet_ip: Option<String>,
     dns_name: Option<String>,
     base_url: Option<String>,
+    tailnet_state: String,
+    tailnet_auth_url: Option<String>,
     last_error: Option<String>,
     headless: bool,
 }
@@ -123,6 +140,8 @@ struct CompanionConfig {
     bind_address: Option<String>,
     #[serde(default)]
     public_url: Option<String>,
+    #[serde(default = "default_tailnet_hostname")]
+    tailnet_hostname: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -167,6 +186,10 @@ pub struct CompanionStatus {
     pub network_mode: String,
     pub bind_address: Option<String>,
     pub public_url: Option<String>,
+    pub tailnet_available: bool,
+    pub tailnet_state: String,
+    pub tailnet_auth_url: Option<String>,
+    pub tailnet_hostname: String,
     pub transport: Option<String>,
     pub last_error: Option<String>,
 }
@@ -867,7 +890,15 @@ impl CompanionController {
         app: Option<EventEmitter>,
     ) -> CompanionResult<Self> {
         let config_path = data_dir.join("companion.json");
+        let tailnet_state_path = data_dir.join("companion-tailnet.json");
         let config = load_config(&config_path)?;
+        let tailnet_state = if config.network_mode != "embedded-tailscale" {
+            "inactive"
+        } else if tailnet_state_path.exists() {
+            "stopped"
+        } else {
+            "signed-out"
+        };
         let upload_staging = data_dir.join("companion-uploads");
         if upload_staging.exists() {
             if let Err(error) = std::fs::remove_dir_all(&upload_staging) {
@@ -880,11 +911,14 @@ impl CompanionController {
             inner: Arc::new(Mutex::new(ControllerInner {
                 config,
                 config_path,
+                tailnet_state_path,
                 pairing: None,
                 server: None,
                 tailnet_ip: None,
                 dns_name: None,
                 base_url: None,
+                tailnet_state: tailnet_state.into(),
+                tailnet_auth_url: None,
                 last_error: None,
                 headless: false,
             })),
@@ -913,6 +947,12 @@ impl CompanionController {
             let _ = server.task.await;
         }
         let config = self.inner.lock().await.config.clone();
+        if config.network_mode == "embedded-tailscale" {
+            return match self.start_embedded_tailnet(config).await {
+                Ok(()) => Ok(()),
+                Err(error) => self.fail_start(error).await,
+            };
+        }
         let (ip, dns_name, public_url) = if config.network_mode == "custom" {
             let bind_address = config
                 .bind_address
@@ -990,9 +1030,15 @@ impl CompanionController {
             }
             inner.config.port = selected_port;
             persist_config(&inner.config_path, &inner.config)?;
-            inner.tailnet_ip = (inner.config.network_mode == "automatic").then(|| ip.to_string());
+            inner.tailnet_ip =
+                (inner.config.network_mode == "system-tailscale").then(|| ip.to_string());
             inner.dns_name = dns_name;
             inner.base_url = Some(base_url);
+            inner.tailnet_state = if inner.config.network_mode == "system-tailscale" {
+                "connected".into()
+            } else {
+                "inactive".into()
+            };
             inner.last_error = None;
             inner.headless = false;
         }
@@ -1010,6 +1056,175 @@ impl CompanionController {
         let mut inner = self.inner.lock().await;
         inner.server = Some(RunningServer { cancellation, task });
         Ok(())
+    }
+
+    #[cfg(all(
+        feature = "embedded-tailscale",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(
+                target_os = "linux",
+                any(target_arch = "x86_64", target_arch = "aarch64")
+            ),
+            all(target_os = "windows", target_arch = "x86_64")
+        )
+    ))]
+    async fn start_embedded_tailnet(&self, config: CompanionConfig) -> CompanionResult<()> {
+        use tailscale::{AuthState, Config, Device};
+
+        let state_path = self.inner.lock().await.tailnet_state_path.clone();
+        let mut tailnet_config = Config::default_with_key_file(&state_path)
+            .await
+            .map_err(|error| format!("Could not load the Volum Tailscale identity: {error}"))?;
+        secure_tailnet_state_file(&state_path)?;
+        tailnet_config.client_name = Some("volum".into());
+        tailnet_config.requested_hostname = Some(config.tailnet_hostname.clone());
+        tailnet_config.ephemeral = false;
+
+        {
+            let mut inner = self.inner.lock().await;
+            inner.tailnet_state = "connecting".into();
+            inner.tailnet_auth_url = None;
+            inner.last_error = None;
+        }
+
+        let device = tokio::time::timeout(
+            Duration::from_secs(TAILNET_START_TIMEOUT_SECONDS),
+            Device::new(&tailnet_config, None),
+        )
+        .await
+        .map_err(|_| "Tailscale did not respond while starting the Volum node".to_string())?
+        .map_err(|error| format!("Could not start the Volum Tailscale node: {error}"))?;
+        let auth = tokio::time::timeout(
+            Duration::from_secs(TAILNET_START_TIMEOUT_SECONDS),
+            device.is_authorized(),
+        )
+        .await
+        .map_err(|_| "Tailscale did not respond while checking sign-in".to_string())?
+        .map_err(|error| format!("Could not check Tailscale sign-in: {error}"))?;
+        let authorized = matches!(auth, AuthState::Authorized);
+        if let AuthState::NotAuthorized(url) = auth {
+            let auth_url = validate_tailnet_auth_url(url.as_str())?;
+            let mut inner = self.inner.lock().await;
+            inner.tailnet_state = "needs-login".into();
+            inner.tailnet_auth_url = Some(auth_url);
+        }
+
+        let state = ApiState {
+            library: self.library.clone(),
+            app: self.app.clone(),
+            controller: self.inner.clone(),
+            upload_slot: Arc::new(Semaphore::new(1)),
+            viewer_slot: Arc::new(Semaphore::new(1)),
+            migration_lock: Arc::new(Mutex::new(())),
+            web_admin: None,
+        };
+        let router = companion_router(state, None);
+        let cancellation = CancellationToken::new();
+        let shutdown = cancellation.clone();
+        let controller = self.inner.clone();
+        let task = tokio::spawn(async move {
+            let result: CompanionResult<()> = async {
+                if !authorized {
+                    loop {
+                        tokio::select! {
+                            _ = shutdown.cancelled() => return Ok(()),
+                            _ = tokio::time::sleep(Duration::from_secs(2)) => {}
+                        }
+                        let next = match tokio::time::timeout(
+                            Duration::from_secs(TAILNET_START_TIMEOUT_SECONDS),
+                            device.is_authorized(),
+                        )
+                        .await
+                        {
+                            Ok(Ok(value)) => value,
+                            Ok(Err(error)) => {
+                                return Err(format!(
+                                    "Could not complete Tailscale sign-in: {error}"
+                                ))
+                            }
+                            Err(_) => continue,
+                        };
+                        match next {
+                            AuthState::Authorized => break,
+                            AuthState::NotAuthorized(url) => {
+                                let auth_url = validate_tailnet_auth_url(url.as_str())?;
+                                let mut inner = controller.lock().await;
+                                inner.tailnet_state = "needs-login".into();
+                                inner.tailnet_auth_url = Some(auth_url);
+                            }
+                        }
+                    }
+                }
+
+                {
+                    let mut inner = controller.lock().await;
+                    inner.tailnet_state = "connecting".into();
+                    inner.tailnet_auth_url = None;
+                }
+                let ip = device.ipv4_addr().await.map_err(|error| {
+                    format!("Tailscale did not assign Volum an address: {error}")
+                })?;
+                let node = device.self_node().await.map_err(|error| {
+                    format!("Could not read the Volum Tailscale identity: {error}")
+                })?;
+                let dns_name = node
+                    .fqdn_opt(false)
+                    .ok_or_else(|| "Tailscale did not assign Volum a MagicDNS name".to_string())?;
+                let listener = device
+                    .tcp_listen(SocketAddr::new(IpAddr::V4(ip), EMBEDDED_TAILNET_PORT))
+                    .await
+                    .map_err(|error| {
+                        format!("Could not open Companion Access on Tailscale: {error}")
+                    })?;
+                {
+                    let mut inner = controller.lock().await;
+                    if !inner.config.enabled || inner.config.network_mode != "embedded-tailscale" {
+                        return Ok(());
+                    }
+                    inner.tailnet_ip = Some(ip.to_string());
+                    inner.dns_name = Some(dns_name.clone());
+                    inner.base_url = Some(format!("http://{dns_name}"));
+                    inner.tailnet_state = "connected".into();
+                    inner.last_error = None;
+                    inner.headless = false;
+                }
+
+                axum::serve(tailscale::axum::Listener::from(listener), router)
+                    .with_graceful_shutdown(shutdown.cancelled_owned())
+                    .await
+                    .map_err(|error| format!("Embedded Tailscale listener stopped: {error}"))
+            }
+            .await;
+            if let Err(error) = result {
+                log::error!("{error}");
+                let mut inner = controller.lock().await;
+                inner.base_url = None;
+                inner.tailnet_ip = None;
+                inner.dns_name = None;
+                inner.tailnet_auth_url = None;
+                inner.tailnet_state = "error".into();
+                inner.last_error = Some(error);
+            }
+            let _ = device.shutdown(Some(Duration::from_secs(2))).await;
+        });
+        self.inner.lock().await.server = Some(RunningServer { cancellation, task });
+        Ok(())
+    }
+
+    #[cfg(not(all(
+        feature = "embedded-tailscale",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(
+                target_os = "linux",
+                any(target_arch = "x86_64", target_arch = "aarch64")
+            ),
+            all(target_os = "windows", target_arch = "x86_64")
+        )
+    )))]
+    async fn start_embedded_tailnet(&self, _config: CompanionConfig) -> CompanionResult<()> {
+        Err("Embedded Tailscale is not available on this platform".into())
     }
 
     pub(crate) async fn start_headless(
@@ -1082,7 +1297,11 @@ impl CompanionController {
     }
 
     async fn fail_start<T>(&self, error: String) -> CompanionResult<T> {
-        self.inner.lock().await.last_error = Some(error.clone());
+        let mut inner = self.inner.lock().await;
+        if inner.config.network_mode == "embedded-tailscale" {
+            inner.tailnet_state = "error".into();
+        }
+        inner.last_error = Some(error.clone());
         Err(error)
     }
 
@@ -1094,6 +1313,12 @@ impl CompanionController {
             inner.base_url = None;
             inner.tailnet_ip = None;
             inner.dns_name = None;
+            inner.tailnet_auth_url = None;
+            if inner.config.network_mode == "embedded-tailscale" {
+                inner.tailnet_state = "stopped".into();
+            } else {
+                inner.tailnet_state = "inactive".into();
+            }
             inner.server.take()
         };
         if let Some(running) = running {
@@ -1128,21 +1353,30 @@ impl CompanionController {
         let inner = self.inner.lock().await;
         CompanionStatus {
             enabled: inner.config.enabled,
-            running: inner
-                .server
-                .as_ref()
-                .is_some_and(|server| !server.task.is_finished()),
+            running: inner.base_url.is_some()
+                && inner
+                    .server
+                    .as_ref()
+                    .is_some_and(|server| !server.task.is_finished()),
             server_id: inner.config.server_id.clone(),
             tailnet_ip: inner.tailnet_ip.clone(),
             dns_name: inner.dns_name.clone(),
             base_url: inner.base_url.clone(),
-            port: inner.config.port,
+            port: if inner.config.network_mode == "embedded-tailscale" {
+                EMBEDDED_TAILNET_PORT
+            } else {
+                inner.config.port
+            },
             devices: inner.config.devices.iter().map(public_device).collect(),
             organization_writes: inner.config.organization_writes,
             photo_uploads: inner.config.photo_uploads.unwrap_or(false),
             network_mode: inner.config.network_mode.clone(),
             bind_address: inner.config.bind_address.clone(),
             public_url: inner.config.public_url.clone(),
+            tailnet_available: embedded_tailnet_available(),
+            tailnet_state: inner.tailnet_state.clone(),
+            tailnet_auth_url: inner.tailnet_auth_url.clone(),
+            tailnet_hostname: inner.config.tailnet_hostname.clone(),
             transport: inner
                 .base_url
                 .as_deref()
@@ -1172,9 +1406,21 @@ impl CompanionController {
         mode: &str,
         bind_address: Option<String>,
         public_url: Option<String>,
+        tailnet_hostname: Option<String>,
     ) -> CompanionResult<CompanionStatus> {
-        if !matches!(mode, "automatic" | "custom") {
+        if !matches!(
+            mode,
+            "embedded-tailscale" | "system-tailscale" | "automatic" | "custom"
+        ) {
             return Err("The Companion Access network mode is invalid".into());
+        }
+        let mode = if mode == "automatic" {
+            "system-tailscale"
+        } else {
+            mode
+        };
+        if mode == "embedded-tailscale" && !embedded_tailnet_available() {
+            return Err("Embedded Tailscale is not available on this platform".into());
         }
         let (bind_address, public_url) = if mode == "custom" {
             let bind = bind_address
@@ -1193,11 +1439,22 @@ impl CompanionController {
         } else {
             (None, None)
         };
+        let tailnet_hostname = match tailnet_hostname {
+            Some(value) => validate_tailnet_hostname(&value)?,
+            None => self.inner.lock().await.config.tailnet_hostname.clone(),
+        };
         let enabled = {
             let mut inner = self.inner.lock().await;
             inner.config.network_mode = mode.to_string();
             inner.config.bind_address = bind_address;
             inner.config.public_url = public_url;
+            inner.config.tailnet_hostname = tailnet_hostname;
+            inner.tailnet_auth_url = None;
+            inner.tailnet_state = if mode == "embedded-tailscale" {
+                "stopped".into()
+            } else {
+                "inactive".into()
+            };
             inner.last_error = None;
             persist_config(&inner.config_path, &inner.config)?;
             inner.config.enabled
@@ -1205,6 +1462,58 @@ impl CompanionController {
         if enabled {
             self.stop().await;
             let _ = self.start().await;
+        }
+        Ok(self.status().await)
+    }
+
+    pub async fn begin_tailnet_sign_in(
+        &self,
+        hostname: Option<String>,
+    ) -> CompanionResult<CompanionStatus> {
+        if !embedded_tailnet_available() {
+            return Err("Embedded Tailscale is not available on this platform".into());
+        }
+        let hostname =
+            validate_tailnet_hostname(hostname.as_deref().unwrap_or(DEFAULT_TAILNET_HOSTNAME))?;
+        {
+            let mut inner = self.inner.lock().await;
+            inner.config.network_mode = "embedded-tailscale".into();
+            inner.config.tailnet_hostname = hostname;
+            inner.config.bind_address = None;
+            inner.config.public_url = None;
+            inner.config.enabled = true;
+            inner.tailnet_state = "connecting".into();
+            inner.tailnet_auth_url = None;
+            inner.last_error = None;
+            persist_config(&inner.config_path, &inner.config)?;
+        }
+        self.stop().await;
+        self.start().await?;
+        Ok(self.status().await)
+    }
+
+    pub async fn sign_out_tailnet(&self) -> CompanionResult<CompanionStatus> {
+        self.stop().await;
+        let state_path = self.inner.lock().await.tailnet_state_path.clone();
+        if let Err(error) = std::fs::remove_file(&state_path) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                let message = format!("Could not remove the Volum Tailscale identity: {error}");
+                let mut inner = self.inner.lock().await;
+                inner.tailnet_state = "error".into();
+                inner.last_error = Some(message.clone());
+                return Err(message);
+            }
+        }
+        {
+            let mut inner = self.inner.lock().await;
+            inner.config.enabled = false;
+            inner.tailnet_state = "signed-out".into();
+            inner.tailnet_auth_url = None;
+            inner.tailnet_ip = None;
+            inner.dns_name = None;
+            inner.base_url = None;
+            inner.last_error = None;
+            persist_config(&inner.config_path, &inner.config)?;
         }
         Ok(self.status().await)
     }
@@ -4258,7 +4567,90 @@ fn discover_tailnet() -> CompanionResult<TailnetInfo> {
 }
 
 fn default_network_mode() -> String {
-    "automatic".into()
+    "system-tailscale".into()
+}
+
+fn default_new_network_mode() -> String {
+    if embedded_tailnet_available() {
+        "embedded-tailscale".into()
+    } else {
+        "system-tailscale".into()
+    }
+}
+
+fn default_tailnet_hostname() -> String {
+    DEFAULT_TAILNET_HOSTNAME.into()
+}
+
+fn embedded_tailnet_available() -> bool {
+    cfg!(all(
+        feature = "embedded-tailscale",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(
+                target_os = "linux",
+                any(target_arch = "x86_64", target_arch = "aarch64")
+            ),
+            all(target_os = "windows", target_arch = "x86_64")
+        )
+    ))
+}
+
+#[cfg(all(
+    unix,
+    feature = "embedded-tailscale",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(
+            target_os = "linux",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    )
+))]
+fn secure_tailnet_state_file(path: &FilePath) -> CompanionResult<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .map_err(|error| format!("Could not protect the Volum Tailscale identity: {error}"))
+}
+
+#[cfg(all(
+    target_os = "windows",
+    target_arch = "x86_64",
+    feature = "embedded-tailscale"
+))]
+fn secure_tailnet_state_file(_path: &FilePath) -> CompanionResult<()> {
+    Ok(())
+}
+
+fn validate_tailnet_hostname(value: &str) -> CompanionResult<String> {
+    let value = value.trim().to_ascii_lowercase();
+    if value.is_empty()
+        || value.len() > 63
+        || value.starts_with('-')
+        || value.ends_with('-')
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    {
+        return Err(
+            "The Tailscale hostname must use only lowercase letters, numbers, and hyphens".into(),
+        );
+    }
+    Ok(value)
+}
+
+fn validate_tailnet_auth_url(value: &str) -> CompanionResult<String> {
+    let url = reqwest::Url::parse(value)
+        .map_err(|_| "Tailscale returned an invalid sign-in address".to_string())?;
+    if url.scheme() != "https"
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err("Tailscale returned an unsafe sign-in address".into());
+    }
+    Ok(url.to_string())
 }
 
 fn is_private_transport_ip(ip: IpAddr) -> bool {
@@ -4353,9 +4745,10 @@ fn load_config(path: &FilePath) -> CompanionResult<CompanionConfig> {
             devices: Vec::new(),
             organization_writes: false,
             photo_uploads: Some(false),
-            network_mode: default_network_mode(),
+            network_mode: default_new_network_mode(),
             bind_address: None,
             public_url: None,
+            tailnet_hostname: default_tailnet_hostname(),
         };
         persist_config(path, &config)?;
         return Ok(config);
@@ -4375,6 +4768,14 @@ fn load_config(path: &FilePath) -> CompanionResult<CompanionConfig> {
     }
     if config.photo_uploads.is_none() {
         config.photo_uploads = Some(config.organization_writes);
+        changed = true;
+    }
+    if config.network_mode == "automatic" {
+        config.network_mode = "system-tailscale".into();
+        changed = true;
+    }
+    if validate_tailnet_hostname(&config.tailnet_hostname).is_err() {
+        config.tailnet_hostname = default_tailnet_hostname();
         changed = true;
     }
     if changed {
@@ -4555,6 +4956,30 @@ mod tests {
     }
 
     #[test]
+    fn embedded_tailnet_hostnames_are_normalized_and_validated() {
+        assert_eq!(
+            validate_tailnet_hostname(" Volum-Workshop ").unwrap(),
+            "volum-workshop"
+        );
+        assert!(validate_tailnet_hostname("").is_err());
+        assert!(validate_tailnet_hostname("-volum").is_err());
+        assert!(validate_tailnet_hostname("volum-").is_err());
+        assert!(validate_tailnet_hostname("volum.local").is_err());
+        assert!(validate_tailnet_hostname(&"v".repeat(64)).is_err());
+    }
+
+    #[test]
+    fn embedded_tailnet_sign_in_requires_a_safe_https_url() {
+        assert_eq!(
+            validate_tailnet_auth_url("https://login.tailscale.com/a/example").unwrap(),
+            "https://login.tailscale.com/a/example"
+        );
+        assert!(validate_tailnet_auth_url("http://login.tailscale.com/a/example").is_err());
+        assert!(validate_tailnet_auth_url("https://user@example.com/a/example").is_err());
+        assert!(validate_tailnet_auth_url("not a url").is_err());
+    }
+
+    #[test]
     fn pairing_transport_preserves_tailscale_and_classifies_new_routes() {
         assert_eq!(
             transport_for_url("http://100.64.0.8:43821"),
@@ -4671,13 +5096,17 @@ mod tests {
                 network_mode: default_network_mode(),
                 bind_address: None,
                 public_url: None,
+                tailnet_hostname: default_tailnet_hostname(),
             },
             config_path: directory.path().join("companion.json"),
+            tailnet_state_path: directory.path().join("companion-tailnet.json"),
             pairing: None,
             server: None,
             tailnet_ip: None,
             dns_name: None,
             base_url: None,
+            tailnet_state: "signed-out".into(),
+            tailnet_auth_url: None,
             last_error: None,
             headless: false,
         };
@@ -5906,9 +6335,13 @@ mod tests {
 
         let config = load_config(&path).unwrap();
         assert_eq!(config.photo_uploads, Some(true));
+        assert_eq!(config.network_mode, "system-tailscale");
+        assert_eq!(config.tailnet_hostname, "volum");
         let persisted: serde_json::Value =
             serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
         assert_eq!(persisted["photoUploads"], true);
+        assert_eq!(persisted["networkMode"], "system-tailscale");
+        assert_eq!(persisted["tailnetHostname"], "volum");
     }
 
     #[tokio::test]

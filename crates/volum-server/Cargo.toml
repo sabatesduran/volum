@@ -6,6 +6,10 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[features]
+default = []
+embedded-tailscale = ["dep:tailscale"]
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
@@ -35,6 +39,9 @@ rand.workspace = true
 futures-util.workspace = true
 argon2 = "0.5"
 fs2 = "0.4"
+
+[target.'cfg(any(all(target_os = "macos", target_arch = "aarch64"), all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")), all(target_os = "windows", target_arch = "x86_64")))'.dependencies]
+tailscale = { version = "0.7.1", optional = true, features = ["axum"] }
 
 [target.'cfg(not(all(target_os = "windows", target_arch = "aarch64")))'.dependencies]
 cadrum = { version = "0.8.20", default-features = false }

@@ -36,7 +36,8 @@ describe("normalizeServerUrl", () => {
   });
 
   it("normalizes full URLs and preserves explicit ports", () => {
-    expect(normalizeServerUrl(" http://100.81.102.15/ ")).toBe("http://100.81.102.15:43821");
+    expect(normalizeServerUrl(" http://100.81.102.15/ ")).toBe("http://100.81.102.15");
+    expect(normalizeServerUrl("http://volum.example.ts.net")).toBe("http://volum.example.ts.net");
     expect(normalizeServerUrl("https://volum.example.ts.net:1234")).toBe("https://volum.example.ts.net:1234");
     expect(normalizeServerUrl("volum.example.com")).toBe("https://volum.example.com");
     expect(normalizeServerUrl("http://192.168.1.20:44000")).toBe("http://192.168.1.20:44000");

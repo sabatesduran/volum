@@ -12,7 +12,7 @@ Pairing approves one device and gives it a unique revocable token. The QR payloa
 For a Desktop host:
 
 1. Open **Settings → Mobile access**.
-2. Keep **Automatic** to detect Tailscale, or choose **Custom** and enter the private listener IP plus the separate address clients will use.
+2. Keep **Volum Tailscale** and sign in, choose **System Tailscale** to use an installed Tailscale app, or choose **Custom** and enter the private listener IP plus the separate address clients will use.
 3. Enable Companion Access.
 4. Select **Pair a device**. Edit the advertised address before showing the QR code if this client must use another route.
 

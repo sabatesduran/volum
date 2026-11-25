@@ -62,6 +62,32 @@ targets:
             LSHandlerRank: Alternate
             LSItemContentTypes:
               - public.standard-tesselated-geometry-format
+          - CFBundleTypeName: 3D model
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - org.3mf.3mf
+              - public.geometry-definition-format
+              - com.iso.step
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: org.3mf.3mf
+            UTTypeDescription: 3MF model
+            UTTypeConformsTo: [public.data, public.archive]
+            UTTypeTagSpecification:
+              public.filename-extension: [3mf]
+              public.mime-type: model/3mf
+          - UTTypeIdentifier: public.geometry-definition-format
+            UTTypeDescription: Wavefront OBJ model
+            UTTypeConformsTo: [public.text, public.data]
+            UTTypeTagSpecification:
+              public.filename-extension: [obj]
+              public.mime-type: model/obj
+          - UTTypeIdentifier: com.iso.step
+            UTTypeDescription: STEP model
+            UTTypeConformsTo: [public.text, public.data]
+            UTTypeTagSpecification:
+              public.filename-extension: [step, stp]
+              public.mime-type: model/step
         UILaunchStoryboardName: LaunchScreen
         UIRequiredDeviceCapabilities: [arm64, metal]
         UISupportedInterfaceOrientations:

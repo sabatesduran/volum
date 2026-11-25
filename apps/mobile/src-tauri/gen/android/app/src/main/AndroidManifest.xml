@@ -35,6 +35,11 @@
                 <data android:mimeType="model/vnd.stl" />
                 <data android:mimeType="application/sla" />
                 <data android:mimeType="application/vnd.ms-pki.stl" />
+                <data android:mimeType="model/3mf" />
+                <data android:mimeType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml" />
+                <data android:mimeType="model/obj" />
+                <data android:mimeType="model/step" />
+                <data android:mimeType="application/step" />
                 <data android:mimeType="application/octet-stream" />
             </intent-filter>
             <intent-filter>
@@ -45,6 +50,11 @@
                 <data android:mimeType="model/vnd.stl" />
                 <data android:mimeType="application/sla" />
                 <data android:mimeType="application/vnd.ms-pki.stl" />
+                <data android:mimeType="model/3mf" />
+                <data android:mimeType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml" />
+                <data android:mimeType="model/obj" />
+                <data android:mimeType="model/step" />
+                <data android:mimeType="application/step" />
                 <data android:mimeType="application/octet-stream" />
             </intent-filter>
         </activity>

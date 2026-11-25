@@ -61,12 +61,12 @@ function VisualApp() {
   if (screen === "local-stl") {
     return <LocalStlPreviewScreen
       file={fixtureModel === "flexi-rex"
-        ? { cachePath: "/visual/Flexi-Rex-improved.stl", filename: "Flexi-Rex-improved.stl", byteSize: 745_584 }
+        ? { cachePath: "/visual/Flexi-Rex-improved.stl", filename: "Flexi-Rex-improved.stl", extension: "stl", byteSize: 745_584 }
         : fixtureModel === "nasa-wrench"
-          ? { cachePath: "/visual/NASA-Wrench.stl", filename: "NASA-Wrench.stl", byteSize: 728_284 }
+          ? { cachePath: "/visual/NASA-Wrench.stl", filename: "NASA-Wrench.stl", extension: "stl", byteSize: 728_284 }
           : fixtureModel === "stealthburner"
-            ? { cachePath: "/visual/Voron-Stealthburner-main-body.stl", filename: "Voron-Stealthburner-main-body.stl", byteSize: 5_740_284 }
-            : { cachePath: "/visual/3DBenchy.stl", filename: "3DBenchy.stl", byteSize: 11_285_384 }}
+            ? { cachePath: "/visual/Voron-Stealthburner-main-body.stl", filename: "Voron-Stealthburner-main-body.stl", extension: "stl", byteSize: 5_740_284 }
+            : { cachePath: "/visual/3DBenchy.stl", filename: "3DBenchy.stl", extension: "stl", byteSize: 11_285_384 }}
       credential={visualCredential}
       onSavingStarted={() => undefined}
       onDiscard={() => undefined}

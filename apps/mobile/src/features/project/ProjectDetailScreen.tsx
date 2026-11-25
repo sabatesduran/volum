@@ -4,7 +4,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import QRCode from "qrcode";
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown, ArrowLeft, ArrowUp, Box, Boxes, CalendarDays, Camera, Check, ChevronDown,
   ChevronRight, CircleAlert, CloudCheck, CloudDownload, CloudOff, Crosshair, ExternalLink, Eye,
@@ -13,6 +13,7 @@ import {
   UploadCloud, Wifi, Wrench, X,
 } from "lucide-react";
 import { ErrorState } from "../../components/ErrorState";
+import { buildObjectPreviewSamples, ObjectPreviewThumbnail } from "../../components/ObjectPreviewThumbnail";
 import { PullToRefresh } from "../../components/PullToRefresh";
 import { COLLECTION_COLORS } from "../../lib/colors";
 import { validatedExternalUrl } from "../../lib/external";
@@ -105,6 +106,7 @@ export function ProjectDetailScreen({ credential, id, canWrite: writesAllowed, o
   const [viewerAssetId, setViewerAssetId] = useState<string>();
   const [plateIndex, setPlateIndex] = useState<number>();
   const [viewerObjects, setViewerObjects] = useState<LocalStlObject[]>([]);
+  const [activeViewerPayload, setActiveViewerPayload] = useState<ArrayBuffer>();
   const [selectedObjectId, setSelectedObjectId] = useState<number>();
   const [isolatedObjectId, setIsolatedObjectId] = useState<number>();
   const [focusObjectId, setFocusObjectId] = useState<number>();
@@ -143,12 +145,17 @@ export function ProjectDetailScreen({ credential, id, canWrite: writesAllowed, o
   const handleViewerStatus = useCallback((_status: "ready" | "error", _message?: string) => undefined, []);
   useEffect(() => {
     setViewerObjects([]);
+    setActiveViewerPayload(undefined);
     setSelectedObjectId(undefined);
     setIsolatedObjectId(undefined);
     setFocusObjectId(undefined);
     setViewerObjectsOpen(false);
   }, [plateIndex, showViewer, viewerAsset?.id]);
   const selectedObject = viewerObjects.find((object) => object.id === selectedObjectId);
+  const objectPreviewSamples = useMemo(
+    () => viewerObjectsOpen && activeViewerPayload ? buildObjectPreviewSamples(activeViewerPayload, viewerObjects) : new Map<number, number[]>(),
+    [activeViewerPayload, viewerObjects, viewerObjectsOpen],
+  );
   const selectViewerObject = (objectId?: number) => {
     if (!objectId) {
       setSelectedObjectId(undefined);
@@ -550,7 +557,7 @@ export function ProjectDetailScreen({ credential, id, canWrite: writesAllowed, o
     onClose={() => setPhotoRoomOpen(false)}
   /></Suspense>;
   if (showViewer && viewerAsset) return <main className="fullscreen-viewer">
-    <Suspense fallback={<div className="viewer-state"><LoaderCircle className="spin" /><span>{t("Opening 3D viewer…")}</span></div>}><MobileModelViewer credential={credential} assetId={viewerAsset.id} revision={viewerAsset.modifiedAt} plateIndex={plateIndex} offlinePayload={offlineViewerPayload} resetSignal={viewerReset} selectedObjectId={selectedObjectId} isolatedObjectId={isolatedObjectId} focusObjectId={focusObjectId} focusSignal={focusSignal} onObjectSelect={selectViewerObject} onObjects={setViewerObjects} onStatus={handleViewerStatus} /></Suspense>
+    <Suspense fallback={<div className="viewer-state"><LoaderCircle className="spin" /><span>{t("Opening 3D viewer…")}</span></div>}><MobileModelViewer credential={credential} assetId={viewerAsset.id} revision={viewerAsset.modifiedAt} plateIndex={plateIndex} offlinePayload={offlineViewerPayload} resetSignal={viewerReset} selectedObjectId={selectedObjectId} isolatedObjectId={isolatedObjectId} focusObjectId={focusObjectId} focusSignal={focusSignal} onObjectSelect={selectViewerObject} onObjects={setViewerObjects} onPayload={setActiveViewerPayload} onStatus={handleViewerStatus} /></Suspense>
     <div className="fullscreen-viewer__toolbar"><button className="round-button fullscreen-viewer__back" aria-label={t("Back to project")} onClick={() => setShowViewer(false)}><ArrowLeft /></button><div className="fullscreen-viewer__toolbar-actions"><button className="round-button" aria-label={t("Open Photo Room")} onClick={() => setPhotoRoomOpen(true)}><Sparkles /></button><button className="round-button fullscreen-viewer__reset" aria-label={t("Reset 3D view")} onClick={() => setViewerReset((value) => value + 1)}><RotateCcw /></button></div></div>
     {viewerObjects.length > 0 && <button className="project-viewer-objects-button" aria-label={t("Open object list")} onClick={() => setViewerObjectsOpen(true)}><Layers3 /><span>{viewerObjects.length === 1 ? t("1 object") : t("{count} objects", { count: viewerObjects.length })}</span></button>}
     {selectedObject && <section className="local-object-inspector project-object-inspector" aria-label={t("Selected object details")}>
@@ -561,7 +568,7 @@ export function ProjectDetailScreen({ credential, id, canWrite: writesAllowed, o
     </section>}
     {viewerPlates.length > 1 && detail.data && <label className="fullscreen-viewer__plate"><Layers3 /><select value={plateIndex ?? ""} onChange={(event) => setPlateIndex(event.target.value ? Number(event.target.value) : undefined)} aria-label={t("Plate")}><option value="">{t("All plates")}</option>{viewerPlates.map((plate) => <option key={plate.index} value={plate.index}>{t("Plate {number}", { number: plate.index })}</option>)}</select></label>}
     {!selectedObject && <div className="viewer-hint viewer-hint--fullscreen">{viewerObjects.length ? t("Tap an object · Drag to rotate") : t("Drag to rotate · Pinch to zoom")}</div>}
-    {viewerObjectsOpen && <div className="sheet-scrim" role="presentation"><section className="mobile-sheet mobile-sheet--tall local-objects-sheet" role="dialog" aria-modal="true" aria-labelledby="plate-objects-title"><header><div><span className="eyebrow">{t("PLATE OBJECTS")}</span><h2 id="plate-objects-title">{t("Inspect individual objects")}</h2></div><button className="round-button" aria-label={t("Close")} onClick={() => setViewerObjectsOpen(false)}><X /></button></header><p>{t("Select an object to inspect its dimensions and placement.")}</p><div className="local-objects-list">{viewerObjects.map((object) => <button key={object.id} className={selectedObjectId === object.id ? "is-selected" : ""} aria-pressed={selectedObjectId === object.id} onClick={() => { selectViewerObject(object.id); setViewerObjectsOpen(false); }}><span><Box /></span><div><strong>{object.name || t("Object {number}", { number: object.id })}</strong><small>{object.dimensions.map((value) => `${formatNumber(value)} mm`).join(" × ")}</small><small>{t("{count} triangles", { count: formatNumber(object.triangleCount) })}</small></div>{selectedObjectId === object.id && <Check />}</button>)}</div></section></div>}
+    {viewerObjectsOpen && <div className="sheet-scrim" role="presentation"><section className="mobile-sheet mobile-sheet--tall local-objects-sheet" role="dialog" aria-modal="true" aria-labelledby="plate-objects-title"><header><div><span className="eyebrow">{t("PLATE OBJECTS")}</span><h2 id="plate-objects-title">{t("Inspect individual objects")}</h2></div><button className="round-button" aria-label={t("Close")} onClick={() => setViewerObjectsOpen(false)}><X /></button></header><p>{t("Select an object to inspect its dimensions and placement.")}</p><div className="local-objects-list">{viewerObjects.map((object) => <button key={object.id} className={selectedObjectId === object.id ? "is-selected" : ""} aria-pressed={selectedObjectId === object.id} onClick={() => { selectViewerObject(object.id); setViewerObjectsOpen(false); }}>{activeViewerPayload && <ObjectPreviewThumbnail payload={activeViewerPayload} object={object} samples={objectPreviewSamples.get(object.id)} />}<div><strong>{object.name || t("Object {number}", { number: object.id })}</strong><small>{object.dimensions.map((value) => `${formatNumber(value)} mm`).join(" × ")}</small><small>{t("{count} triangles", { count: formatNumber(object.triangleCount) })}</small></div>{selectedObjectId === object.id && <Check />}</button>)}</div></section></div>}
   </main>;
   return <main className="detail-screen">
     <PullToRefresh onRefresh={() => Promise.all([detail.refetch(), documentation.refetch(), fields.refetch(), collections.refetch(), tags.refetch()])} />

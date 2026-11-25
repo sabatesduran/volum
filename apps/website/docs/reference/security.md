@@ -20,7 +20,7 @@ Volum is private and local-first, but optional remote access still creates a net
 
 ## Transport
 
-Desktop Companion Access uses automatic Tailscale detection by default. Custom mode listens only on an explicitly selected private IP and can advertise a separate private HTTP or HTTPS origin.
+On supported builds, Desktop Companion Access can run a persistent Tailscale node embedded in Volum and listen only inside the tailnet. System Tailscale mode uses the separately installed Tailscale app. Custom mode listens only on an explicitly selected private IP and can advertise a separate private HTTP or HTTPS origin.
 
 Desktop and mobile accept trusted HTTPS. Plain HTTP is restricted to loopback, private IPv4/IPv6, link-local, Tailscale, or names that resolve entirely to private addresses. Public HTTP is blocked. Private HTTP relies on the selected LAN or VPN for confidentiality.
 

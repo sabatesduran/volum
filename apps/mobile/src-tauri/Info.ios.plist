@@ -16,6 +16,41 @@
           <string>public.standard-tesselated-geometry-format</string>
         </array>
       </dict>
+      <dict>
+        <key>CFBundleTypeName</key>
+        <string>3D model</string>
+        <key>CFBundleTypeRole</key>
+        <string>Viewer</string>
+        <key>LSHandlerRank</key>
+        <string>Alternate</string>
+        <key>LSItemContentTypes</key>
+        <array>
+          <string>org.3mf.3mf</string>
+          <string>public.geometry-definition-format</string>
+          <string>com.iso.step</string>
+        </array>
+      </dict>
+    </array>
+    <key>UTImportedTypeDeclarations</key>
+    <array>
+      <dict>
+        <key>UTTypeIdentifier</key><string>org.3mf.3mf</string>
+        <key>UTTypeDescription</key><string>3MF model</string>
+        <key>UTTypeConformsTo</key><array><string>public.data</string><string>public.archive</string></array>
+        <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>3mf</string></array><key>public.mime-type</key><string>model/3mf</string></dict>
+      </dict>
+      <dict>
+        <key>UTTypeIdentifier</key><string>public.geometry-definition-format</string>
+        <key>UTTypeDescription</key><string>Wavefront OBJ model</string>
+        <key>UTTypeConformsTo</key><array><string>public.text</string><string>public.data</string></array>
+        <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>obj</string></array><key>public.mime-type</key><string>model/obj</string></dict>
+      </dict>
+      <dict>
+        <key>UTTypeIdentifier</key><string>com.iso.step</string>
+        <key>UTTypeDescription</key><string>STEP model</string>
+        <key>UTTypeConformsTo</key><array><string>public.text</string><string>public.data</string></array>
+        <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>step</string><string>stp</string></array><key>public.mime-type</key><string>model/step</string></dict>
+      </dict>
     </array>
     <key>LSSupportsOpeningDocumentsInPlace</key>
     <true/>

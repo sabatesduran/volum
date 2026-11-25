@@ -1,4 +1,9 @@
-use std::collections::HashMap;
+use quick_xml::{events::Event, Reader};
+use std::{
+    collections::{HashMap, HashSet},
+    io::{BufReader, Cursor, Read},
+};
+use zip::ZipArchive;
 
 const BUILD_PLATE_SURFACE: [u8; 3] = [54, 55, 64];
 const BUILD_PLATE_GRID: [u8; 3] = [83, 85, 96];
@@ -12,7 +17,11 @@ const TRIANGLE_KIND_PLATE_GRID: u8 = 2;
 const TRIANGLE_KIND_PLATE_GRID_MAJOR: u8 = 3;
 const TRIANGLE_KIND_PLATE_BORDER: u8 = 4;
 pub(crate) const MAX_PREVIEW_TRIANGLES: usize = 1_250_000;
+const MAX_VIEWER_PAYLOAD_BYTES: usize = 30 * 1024 * 1024;
 const MAX_INSPECTABLE_OBJECTS: usize = 4_096;
+const MAX_3MF_ENTRIES: usize = 10_000;
+const MAX_3MF_EXPANDED_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_3MF_COMPONENT_DEPTH: usize = 256;
 
 #[derive(Clone, Copy, Debug, Default)]
 struct Vec3 {
@@ -153,16 +162,31 @@ pub(crate) struct LocalPreview {
     pub(crate) triangle_count: u32,
 }
 
-pub(crate) fn stl_preview(bytes: &[u8]) -> Result<LocalPreview, String> {
-    let mut mesh = parse_stl(bytes)?;
+pub(crate) fn model_preview(bytes: &[u8], extension: &str) -> Result<LocalPreview, String> {
+    let mut mesh = match extension {
+        "stl" => parse_stl(bytes)?,
+        "obj" => parse_obj(bytes)?,
+        "3mf" => parse_3mf(bytes)?,
+        "step" | "stp" => {
+            return Err(
+                "STEP previews are prepared by Volum Desktop. You can still save this file.".into(),
+            )
+        }
+        _ => return Err(format!("No on-device preview is available for {extension}")),
+    };
     let triangle_count = u32::try_from(mesh.triangles.len())
-        .map_err(|_| "This STL is too detailed for an on-device preview".to_string())?;
+        .map_err(|_| "This model is too detailed for an on-device preview".to_string())?;
     analyze_objects(&mut mesh)?;
     prepare_viewer_mesh(&mut mesh)?;
     Ok(LocalPreview {
         payload: encode_viewer_mesh(&mesh)?,
         triangle_count,
     })
+}
+
+#[cfg(test)]
+fn stl_preview(bytes: &[u8]) -> Result<LocalPreview, String> {
+    model_preview(bytes, "stl")
 }
 
 fn analyze_objects(mesh: &mut Mesh) -> Result<(), String> {
@@ -361,6 +385,463 @@ fn parse_stl(bytes: &[u8]) -> Result<Mesh, String> {
         }
     }
     ensure_mesh(mesh)
+}
+
+fn parse_obj(bytes: &[u8]) -> Result<Mesh, String> {
+    let source = std::str::from_utf8(bytes).map_err(|_| "OBJ is not valid UTF-8".to_string())?;
+    let mut mesh = Mesh::default();
+    for line in source.lines() {
+        let values = line
+            .split('#')
+            .next()
+            .unwrap_or_default()
+            .split_whitespace()
+            .collect::<Vec<_>>();
+        match values.first().copied() {
+            Some("v") if values.len() >= 4 => {
+                if mesh.vertices.len() >= MAX_PREVIEW_TRIANGLES * 3 {
+                    return Err("This OBJ is too detailed for an on-device preview. You can still save it to Volum Desktop.".into());
+                }
+                let point = Vec3::new(
+                    values[1].parse().map_err(|_| "Invalid OBJ vertex")?,
+                    values[2].parse().map_err(|_| "Invalid OBJ vertex")?,
+                    values[3].parse().map_err(|_| "Invalid OBJ vertex")?,
+                );
+                if !point.finite() {
+                    return Err("OBJ contains invalid coordinates".into());
+                }
+                mesh.vertices.push(point);
+            }
+            Some("f") if values.len() >= 4 => {
+                if values.len() > MAX_PREVIEW_TRIANGLES + 3 {
+                    return Err("This OBJ is too detailed for an on-device preview. You can still save it to Volum Desktop.".into());
+                }
+                let mut face = Vec::with_capacity(values.len() - 1);
+                for value in &values[1..] {
+                    let raw: i64 = value
+                        .split('/')
+                        .next()
+                        .unwrap_or_default()
+                        .parse()
+                        .map_err(|_| "Invalid OBJ face")?;
+                    let index = if raw < 0 {
+                        mesh.vertices.len() as i64 + raw
+                    } else {
+                        raw - 1
+                    };
+                    if index < 0 || index as usize >= mesh.vertices.len() {
+                        return Err("OBJ face references a missing vertex".into());
+                    }
+                    face.push(index as usize);
+                }
+                for index in 1..face.len() - 1 {
+                    if mesh.triangles.len() >= MAX_PREVIEW_TRIANGLES {
+                        return Err("This OBJ is too detailed for an on-device preview. You can still save it to Volum Desktop.".into());
+                    }
+                    mesh.triangles.push([face[0], face[index], face[index + 1]]);
+                }
+            }
+            _ => {}
+        }
+    }
+    ensure_mesh(mesh)
+}
+
+#[derive(Clone, Copy)]
+struct Transform([f32; 12]);
+
+impl Transform {
+    fn identity() -> Self {
+        Self([1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0])
+    }
+
+    fn parse(value: Option<String>, translation_scale: f32) -> Result<Self, String> {
+        let Some(value) = value else {
+            return Ok(Self::identity());
+        };
+        let values = value
+            .split_whitespace()
+            .map(str::parse::<f32>)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| "3MF contains an invalid transform".to_string())?;
+        if values.len() != 12 || !values.iter().all(|value| value.is_finite()) {
+            return Err("3MF contains an invalid transform".into());
+        }
+        Ok(Self([
+            values[0],
+            values[3],
+            values[6],
+            values[9] * translation_scale,
+            values[1],
+            values[4],
+            values[7],
+            values[10] * translation_scale,
+            values[2],
+            values[5],
+            values[8],
+            values[11] * translation_scale,
+        ]))
+    }
+
+    fn apply(self, point: Vec3) -> Vec3 {
+        let m = self.0;
+        Vec3::new(
+            m[0] * point.x + m[1] * point.y + m[2] * point.z + m[3],
+            m[4] * point.x + m[5] * point.y + m[6] * point.z + m[7],
+            m[8] * point.x + m[9] * point.y + m[10] * point.z + m[11],
+        )
+    }
+
+    fn then(self, child: Self) -> Self {
+        let a = self.0;
+        let b = child.0;
+        let mut c = [0.0; 12];
+        for row in 0..3 {
+            for column in 0..3 {
+                c[row * 4 + column] = (0..3)
+                    .map(|axis| a[row * 4 + axis] * b[axis * 4 + column])
+                    .sum();
+            }
+            c[row * 4 + 3] =
+                a[row * 4] * b[3] + a[row * 4 + 1] * b[7] + a[row * 4 + 2] * b[11] + a[row * 4 + 3];
+        }
+        Self(c)
+    }
+}
+
+#[derive(Default)]
+struct ThreeMfObject {
+    mesh: Mesh,
+    components: Vec<ThreeMfInstance>,
+}
+
+#[derive(Clone)]
+struct ThreeMfInstance {
+    object_id: u32,
+    path: Option<String>,
+    transform: Transform,
+}
+
+#[derive(Default)]
+struct ThreeMfPart {
+    objects: HashMap<u32, ThreeMfObject>,
+    build: Vec<ThreeMfInstance>,
+}
+
+fn parse_3mf(bytes: &[u8]) -> Result<Mesh, String> {
+    let mut archive =
+        ZipArchive::new(Cursor::new(bytes)).map_err(|_| "Invalid 3MF archive".to_string())?;
+    if archive.len() > MAX_3MF_ENTRIES {
+        return Err("3MF contains too many files".into());
+    }
+    let mut expanded_bytes = 0_u64;
+    for index in 0..archive.len() {
+        let entry = archive.by_index(index).map_err(|error| error.to_string())?;
+        expanded_bytes = expanded_bytes.saturating_add(entry.size());
+        if expanded_bytes > MAX_3MF_EXPANDED_BYTES {
+            return Err("3MF expands beyond the on-device preview safety limit".into());
+        }
+    }
+    let paths = (0..archive.len())
+        .filter_map(|index| {
+            archive
+                .by_index(index)
+                .ok()
+                .and_then(|entry| entry.name().ok().map(|name| name.into_owned()))
+        })
+        .filter(|name| name.to_ascii_lowercase().ends_with(".model"))
+        .collect::<Vec<_>>();
+    if paths.is_empty() {
+        return Err("3MF has no model document".into());
+    }
+    let root_path = paths
+        .iter()
+        .find(|path| {
+            path.trim_start_matches('/')
+                .replace('\\', "/")
+                .eq_ignore_ascii_case("3D/3dmodel.model")
+        })
+        .or_else(|| {
+            paths.iter().find(|path| {
+                !path
+                    .replace('\\', "/")
+                    .to_ascii_lowercase()
+                    .contains("/objects/")
+            })
+        })
+        .unwrap_or(&paths[0])
+        .trim_start_matches('/')
+        .replace('\\', "/");
+    let mut parts = HashMap::new();
+    let mut source_vertices = 0_usize;
+    let mut source_triangles = 0_usize;
+    for path in &paths {
+        let entry = archive.by_name(path).map_err(|error| error.to_string())?;
+        let part = parse_3mf_part(entry)?;
+        source_vertices = source_vertices
+            .checked_add(
+                part.objects
+                    .values()
+                    .map(|object| object.mesh.vertices.len())
+                    .sum(),
+            )
+            .ok_or_else(|| "3MF contains too many vertices".to_string())?;
+        source_triangles = source_triangles
+            .checked_add(
+                part.objects
+                    .values()
+                    .map(|object| object.mesh.triangles.len())
+                    .sum(),
+            )
+            .ok_or_else(|| "3MF contains too many triangles".to_string())?;
+        if source_vertices > MAX_PREVIEW_TRIANGLES * 3 || source_triangles > MAX_PREVIEW_TRIANGLES {
+            return Err("This 3MF is too detailed for an on-device preview. You can still save it to Volum Desktop.".into());
+        }
+        let normalized = path.trim_start_matches('/').replace('\\', "/");
+        if parts.insert(normalized, part).is_some() {
+            return Err("3MF contains duplicate model documents".into());
+        }
+    }
+    let root = parts
+        .get(&root_path)
+        .ok_or_else(|| "3MF root model is missing".to_string())?;
+    let instances = if root.build.is_empty() {
+        root.objects
+            .keys()
+            .map(|id| ThreeMfInstance {
+                object_id: *id,
+                path: None,
+                transform: Transform::identity(),
+            })
+            .collect()
+    } else {
+        root.build.clone()
+    };
+    let mut mesh = Mesh::default();
+    let mut stack = HashSet::new();
+    for instance in instances {
+        emit_3mf_object(
+            &parts,
+            &root_path,
+            &instance,
+            Transform::identity(),
+            &mut stack,
+            &mut mesh,
+        )?;
+    }
+    ensure_mesh(mesh)
+}
+
+fn parse_3mf_part<R: Read>(source: R) -> Result<ThreeMfPart, String> {
+    let mut reader = Reader::from_reader(BufReader::new(source));
+    reader.config_mut().trim_text(true);
+    let mut part = ThreeMfPart::default();
+    let mut current: Option<(u32, ThreeMfObject)> = None;
+    let mut unit_scale = 1.0_f32;
+    let mut buffer = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buffer) {
+            Ok(Event::Start(event)) => match xml_name(event.name().as_ref()) {
+                "model" => {
+                    unit_scale = three_mf_unit_scale(xml_attr(&event, "unit").as_deref())?;
+                }
+                "object" => {
+                    if current.is_some() {
+                        return Err("3MF contains nested objects".into());
+                    }
+                    let id = xml_attr(&event, "id")
+                        .ok_or_else(|| "3MF object is missing its id".to_string())?
+                        .parse()
+                        .map_err(|_| "3MF object has an invalid id".to_string())?;
+                    current = Some((id, ThreeMfObject::default()));
+                }
+                _ => {}
+            },
+            Ok(Event::Empty(event)) => match xml_name(event.name().as_ref()) {
+                "vertex" => {
+                    if let Some((_, object)) = current.as_mut() {
+                        let point = Vec3::new(
+                            xml_float(&event, "x")? * unit_scale,
+                            xml_float(&event, "y")? * unit_scale,
+                            xml_float(&event, "z")? * unit_scale,
+                        );
+                        if !point.finite() {
+                            return Err("3MF contains invalid coordinates".into());
+                        }
+                        if object.mesh.vertices.len() >= MAX_PREVIEW_TRIANGLES * 3 {
+                            return Err("This 3MF is too detailed for an on-device preview. You can still save it to Volum Desktop.".into());
+                        }
+                        object.mesh.vertices.push(point);
+                    }
+                }
+                "triangle" => {
+                    if let Some((_, object)) = current.as_mut() {
+                        if object.mesh.triangles.len() >= MAX_PREVIEW_TRIANGLES {
+                            return Err("This 3MF is too detailed for an on-device preview. You can still save it to Volum Desktop.".into());
+                        }
+                        object.mesh.triangles.push([
+                            xml_usize(&event, "v1")?,
+                            xml_usize(&event, "v2")?,
+                            xml_usize(&event, "v3")?,
+                        ]);
+                    }
+                }
+                "component" => {
+                    if let Some((_, object)) = current.as_mut() {
+                        object
+                            .components
+                            .push(parse_3mf_instance(&event, unit_scale)?);
+                    }
+                }
+                "item" => {
+                    part.build.push(parse_3mf_instance(&event, unit_scale)?);
+                }
+                "object" => {
+                    let id = xml_attr(&event, "id")
+                        .ok_or_else(|| "3MF object is missing its id".to_string())?
+                        .parse()
+                        .map_err(|_| "3MF object has an invalid id".to_string())?;
+                    if part.objects.insert(id, ThreeMfObject::default()).is_some() {
+                        return Err(format!("3MF contains duplicate object id {id}"));
+                    }
+                }
+                _ => {}
+            },
+            Ok(Event::End(event)) if xml_name(event.name().as_ref()) == "object" => {
+                if let Some((id, object)) = current.take() {
+                    if part.objects.insert(id, object).is_some() {
+                        return Err(format!("3MF contains duplicate object id {id}"));
+                    }
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(error) => return Err(format!("Invalid 3MF XML: {error}")),
+            _ => {}
+        }
+        buffer.clear();
+    }
+    if current.is_some() {
+        return Err("3MF object is not closed".into());
+    }
+    Ok(part)
+}
+
+fn parse_3mf_instance(
+    event: &quick_xml::events::BytesStart<'_>,
+    unit_scale: f32,
+) -> Result<ThreeMfInstance, String> {
+    Ok(ThreeMfInstance {
+        object_id: xml_attr(event, "objectid")
+            .ok_or_else(|| "3MF component is missing its object id".to_string())?
+            .parse()
+            .map_err(|_| "3MF component has an invalid object id".to_string())?,
+        path: xml_attr(event, "path").map(|path| path.trim_start_matches('/').replace('\\', "/")),
+        transform: Transform::parse(xml_attr(event, "transform"), unit_scale)?,
+    })
+}
+
+fn emit_3mf_object(
+    parts: &HashMap<String, ThreeMfPart>,
+    part_path: &str,
+    instance: &ThreeMfInstance,
+    parent: Transform,
+    stack: &mut HashSet<(String, u32)>,
+    output: &mut Mesh,
+) -> Result<(), String> {
+    let path = instance.path.as_deref().unwrap_or(part_path);
+    let key = (path.to_string(), instance.object_id);
+    if stack.len() >= MAX_3MF_COMPONENT_DEPTH {
+        return Err("3MF component nesting exceeds the preview safety limit".into());
+    }
+    if !stack.insert(key.clone()) {
+        return Err("3MF contains a component cycle".into());
+    }
+    let part = parts
+        .get(path)
+        .or_else(|| {
+            parts
+                .iter()
+                .find(|(candidate, _)| candidate.eq_ignore_ascii_case(path))
+                .map(|(_, part)| part)
+        })
+        .ok_or_else(|| format!("3MF component part is missing: {path}"))?;
+    let object = part
+        .objects
+        .get(&instance.object_id)
+        .ok_or_else(|| format!("3MF object is missing: {}", instance.object_id))?;
+    let transform = parent.then(instance.transform);
+    if output
+        .vertices
+        .len()
+        .checked_add(object.mesh.vertices.len())
+        .is_none_or(|count| count > MAX_PREVIEW_TRIANGLES * 3)
+    {
+        return Err("This 3MF is too detailed for an on-device preview. You can still save it to Volum Desktop.".into());
+    }
+    let base = output.vertices.len();
+    for point in object.mesh.vertices.iter().copied() {
+        let point = transform.apply(point);
+        if !point.finite() {
+            return Err("3MF transform produces invalid coordinates".into());
+        }
+        output.vertices.push(point);
+    }
+    for triangle in &object.mesh.triangles {
+        if triangle
+            .iter()
+            .any(|index| *index >= object.mesh.vertices.len())
+        {
+            return Err("3MF triangle references a missing vertex".into());
+        }
+        if output.triangles.len() >= MAX_PREVIEW_TRIANGLES {
+            return Err("This 3MF is too detailed for an on-device preview. You can still save it to Volum Desktop.".into());
+        }
+        output
+            .triangles
+            .push([base + triangle[0], base + triangle[1], base + triangle[2]]);
+    }
+    for component in &object.components {
+        emit_3mf_object(parts, path, component, transform, stack, output)?;
+    }
+    stack.remove(&key);
+    Ok(())
+}
+
+fn xml_name(name: &str) -> &str {
+    name.rsplit(':').next().unwrap_or(name)
+}
+fn xml_attr(event: &quick_xml::events::BytesStart<'_>, name: &str) -> Option<String> {
+    event.attributes().flatten().find_map(|attribute| {
+        (xml_name(attribute.key.as_ref()) == name).then(|| attribute.value.as_ref().to_string())
+    })
+}
+fn xml_float(event: &quick_xml::events::BytesStart<'_>, name: &str) -> Result<f32, String> {
+    let value = xml_attr(event, name)
+        .ok_or_else(|| format!("3MF vertex is missing its {name} coordinate"))?
+        .parse::<f32>()
+        .map_err(|_| format!("3MF vertex has an invalid {name} coordinate"))?;
+    value
+        .is_finite()
+        .then_some(value)
+        .ok_or_else(|| format!("3MF vertex has an invalid {name} coordinate"))
+}
+fn xml_usize(event: &quick_xml::events::BytesStart<'_>, name: &str) -> Result<usize, String> {
+    xml_attr(event, name)
+        .ok_or_else(|| format!("3MF triangle is missing index {name}"))?
+        .parse()
+        .map_err(|_| format!("3MF triangle has an invalid index {name}"))
+}
+
+fn three_mf_unit_scale(unit: Option<&str>) -> Result<f32, String> {
+    match unit.unwrap_or("millimeter").to_ascii_lowercase().as_str() {
+        "micron" => Ok(0.001),
+        "millimeter" => Ok(1.0),
+        "centimeter" => Ok(10.0),
+        "inch" => Ok(25.4),
+        "foot" => Ok(304.8),
+        "meter" => Ok(1_000.0),
+        value => Err(format!("3MF uses an unsupported unit: {value}")),
+    }
 }
 
 fn prepare_viewer_mesh(mesh: &mut Mesh) -> Result<(), String> {
@@ -681,14 +1162,27 @@ fn encode_viewer_mesh(mesh: &Mesh) -> Result<Vec<u8>, String> {
     let object_count = u32::try_from(mesh.objects.len())
         .map_err(|_| "Model has too many objects for the viewer".to_string())?;
     let header_length = 40 + mesh.objects.len() * 32;
-    let mut bytes = Vec::with_capacity(
-        header_length
-            + mesh.vertices.len() * std::mem::size_of::<[f32; 3]>()
-            + index_count as usize * std::mem::size_of::<u32>()
-            + mesh.triangle_colors.len() * 3
-            + mesh.triangle_kinds.len()
-            + mesh.triangle_object_ids.len() * std::mem::size_of::<u32>(),
-    );
+    let payload_size = [
+        mesh.vertices
+            .len()
+            .checked_mul(std::mem::size_of::<[f32; 3]>()),
+        (index_count as usize).checked_mul(std::mem::size_of::<u32>()),
+        mesh.triangle_colors.len().checked_mul(3),
+        Some(mesh.triangle_kinds.len()),
+        mesh.triangle_object_ids
+            .len()
+            .checked_mul(std::mem::size_of::<u32>()),
+    ]
+    .into_iter()
+    .try_fold(header_length, |total, length| {
+        total.checked_add(length?)
+    })
+    .filter(|size| *size <= MAX_VIEWER_PAYLOAD_BYTES)
+    .ok_or_else(|| {
+        "This model is too detailed for an on-device preview. You can still save it to Volum Desktop."
+            .to_string()
+    })?;
+    let mut bytes = Vec::with_capacity(payload_size);
     bytes.extend_from_slice(b"VLM5");
     bytes.extend_from_slice(&vertex_count.to_le_bytes());
     bytes.extend_from_slice(&index_count.to_le_bytes());
@@ -850,5 +1344,100 @@ mod tests {
         let ascii = b"solid test\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid";
         assert_eq!(stl_preview(ascii).unwrap().triangle_count, 1);
         assert!(stl_preview(b"solid empty\nendsolid").is_err());
+    }
+
+    #[test]
+    fn previews_obj_faces_and_negative_indices() {
+        let source = b"v 0 0 0\nv 10 0 0\nv 10 10 0\nv 0 10 0\nf -4 -3 -2 -1\n";
+        let preview = model_preview(source, "obj").unwrap();
+        assert_eq!(preview.triangle_count, 2);
+        assert_eq!(&preview.payload[..4], b"VLM5");
+    }
+
+    #[test]
+    fn previews_3mf_components_with_build_transforms() {
+        use std::io::Write as _;
+
+        let cursor = Cursor::new(Vec::new());
+        let mut writer = zip::ZipWriter::new(cursor);
+        let options = zip::write::SimpleFileOptions::default();
+        writer.start_file("3D/3dmodel.model", options).unwrap();
+        writer.write_all(br#"<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06"><resources><object id="2"><components><component objectid="1" p:path="/3D/Objects/part.model"/></components></object></resources><build><item objectid="2" transform="1 0 0 0 1 0 0 0 1 10 20 30"/></build></model>"#).unwrap();
+        writer.start_file("3D/Objects/part.model", options).unwrap();
+        writer.write_all(br#"<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources></model>"#).unwrap();
+        let archive = writer.finish().unwrap();
+
+        let preview = model_preview(archive.get_ref(), "3mf").unwrap();
+        assert_eq!(preview.triangle_count, 1);
+        let bounds = (0..6)
+            .map(|index| {
+                f32::from_le_bytes(
+                    preview.payload[12 + index * 4..16 + index * 4]
+                        .try_into()
+                        .unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(bounds, vec![10.0, 20.0, 30.0, 11.0, 21.0, 30.0]);
+    }
+
+    #[test]
+    fn converts_3mf_units_and_transform_translations_to_millimeters() {
+        use std::io::Write as _;
+
+        let cursor = Cursor::new(Vec::new());
+        let mut writer = zip::ZipWriter::new(cursor);
+        writer
+            .start_file("3D/3dmodel.model", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(br#"<model unit="inch" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources><build><item objectid="1" transform="1 0 0 0 1 0 0 0 1 1 0 0"/></build></model>"#).unwrap();
+        let archive = writer.finish().unwrap();
+
+        let preview = model_preview(archive.get_ref(), "3mf").unwrap();
+        let bounds = (0..6)
+            .map(|index| {
+                f32::from_le_bytes(
+                    preview.payload[12 + index * 4..16 + index * 4]
+                        .try_into()
+                        .unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let expected = [25.4, 0.0, 0.0, 50.8, 25.4, 0.0];
+        for (actual, expected) in bounds.iter().zip(expected) {
+            assert!((actual - expected).abs() < 0.0001);
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_3mf_geometry_and_transforms() {
+        use std::io::Write as _;
+
+        for model in [
+            br#"<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1"><mesh><vertices><vertex x="nope" y="0" z="0"/></vertices></mesh></object></resources></model>"#.as_slice(),
+            br#"<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources><build><item objectid="1" transform="not a transform"/></build></model>"#.as_slice(),
+            br#"<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1"><mesh><vertices><vertex x="0" y="0" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources></model>"#.as_slice(),
+        ] {
+            let cursor = Cursor::new(Vec::new());
+            let mut writer = zip::ZipWriter::new(cursor);
+            writer
+                .start_file(
+                    "3D/3dmodel.model",
+                    zip::write::SimpleFileOptions::default(),
+                )
+                .unwrap();
+            writer.write_all(model).unwrap();
+            let archive = writer.finish().unwrap();
+            assert!(model_preview(archive.get_ref(), "3mf").is_err());
+        }
+    }
+
+    #[test]
+    fn explains_that_step_previewing_happens_on_desktop() {
+        let error = match model_preview(b"ISO-10303-21;", "step") {
+            Ok(_) => panic!("STEP should use the desktop preview fallback"),
+            Err(error) => error,
+        };
+        assert!(error.contains("Volum Desktop"));
     }
 }

@@ -283,7 +283,9 @@ const localApi = {
   setCompanionEnabled: (enabled: boolean) => command<CompanionStatus>("set_companion_enabled", { enabled }),
   setCompanionOrganizationWrites: (enabled: boolean) => command<CompanionStatus>("set_companion_organization_writes", { enabled }),
   setCompanionPhotoUploads: (enabled: boolean) => command<CompanionStatus>("set_companion_photo_uploads", { enabled }),
-  setCompanionNetwork: (mode: "automatic" | "custom", bindAddress?: string, publicUrl?: string) => command<CompanionStatus>("set_companion_network", { mode, bindAddress, publicUrl }),
+  setCompanionNetwork: (mode: "embedded-tailscale" | "system-tailscale" | "custom", bindAddress?: string, publicUrl?: string, tailnetHostname?: string) => command<CompanionStatus>("set_companion_network", { mode, bindAddress, publicUrl, tailnetHostname }),
+  beginCompanionTailnetSignIn: (hostname?: string) => command<CompanionStatus>("begin_companion_tailnet_sign_in", { hostname }),
+  signOutCompanionTailnet: () => command<CompanionStatus>("sign_out_companion_tailnet"),
   createCompanionPairing: () => command<CompanionPairingInfo>("create_companion_pairing"),
   revokeCompanionDevice: (deviceId: string) => command<CompanionStatus>("revoke_companion_device", { deviceId })
 };

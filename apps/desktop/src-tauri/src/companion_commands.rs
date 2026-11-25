@@ -37,11 +37,27 @@ pub async fn set_companion_network(
     mode: String,
     bind_address: Option<String>,
     public_url: Option<String>,
+    tailnet_hostname: Option<String>,
     controller: State<'_, CompanionController>,
 ) -> Result<CompanionStatus, String> {
     controller
-        .set_network(&mode, bind_address, public_url)
+        .set_network(&mode, bind_address, public_url, tailnet_hostname)
         .await
+}
+
+#[tauri::command]
+pub async fn begin_companion_tailnet_sign_in(
+    hostname: Option<String>,
+    controller: State<'_, CompanionController>,
+) -> Result<CompanionStatus, String> {
+    controller.begin_tailnet_sign_in(hostname).await
+}
+
+#[tauri::command]
+pub async fn sign_out_companion_tailnet(
+    controller: State<'_, CompanionController>,
+) -> Result<CompanionStatus, String> {
+    controller.sign_out_tailnet().await
 }
 
 #[tauri::command]

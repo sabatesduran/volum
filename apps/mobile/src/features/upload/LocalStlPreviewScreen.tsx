@@ -1,7 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
-  Box as BoxIcon,
   Sparkles,
   Check,
   CircleAlert,
@@ -22,11 +21,13 @@ import { formatBytes, formatNumber } from "../../lib/format";
 import { localizedError, t, useLanguage } from "../../lib/i18n";
 import { previewLocalStl, type LocalStlFile, type LocalStlPreview } from "../../lib/localStl";
 import { notifyCompletion } from "../../lib/notifications";
+import { buildObjectPreviewSamples, ObjectPreviewThumbnail } from "../../components/ObjectPreviewThumbnail";
 import { isDemoCredential } from "../../lib/demo";
 import { cancelUpload, requestJson, uploadProjectFile } from "../../lib/transport";
 import type { CompanionPage, Credential, ProjectSummary, ServerStatus, UploadProgress } from "../../types";
 
 type Destination = "new" | "existing";
+const modelBasename = (filename: string) => filename.replace(/\.(?:stl|3mf|obj|step|stp)$/i, "").trim();
 const MobileModelViewer = lazy(() => import("../../components/MobileModelViewer").then((module) => ({ default: module.MobileModelViewer })));
 const MobilePhotoRoom = lazy(() => import("../photo-room/MobilePhotoRoom").then((module) => ({ default: module.MobilePhotoRoom })));
 
@@ -65,7 +66,7 @@ export function LocalStlPreviewScreen({
   const [replaceError, setReplaceError] = useState("");
   const [saveIntent, setSaveIntent] = useState(false);
   const [destination, setDestination] = useState<Destination>("new");
-  const [projectName, setProjectName] = useState(() => file.filename.replace(/\.stl$/i, "").trim());
+  const [projectName, setProjectName] = useState(() => modelBasename(file.filename));
   const [projectId, setProjectId] = useState("");
   const [search, setSearch] = useState("");
   const [progress, setProgress] = useState<UploadProgress>();
@@ -96,6 +97,10 @@ export function LocalStlPreviewScreen({
       });
     return () => { active = false; };
   }, [file.cachePath]);
+
+  useEffect(() => {
+    setProjectName(modelBasename(file.filename));
+  }, [file.filename]);
 
   useEffect(() => {
     if (!startSaving) return;
@@ -167,7 +172,7 @@ export function LocalStlPreviewScreen({
         queryClient.invalidateQueries({ queryKey: ["projects"] }),
         queryClient.invalidateQueries({ queryKey: ["status"] }),
       ]);
-      await notifyCompletion(t("STL saved"), t("{filename} was added to Volum.", { filename: result.filename }));
+      await notifyCompletion(t("3D file saved"), t("{filename} was added to Volum.", { filename: result.filename }));
       onSaved(result.projectId);
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : String(reason);
@@ -206,6 +211,10 @@ export function LocalStlPreviewScreen({
     .join(" × ");
   const matchingProjects = projects.data?.items.filter((project) => !project.missing) ?? [];
   const selectedObject = preview?.objects.find((object) => object.id === selectedObjectId);
+  const objectPreviewSamples = useMemo(
+    () => objectsOpen && preview ? buildObjectPreviewSamples(preview.payload, preview.objects) : new Map<number, number[]>(),
+    [objectsOpen, preview],
+  );
   const selectObject = (objectId?: number) => {
     if (!objectId) {
       setSelectedObjectId(undefined);
@@ -240,21 +249,21 @@ export function LocalStlPreviewScreen({
     setResetSignal((value) => value + 1);
   };
 
-  if (photoRoomOpen && preview) return <Suspense fallback={<div className="center-state" role="status"><LoaderCircle className="spin" /></div>}><MobilePhotoRoom title={file.filename.replace(/\.stl$/i, "")} localPayload={preview.payload} onClose={() => setPhotoRoomOpen(false)} /></Suspense>;
+  if (photoRoomOpen && preview) return <Suspense fallback={<div className="center-state" role="status"><LoaderCircle className="spin" /></div>}><MobilePhotoRoom title={modelBasename(file.filename)} localPayload={preview.payload} onClose={() => setPhotoRoomOpen(false)} /></Suspense>;
 
   return <main className="local-stl-screen">
     <header className="local-stl-header">
-      <button className="round-button" aria-label={t("Discard STL")} disabled={uploading} onClick={onDiscard}><ArrowLeft /></button>
-      <div><span>{t("STL PREVIEW")}</span><strong>{file.filename}</strong></div>
-      <button className="round-button" aria-label={t("Replace STL")} disabled={uploading || replacing} onClick={() => void replace()}>{replacing ? <LoaderCircle className="spin" /> : <RefreshCw />}</button>
+      <button className="round-button" aria-label={t("Discard 3D file")} disabled={uploading} onClick={onDiscard}><ArrowLeft /></button>
+      <div><span>{t("{format} PREVIEW", { format: file.extension.toLocaleUpperCase() })}</span><strong>{file.filename}</strong></div>
+      <button className="round-button" aria-label={t("Replace 3D file")} disabled={uploading || replacing} onClick={() => void replace()}>{replacing ? <LoaderCircle className="spin" /> : <RefreshCw />}</button>
     </header>
 
-    <section className="local-stl-stage" aria-label={t("On-device STL preview")}>
+    <section className="local-stl-stage" aria-label={t("On-device 3D preview")}>
       {preview
         ? <Suspense fallback={<div className="local-stl-stage__state"><LoaderCircle className="spin" /><strong>{t("Opening 3D viewer…")}</strong></div>}><MobileModelViewer localPayload={preview.payload} resetSignal={resetSignal} selectedObjectId={selectedObjectId} isolatedObjectId={isolatedObjectId} focusObjectId={focusObjectId} focusSignal={focusSignal} onObjectSelect={selectObject} onStatus={handleViewerStatus} /></Suspense>
         : previewing
-          ? <div className="local-stl-stage__state" role="status"><LoaderCircle className="spin" /><strong>{t("Building preview on this device…")}</strong><span>{t("The STL stays private while Volum prepares the viewer.")}</span></div>
-          : <div className="local-stl-stage__state is-error" role="alert"><CircleAlert /><strong>{t("Preview unavailable")}</strong><span>{previewError || t("This STL could not be previewed on this device.")}</span><small>{t("The original file is still ready to save to Volum Desktop.")}</small></div>}
+          ? <div className="local-stl-stage__state" role="status"><LoaderCircle className="spin" /><strong>{t("Building preview on this device…")}</strong><span>{t("The 3D file stays private while Volum prepares the viewer.")}</span></div>
+          : <div className="local-stl-stage__state is-error" role="alert"><CircleAlert /><strong>{t("Preview unavailable")}</strong><span>{previewError || t("This 3D file could not be previewed on this device.")}</span><small>{t("The original file is still ready to save to Volum Desktop.")}</small></div>}
       {preview && <button className="local-stl-reset" aria-label={t("Reset 3D view")} onClick={() => setResetSignal((value) => value + 1)}><RotateCcw /></button>}
       {preview && <button className="local-stl-photo-room" aria-label={t("Open Photo Room")} onClick={() => setPhotoRoomOpen(true)}><Sparkles /></button>}
       {preview && preview.objects.length > 0 && <button className="local-stl-objects-button" aria-label={t("Open object list")} onClick={() => setObjectsOpen(true)}><Layers3 /><span>{preview.objects.length === 1 ? t("1 object") : t("{count} objects", { count: preview.objects.length })}</span></button>}
@@ -277,7 +286,7 @@ export function LocalStlPreviewScreen({
             : <button className="button button--primary" onClick={() => isolateObject(selectedObject.id)}><Eye />{t("Inspect alone")}</button>}
         </div>
       </section>}
-      <div className="local-stl-title"><span><FileBox /></span><div><h1>{file.filename.replace(/\.stl$/i, "")}</h1><p>STL · {formatBytes(file.byteSize)}</p></div></div>
+      <div className="local-stl-title"><span><FileBox /></span><div><h1>{modelBasename(file.filename)}</h1><p>{file.extension.toLocaleUpperCase()} · {formatBytes(file.byteSize)}</p></div></div>
       <div className="local-stl-metadata">
         <div><span>{t("Dimensions")}</span><strong>{dimensions || t("Unavailable")}</strong></div>
         <div><span>{t("Triangles")}</span><strong>{preview ? formatNumber(preview.triangleCount) : t("Unavailable")}</strong></div>
@@ -285,7 +294,7 @@ export function LocalStlPreviewScreen({
       <div className="local-stl-privacy"><ShieldCheck /><span><strong>{t("Previewed on this device")}</strong>{t("Nothing is uploaded until you tap Save to Volum.")}</span></div>
       {replaceError && <div className="error-banner" role="alert"><CircleAlert />{replaceError}</div>}
       <div className="local-stl-actions">
-        <button className="button button--quiet button--large" disabled={uploading || replacing} onClick={() => void replace()}>{t("Replace STL")}</button>
+        <button className="button button--quiet button--large" disabled={uploading || replacing} onClick={() => void replace()}>{t("Replace 3D file")}</button>
         <button className="button button--primary button--large" disabled={uploading} onClick={beginSaving}><UploadCloud />{pairedCredential ? t("Save to Volum") : t("Pair to save")}</button>
       </div>
       <button className="local-stl-discard" disabled={uploading} onClick={onDiscard}>{t("Discard local file")}</button>
@@ -293,9 +302,9 @@ export function LocalStlPreviewScreen({
 
     {objectsOpen && preview && <div className="sheet-scrim" role="presentation">
       <section className="mobile-sheet mobile-sheet--tall local-objects-sheet" role="dialog" aria-modal="true" aria-labelledby="local-objects-title">
-        <header><div><span className="eyebrow">{t("STL OBJECTS")}</span><h2 id="local-objects-title">{t("Inspect individual objects")}</h2></div><button className="round-button" aria-label={t("Close")} onClick={() => setObjectsOpen(false)}><X /></button></header>
-        <p>{t("Objects are inferred from disconnected STL geometry.")}</p>
-        <div className="local-objects-list">{preview.objects.map((object) => <button key={object.id} className={selectedObjectId === object.id ? "is-selected" : ""} aria-pressed={selectedObjectId === object.id} onClick={() => { selectObject(object.id); setObjectsOpen(false); }}><span><BoxIcon /></span><div><strong>{object.name || t("Object {number}", { number: object.id })}</strong><small>{object.dimensions.map((value) => `${formatNumber(value)} mm`).join(" × ")}</small><small>{t("{count} triangles", { count: formatNumber(object.triangleCount) })}</small></div>{selectedObjectId === object.id && <Check />}</button>)}</div>
+        <header><div><span className="eyebrow">{t("3D OBJECTS")}</span><h2 id="local-objects-title">{t("Inspect individual objects")}</h2></div><button className="round-button" aria-label={t("Close")} onClick={() => setObjectsOpen(false)}><X /></button></header>
+        <p>{t("Objects are inferred from disconnected model geometry.")}</p>
+        <div className="local-objects-list">{preview.objects.map((object) => <button key={object.id} className={selectedObjectId === object.id ? "is-selected" : ""} aria-pressed={selectedObjectId === object.id} onClick={() => { selectObject(object.id); setObjectsOpen(false); }}><ObjectPreviewThumbnail payload={preview.payload} object={object} samples={objectPreviewSamples.get(object.id)} /><div><strong>{object.name || t("Object {number}", { number: object.id })}</strong><small>{object.dimensions.map((value) => `${formatNumber(value)} mm`).join(" × ")}</small><small>{t("{count} triangles", { count: formatNumber(object.triangleCount) })}</small></div>{selectedObjectId === object.id && <Check />}</button>)}</div>
       </section>
     </div>}
 

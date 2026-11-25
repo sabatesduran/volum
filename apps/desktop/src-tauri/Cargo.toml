@@ -15,7 +15,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build.workspace = true
 
 [dependencies]
-volum-server = { path = "../../../crates/volum-server", version = "0.3.0" }
+volum-server = { path = "../../../crates/volum-server", version = "0.3.0", features = ["embedded-tailscale"] }
 tauri = { workspace = true, features = ["wry", "tray-icon", "image-png"] }
 tauri-plugin-dialog = "2.4.0"
 tauri-plugin-fs = "2"

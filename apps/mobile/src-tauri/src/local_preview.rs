@@ -689,9 +689,11 @@ fn parse_3mf(bytes: &[u8]) -> Result<Mesh, String> {
             return Err("3MF contains duplicate model documents".into());
         }
     }
-    let root = parts
-        .get(&root_path)
-        .or_else(|| super::percent_decode_filename(&root_path).and_then(|path| parts.get(&path)))
+    let (root_path, root) = parts
+        .get_key_value(&root_path)
+        .or_else(|| {
+            super::percent_decode_filename(&root_path).and_then(|path| parts.get_key_value(&path))
+        })
         .ok_or_else(|| "3MF root model is missing".to_string())?;
     let instances = if root.build.is_empty() {
         root.objects
@@ -711,7 +713,7 @@ fn parse_3mf(bytes: &[u8]) -> Result<Mesh, String> {
     for instance in instances {
         emit_3mf_object(
             &parts,
-            &root_path,
+            root_path,
             &instance,
             Transform::identity(),
             &mut stack,

@@ -530,7 +530,7 @@ export function ProjectDetailScreen({ credential, id, canWrite: writesAllowed, o
     } catch (reason) { setEditError(localizedError(reason)); }
     finally { setProjectQrBusy(false); }
   };
-  if (detail.isLoading && offline.isLoading) return <main className="detail-screen"><button className="round-button" aria-label={t("Back to library")} onClick={onBack}><ArrowLeft /></button><div className="center-state" role="status" aria-label={t("Loading project")}><LoaderCircle className="spin" /></div></main>;
+  if (!project && (detail.isPending || offline.isPending)) return <main className="detail-screen"><button className="round-button" aria-label={t("Back to library")} onClick={onBack}><ArrowLeft /></button><div className="center-state" role="status" aria-label={t("Loading project")}><LoaderCircle className="spin" /></div></main>;
   if (!project) return <main className="detail-screen"><button className="round-button" aria-label={t("Back to library")} onClick={onBack}><ArrowLeft /></button><ErrorState error={detail.error} retrying={detail.isFetching} onRetry={() => void detail.refetch()} /></main>;
   const dimensions = project.dimensionsMm ?? project.assets.find((asset) => asset.metadata.dimensionsMm)?.metadata.dimensionsMm;
   const totalBytes = project.assets.reduce((total, asset) => total + asset.byteSize, 0);

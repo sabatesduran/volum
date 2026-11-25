@@ -125,7 +125,7 @@ export default function App() {
 
   if (backendLoading || (backend?.mode === "local" && isLoading) || (backend?.mode === "remote" && backend.online && isLoading)) return <div className="app-boot"><div className="app-boot__mark">V</div></div>;
   if (backend?.mode === "remote" && (!backend.online || remoteOffline)) return <RemoteOfflineScreen status={{ ...backend, online: false, lastError: backend.lastError ?? (remoteOffline ? "The server stopped responding." : undefined) }} onChange={(next) => { queryClient.setQueryData(["backend-connection"], next); void queryClient.invalidateQueries(); }} />;
-  if (!roots?.length) return <Onboarding onComplete={() => queryClient.invalidateQueries({ queryKey: ["roots"] })} onConnected={(next) => { queryClient.setQueryData(["backend-connection"], next); void queryClient.invalidateQueries(); }} />;
+  if (!roots?.length) return <Onboarding savedServer={backend?.mode === "local" ? backend : undefined} onComplete={() => queryClient.invalidateQueries({ queryKey: ["roots"] })} onConnected={(next) => { queryClient.setQueryData(["backend-connection"], next); void queryClient.invalidateQueries(); }} />;
 
   return (
     <div className="app-shell" data-language={language}>

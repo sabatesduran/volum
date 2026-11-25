@@ -1,14 +1,14 @@
 import { useState } from "react";
 import { ArchiveRestore, Cable, FolderPlus, HardDrive, LoaderCircle, LockKeyhole, Sparkles } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { api, connectRemote, isTauri } from "../lib/tauri/api";
+import { api, connectRemote, isTauri, useRemoteBackend } from "../lib/tauri/api";
 import { Brand } from "./Brand";
 import { t } from "../lib/i18n";
 import type { BackendConnectionStatus, PreparedRestore } from "../types";
 import { RestoreBackupDialog } from "../features/backups/BackupSettings";
 import { Dialog } from "./Dialog";
 
-export function Onboarding({ onComplete, onConnected }: { onComplete: () => void; onConnected?: (status: BackendConnectionStatus) => void }) {
+export function Onboarding({ onComplete, onConnected, savedServer }: { onComplete: () => void; onConnected?: (status: BackendConnectionStatus) => void; savedServer?: BackendConnectionStatus }) {
   const [prepared, setPrepared] = useState<PreparedRestore>();
   const [busy, setBusy] = useState<"linked" | "managed" | "restore" | "pair">();
   const [pairingOpen, setPairingOpen] = useState(false);
@@ -60,6 +60,18 @@ export function Onboarding({ onComplete, onConnected }: { onComplete: () => void
       setBusy(undefined);
     }
   };
+  const reconnect = async () => {
+    if (busy) return;
+    setBusy("pair");
+    setSetupError("");
+    try {
+      onConnected?.(await useRemoteBackend());
+    } catch (reason) {
+      setSetupError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(undefined);
+    }
+  };
   const pair = async () => {
     if (busy) return;
     setBusy("pair");
@@ -100,7 +112,7 @@ export function Onboarding({ onComplete, onConnected }: { onComplete: () => void
         </div>
         {setupError && <div className="form-error onboarding__error" role="alert">{setupError}</div>}
         <div className="onboarding__restore"><span>{t("Returning to Volum?")}</span><button disabled={Boolean(busy)} onClick={() => void chooseBackup()}>{busy === "restore" ? <LoaderCircle className="spin" size={14} /> : <ArchiveRestore size={14} />}{t(busy === "restore" ? "Validating backup…" : "Restore from backup")}</button></div>
-        <div className="onboarding__restore"><span>{t("Using a Volum server?")}</span><button disabled={Boolean(busy)} onClick={() => setPairingOpen(true)}><Cable size={14} />{t("Connect to a Volum server")}</button></div>
+        <div className="onboarding__restore"><span>{t("Using a Volum server?")}</span>{savedServer?.configured && <button disabled={Boolean(busy)} onClick={() => void reconnect()}><Cable size={14} />{t("Use {server}", { server: savedServer.serverName ?? t("the paired server") })}</button>}<button disabled={Boolean(busy)} onClick={() => setPairingOpen(true)}><Cable size={14} />{t(savedServer?.configured ? "Connect to another server" : "Connect to a Volum server")}</button></div>
         <small className="onboarding__footnote">{t("Supports STL, 3MF, OBJ, STEP, and STP files")}</small>
       </div>
       {pairingOpen && <Dialog title={t("Connect to a Volum server")} subtitle={t("Paste the pairing data from the server's Pair device page. You can keep a local copy of every project later in Settings.")} onClose={() => { if (!busy) setPairingOpen(false); }} size="medium"><div className="remote-connection__pair"><label className="field"><span>{t("Server pairing data")}</span><textarea autoFocus rows={5} value={payload} onChange={(event) => setPayload(event.target.value)} placeholder={t("Paste the pairing data shown by volumd")} /></label>{pairingError && <div className="form-error" role="alert">{pairingError}</div>}<div className="dialog__actions"><button className="button button--quiet" disabled={Boolean(busy)} onClick={() => setPairingOpen(false)}>{t("Cancel")}</button><button className="button button--primary" disabled={!payload.trim() || Boolean(busy)} onClick={() => void pair()}>{busy === "pair" ? <LoaderCircle className="spin" size={15} /> : <Cable size={15} />}{t("Pair and connect")}</button></div></div></Dialog>}

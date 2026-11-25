@@ -10,13 +10,15 @@ const mocks = vi.hoisted(() => ({
   configureManagedLibrary: vi.fn(),
   prepareRestoreFromPath: vi.fn(),
   startScan: vi.fn(),
-  connectRemote: vi.fn()
+  connectRemote: vi.fn(),
+  useRemoteBackend: vi.fn()
 }));
 
 vi.mock("../lib/tauri/api", () => ({
   isTauri: () => false,
   api: mocks,
-  connectRemote: mocks.connectRemote
+  connectRemote: mocks.connectRemote,
+  useRemoteBackend: mocks.useRemoteBackend
 }));
 
 vi.mock("../features/backups/BackupSettings", () => ({
@@ -75,6 +77,19 @@ describe("first-run onboarding", () => {
     expect(mocks.addRoot).not.toHaveBeenCalled();
     expect(mocks.configureManagedLibrary).not.toHaveBeenCalled();
     expect(onComplete).not.toHaveBeenCalled();
+  });
+
+  it("returns to a saved server without pairing again", async () => {
+    const remote = { mode: "remote", configured: true, online: true, serverName: "Workshop NAS" };
+    mocks.useRemoteBackend.mockResolvedValue(remote);
+    const onConnected = vi.fn();
+    render(<Onboarding onComplete={vi.fn()} onConnected={onConnected} savedServer={{ mode: "local", configured: true, online: false, serverName: "Workshop NAS" } as never} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Use Workshop NAS" }));
+
+    await waitFor(() => expect(onConnected).toHaveBeenCalledWith(remote));
+    expect(mocks.connectRemote).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Connect to another server" })).toBeTruthy();
   });
 
   it("keeps the pairing dialog open with the server error", async () => {

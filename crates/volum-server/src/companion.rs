@@ -1081,10 +1081,11 @@ impl CompanionController {
         use tailscale::{AuthState, Config, Device};
 
         let state_path = self.inner.lock().await.tailnet_state_path.clone();
+        #[cfg(unix)]
+        initialize_private_tailnet_state(&state_path).await?;
         let mut tailnet_config = Config::default_with_key_file(&state_path)
             .await
             .map_err(|error| format!("Could not load the Tailscale identity: {error}"))?;
-        secure_tailnet_state_file(&state_path)?;
         tailnet_config.client_name = Some("volum".into());
         tailnet_config.requested_hostname = Some(config.tailnet_hostname.clone());
         tailnet_config.ephemeral = false;
@@ -4653,19 +4654,43 @@ fn embedded_tailnet_available() -> bool {
         )
     )
 ))]
-fn secure_tailnet_state_file(path: &FilePath) -> CompanionResult<()> {
+async fn initialize_private_tailnet_state(path: &FilePath) -> CompanionResult<()> {
     use std::os::unix::fs::PermissionsExt;
 
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-        .map_err(|error| format!("Could not protect the Tailscale identity: {error}"))
-}
-
-#[cfg(all(
-    target_os = "windows",
-    target_arch = "x86_64",
-    feature = "embedded-tailscale"
-))]
-fn secure_tailnet_state_file(_path: &FilePath) -> CompanionResult<()> {
+    let private = std::fs::Permissions::from_mode(0o600);
+    match tokio::fs::set_permissions(path, private).await {
+        Ok(()) => return Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("Could not protect the Tailscale identity: {error}")),
+    }
+    tokio::fs::create_dir_all(path.parent().unwrap())
+        .await
+        .map_err(|error| format!("Could not create the Tailscale identity directory: {error}"))?;
+    #[derive(Serialize)]
+    struct KeyFile<T> {
+        key_state: T,
+    }
+    let bytes = serde_json::to_vec(&KeyFile {
+        key_state: tailscale::Config::default().key_state,
+    })
+    .map_err(|error| format!("Could not prepare the Tailscale identity: {error}"))?;
+    let mut file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .await
+        .map_err(|error| format!("Could not create the Tailscale identity: {error}"))?;
+    if let Err(error) = async {
+        file.write_all(&bytes).await?;
+        file.flush().await
+    }
+    .await
+    {
+        drop(file);
+        let _ = tokio::fs::remove_file(path).await;
+        return Err(format!("Could not save the Tailscale identity: {error}"));
+    }
     Ok(())
 }
 
@@ -5052,6 +5077,42 @@ mod tests {
         assert!(validate_tailnet_auth_url("http://login.tailscale.com/a/example").is_err());
         assert!(validate_tailnet_auth_url("https://user@example.com/a/example").is_err());
         assert!(validate_tailnet_auth_url("not a url").is_err());
+    }
+
+    #[cfg(all(
+        unix,
+        feature = "embedded-tailscale",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(
+                target_os = "linux",
+                any(target_arch = "x86_64", target_arch = "aarch64")
+            )
+        )
+    ))]
+    #[tokio::test]
+    async fn embedded_tailnet_identity_is_private_and_reusable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("companion-tailnet.json");
+        initialize_private_tailnet_state(&path).await.unwrap();
+        let original = std::fs::read(&path).unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert!(tailscale::Config::default_with_key_file(&path)
+            .await
+            .is_ok());
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        initialize_private_tailnet_state(&path).await.unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert!(std::fs::read(&path).unwrap() == original);
     }
 
     #[test]

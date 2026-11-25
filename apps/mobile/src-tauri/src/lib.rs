@@ -353,14 +353,14 @@ async fn companion_stage_local_stl(
         open_selected_file(&app, &file_path, options)
     }
     .map_err(|_| "The selected 3D file is no longer available".to_string())?;
-    let suggested = request.suggested_filename.as_deref();
     #[cfg(target_os = "android")]
     let display_name = match &file_path {
         FilePath::Url(url) if url.scheme() == "content" => android_model_display_name(url.as_str()),
         _ => None,
     };
+    let suggested = request.suggested_filename.as_deref();
     #[cfg(target_os = "android")]
-    let suggested = display_name.as_deref().or(suggested);
+    let suggested = display_name.as_deref().into_iter().chain(suggested);
     let staged = (|| {
         let (filename, extension) = local_model_filename(suggested, &file_path)?;
         let (cache_path, byte_size) = copy_local_model(&app, &state, &mut source, extension)?;
@@ -494,10 +494,15 @@ fn companion_remove_local_stl(cache_path: String, app: tauri::AppHandle) -> Resu
     }
 }
 
-fn local_model_filename(
-    suggested: Option<&str>,
+fn local_model_filename<'a>(
+    suggested: impl IntoIterator<Item = &'a str>,
     path: &FilePath,
 ) -> Result<(String, &'static str), String> {
+    fn supported_basename(candidate: &str) -> Option<(String, &'static str)> {
+        let basename = candidate.rsplit(['/', '\\', ':']).next()?.trim();
+        model_extension(basename).map(|extension| (basename.to_owned(), extension))
+    }
+
     let path_filename = match path {
         FilePath::Path(path) => path
             .file_name()
@@ -510,11 +515,8 @@ fn local_model_filename(
     };
     suggested
         .into_iter()
-        .chain(path_filename.as_deref())
-        .find_map(|candidate| {
-            let basename = candidate.rsplit(['/', '\\', ':']).next()?.trim();
-            model_extension(basename).map(|extension| (basename.to_owned(), extension))
-        })
+        .find_map(supported_basename)
+        .or_else(|| path_filename.as_deref().and_then(supported_basename))
         .ok_or_else(|| "Choose an STL, 3MF, OBJ, STEP, or STP file".into())
 }
 
@@ -1639,6 +1641,10 @@ mod tests {
             ("Build plate.3MF".into(), "3mf")
         );
         assert!(local_model_filename(None, &opaque).is_err());
+        assert_eq!(
+            local_model_filename(["Unnamed document", "Shared part.step"], &opaque).unwrap(),
+            ("Shared part.step".into(), "step")
+        );
         let named = FilePath::Url(
             "content://provider/document/Download%3Agear.obj"
                 .parse()

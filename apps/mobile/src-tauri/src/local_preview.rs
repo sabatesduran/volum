@@ -22,6 +22,7 @@ const MAX_INSPECTABLE_OBJECTS: usize = 4_096;
 const MAX_3MF_ENTRIES: usize = 10_000;
 const MAX_3MF_EXPANDED_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_3MF_COMPONENT_DEPTH: usize = 256;
+const MAX_3MF_COMPONENT_INSTANCES: usize = MAX_PREVIEW_TRIANGLES;
 
 #[derive(Clone, Copy, Debug, Default)]
 struct Vec3 {
@@ -619,6 +620,7 @@ fn parse_3mf(bytes: &[u8]) -> Result<Mesh, String> {
     };
     let mut mesh = Mesh::default();
     let mut stack = HashSet::new();
+    let mut remaining_instances = MAX_3MF_COMPONENT_INSTANCES;
     for instance in instances {
         emit_3mf_object(
             &parts,
@@ -626,6 +628,7 @@ fn parse_3mf(bytes: &[u8]) -> Result<Mesh, String> {
             &instance,
             Transform::identity(),
             &mut stack,
+            &mut remaining_instances,
             &mut mesh,
         )?;
     }
@@ -746,8 +749,12 @@ fn emit_3mf_object(
     instance: &ThreeMfInstance,
     parent: Transform,
     stack: &mut HashSet<(String, u32)>,
+    remaining_instances: &mut usize,
     output: &mut Mesh,
 ) -> Result<(), String> {
+    *remaining_instances = remaining_instances
+        .checked_sub(1)
+        .ok_or_else(|| "3MF contains too many component instances to preview".to_string())?;
     let path = instance.path.as_deref().unwrap_or(part_path);
     let key = (path.to_string(), instance.object_id);
     if stack.len() >= MAX_3MF_COMPONENT_DEPTH {
@@ -801,7 +808,15 @@ fn emit_3mf_object(
             .push([base + triangle[0], base + triangle[1], base + triangle[2]]);
     }
     for component in &object.components {
-        emit_3mf_object(parts, path, component, transform, stack, output)?;
+        emit_3mf_object(
+            parts,
+            path,
+            component,
+            transform,
+            stack,
+            remaining_instances,
+            output,
+        )?;
     }
     stack.remove(&key);
     Ok(())
@@ -1430,6 +1445,28 @@ mod tests {
             let archive = writer.finish().unwrap();
             assert!(model_preview(archive.get_ref(), "3mf").is_err());
         }
+    }
+
+    #[test]
+    fn bounds_3mf_component_expansion_independently_of_geometry() {
+        let path = "3D/3dmodel.model";
+        let model = br#"<model><resources><object id="1"/><object id="2"><components><component objectid="1"/><component objectid="1"/></components></object></resources><build><item objectid="2"/></build></model>"#;
+        let part = parse_3mf_part(model.as_slice()).unwrap();
+        let instance = part.build[0].clone();
+        let parts = HashMap::from([(path.to_string(), part)]);
+        let result = emit_3mf_object(
+            &parts,
+            path,
+            &instance,
+            Transform::identity(),
+            &mut HashSet::new(),
+            &mut 2,
+            &mut Mesh::default(),
+        );
+        assert_eq!(
+            result.unwrap_err(),
+            "3MF contains too many component instances to preview"
+        );
     }
 
     #[test]

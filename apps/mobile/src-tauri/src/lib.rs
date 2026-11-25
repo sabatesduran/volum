@@ -633,11 +633,11 @@ fn looks_like_model(path: &std::path::Path, byte_size: u64, extension: &str) -> 
 fn looks_like_step(text: &str) -> bool {
     text.contains("iso-10303-21")
         && text.contains("header;")
-        && text.split(';').any(|statement| {
-            statement
-                .trim_start()
-                .strip_prefix("data")
-                .is_some_and(|tail| tail.trim().is_empty() || tail.trim_start().starts_with('('))
+        && text.match_indices("data").any(|(index, keyword)| {
+            !text[..index].ends_with(|c: char| c.is_ascii_alphanumeric() || c == '_')
+                && text[index + keyword.len()..]
+                    .trim_start()
+                    .starts_with([';', '('])
         })
 }
 
@@ -1693,6 +1693,9 @@ mod tests {
             "iso-10303-21;\nheader;\nendsec;\ndata('parts',('example_schema'));"
         ));
         assert!(looks_like_step("iso-10303-21; header; endsec; data;"));
+        assert!(looks_like_step(
+            "iso-10303-21; header; endsec; /* section */ data;"
+        ));
         assert!(!looks_like_step("iso-10303-21; header; endsec; metadata;"));
     }
 

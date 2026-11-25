@@ -689,11 +689,15 @@ fn parse_3mf(bytes: &[u8]) -> Result<Mesh, String> {
             return Err("3MF contains duplicate model documents".into());
         }
     }
-    let (root_path, root) = parts
-        .get_key_value(&root_path)
-        .or_else(|| {
-            super::percent_decode_filename(&root_path).and_then(|path| parts.get_key_value(&path))
+    let find_part = |path: &str| {
+        parts.get_key_value(path).or_else(|| {
+            parts
+                .iter()
+                .find(|(candidate, _)| candidate.eq_ignore_ascii_case(path))
         })
+    };
+    let (root_path, root) = find_part(&root_path)
+        .or_else(|| super::percent_decode_filename(&root_path).and_then(|path| find_part(&path)))
         .ok_or_else(|| "3MF root model is missing".to_string())?;
     let instances = if root.build.is_empty() {
         root.objects
@@ -1505,7 +1509,7 @@ mod tests {
         let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
         let options = zip::write::SimpleFileOptions::default();
         writer.start_file("_rels/.rels", options).unwrap();
-        writer.write_all(br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="r1" Target="/3D/Primary%20Part.model" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>"#).unwrap();
+        writer.write_all(br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="r1" Target="/3d/primary%20part.MODEL" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>"#).unwrap();
         writer.start_file("3D/3dmodel.model", options).unwrap();
         writer.write_all(b"<model/>").unwrap();
         writer.start_file("3D/Primary Part.model", options).unwrap();

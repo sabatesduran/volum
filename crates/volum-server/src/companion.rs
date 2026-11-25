@@ -25,6 +25,18 @@ use futures_util::StreamExt;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
+#[cfg(all(
+    feature = "embedded-tailscale",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(
+            target_os = "linux",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        ),
+        all(target_os = "windows", target_arch = "x86_64")
+    )
+))]
+use std::future::Future;
 use std::{
     collections::HashSet,
     convert::Infallible,
@@ -934,10 +946,6 @@ impl CompanionController {
     }
 
     async fn start(&self) -> CompanionResult<()> {
-        self.start_with_auth_key(None).await
-    }
-
-    async fn start_with_auth_key(&self, auth_key: Option<String>) -> CompanionResult<()> {
         let _start_guard = self.start_lock.lock().await;
         let stale_server = {
             let mut inner = self.inner.lock().await;
@@ -952,7 +960,7 @@ impl CompanionController {
         }
         let config = self.inner.lock().await.config.clone();
         if config.network_mode == "embedded-tailscale" {
-            return match self.start_embedded_tailnet(config, auth_key).await {
+            return match self.start_embedded_tailnet(&config.tailnet_hostname).await {
                 Ok(()) => Ok(()),
                 Err(error) => self.fail_start(error).await,
             };
@@ -1073,11 +1081,34 @@ impl CompanionController {
             all(target_os = "windows", target_arch = "x86_64")
         )
     ))]
-    async fn start_embedded_tailnet(
+    async fn start_embedded_tailnet(&self, hostname: &str) -> CompanionResult<()> {
+        {
+            let mut inner = self.inner.lock().await;
+            inner.tailnet_state = "connecting".into();
+            inner.tailnet_auth_url = None;
+            inner.last_error = None;
+        }
+        let (device, auth_url) = self.prepare_embedded_tailnet(hostname, None).await?;
+        self.serve_embedded_tailnet(device, auth_url).await;
+        Ok(())
+    }
+
+    #[cfg(all(
+        feature = "embedded-tailscale",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(
+                target_os = "linux",
+                any(target_arch = "x86_64", target_arch = "aarch64")
+            ),
+            all(target_os = "windows", target_arch = "x86_64")
+        )
+    ))]
+    async fn prepare_embedded_tailnet(
         &self,
-        config: CompanionConfig,
+        hostname: &str,
         auth_key: Option<String>,
-    ) -> CompanionResult<()> {
+    ) -> CompanionResult<(tailscale::Device, Option<String>)> {
         use tailscale::{AuthState, Config, Device};
 
         let state_path = self.inner.lock().await.tailnet_state_path.clone();
@@ -1087,15 +1118,8 @@ impl CompanionController {
             .await
             .map_err(|error| format!("Could not load the Tailscale identity: {error}"))?;
         tailnet_config.client_name = Some("volum".into());
-        tailnet_config.requested_hostname = Some(config.tailnet_hostname.clone());
+        tailnet_config.requested_hostname = Some(hostname.to_owned());
         tailnet_config.ephemeral = false;
-
-        {
-            let mut inner = self.inner.lock().await;
-            inner.tailnet_state = "connecting".into();
-            inner.tailnet_auth_url = None;
-            inner.last_error = None;
-        }
 
         let using_auth_key = auth_key.is_some();
         let device = tokio::time::timeout(
@@ -1128,18 +1152,44 @@ impl CompanionController {
                 return Err("Tailscale did not respond while checking sign-in".into());
             }
         };
-        let authorized = matches!(auth, AuthState::Authorized);
-        if let AuthState::NotAuthorized(url) = auth {
-            let auth_url = match validate_tailnet_auth_url(url.as_str()) {
-                Ok(url) => url,
+        let auth_url = match auth {
+            AuthState::Authorized => None,
+            AuthState::NotAuthorized(url) => match validate_tailnet_auth_url(url.as_str()) {
+                Ok(url) => Some(url),
                 Err(error) => {
                     let _ = device.shutdown(Some(Duration::from_secs(2))).await;
                     return Err(error);
                 }
-            };
+            },
+        };
+        Ok((device, auth_url))
+    }
+
+    #[cfg(all(
+        feature = "embedded-tailscale",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(
+                target_os = "linux",
+                any(target_arch = "x86_64", target_arch = "aarch64")
+            ),
+            all(target_os = "windows", target_arch = "x86_64")
+        )
+    ))]
+    async fn serve_embedded_tailnet(&self, device: tailscale::Device, auth_url: Option<String>) {
+        use tailscale::AuthState;
+
+        let authorized = auth_url.is_none();
+        {
             let mut inner = self.inner.lock().await;
-            inner.tailnet_state = "needs-login".into();
-            inner.tailnet_auth_url = Some(auth_url);
+            inner.tailnet_state = if authorized {
+                "connecting"
+            } else {
+                "needs-login"
+            }
+            .into();
+            inner.tailnet_auth_url = auth_url;
+            inner.last_error = None;
         }
 
         let state = ApiState {
@@ -1247,7 +1297,6 @@ impl CompanionController {
             let _ = device.shutdown(Some(Duration::from_secs(2))).await;
         });
         self.inner.lock().await.server = Some(RunningServer { cancellation, task });
-        Ok(())
     }
 
     #[cfg(not(all(
@@ -1261,11 +1310,7 @@ impl CompanionController {
             all(target_os = "windows", target_arch = "x86_64")
         )
     )))]
-    async fn start_embedded_tailnet(
-        &self,
-        _config: CompanionConfig,
-        _auth_key: Option<String>,
-    ) -> CompanionResult<()> {
+    async fn start_embedded_tailnet(&self, _hostname: &str) -> CompanionResult<()> {
         Err("Embedded Tailscale is not available on this platform".into())
     }
 
@@ -1349,6 +1394,10 @@ impl CompanionController {
 
     pub(crate) async fn stop(&self) {
         let _start_guard = self.start_lock.lock().await;
+        self.stop_server().await;
+    }
+
+    async fn stop_server(&self) {
         let running = {
             let mut inner = self.inner.lock().await;
             inner.pairing = None;
@@ -1508,35 +1557,90 @@ impl CompanionController {
         Ok(self.status().await)
     }
 
+    #[cfg(all(
+        feature = "embedded-tailscale",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(
+                target_os = "linux",
+                any(target_arch = "x86_64", target_arch = "aarch64")
+            ),
+            all(target_os = "windows", target_arch = "x86_64")
+        )
+    ))]
     pub async fn begin_tailnet_sign_in(
         &self,
         hostname: Option<String>,
         auth_key: Option<String>,
     ) -> CompanionResult<CompanionStatus> {
-        if !embedded_tailnet_available() {
-            return Err("Embedded Tailscale is not available on this platform".into());
-        }
         let hostname =
             validate_tailnet_hostname(hostname.as_deref().unwrap_or(DEFAULT_TAILNET_HOSTNAME))?;
         let auth_key = auth_key
             .as_deref()
             .map(validate_tailnet_auth_key)
             .transpose()?;
-        {
-            let mut inner = self.inner.lock().await;
-            inner.config.network_mode = "embedded-tailscale".into();
-            inner.config.tailnet_hostname = hostname;
-            inner.config.bind_address = None;
-            inner.config.public_url = None;
-            inner.config.enabled = true;
-            inner.tailnet_state = "connecting".into();
-            inner.tailnet_auth_url = None;
-            inner.last_error = None;
-            persist_config(&inner.config_path, &inner.config)?;
+        let preparation = self.prepare_embedded_tailnet(&hostname, auth_key);
+        self.switch_to_embedded_tailnet(&hostname, preparation)
+            .await
+    }
+
+    #[cfg(all(
+        feature = "embedded-tailscale",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(
+                target_os = "linux",
+                any(target_arch = "x86_64", target_arch = "aarch64")
+            ),
+            all(target_os = "windows", target_arch = "x86_64")
+        )
+    ))]
+    async fn switch_to_embedded_tailnet(
+        &self,
+        hostname: &str,
+        preparation: impl Future<Output = CompanionResult<(tailscale::Device, Option<String>)>>,
+    ) -> CompanionResult<CompanionStatus> {
+        let _start_guard = self.start_lock.lock().await;
+        if self.inner.lock().await.config.network_mode == "embedded-tailscale" {
+            self.stop_server().await;
         }
-        self.stop().await;
-        self.start_with_auth_key(auth_key).await?;
+        let (device, auth_url) = preparation.await?;
+        let saved = {
+            let mut inner = self.inner.lock().await;
+            let mut config = inner.config.clone();
+            config.network_mode = "embedded-tailscale".into();
+            config.tailnet_hostname = hostname.to_owned();
+            config.bind_address = None;
+            config.public_url = None;
+            config.enabled = true;
+            persist_config(&inner.config_path, &config).map(|()| inner.config = config)
+        };
+        if let Err(error) = saved {
+            let _ = device.shutdown(Some(Duration::from_secs(2))).await;
+            return Err(error);
+        }
+        self.stop_server().await;
+        self.serve_embedded_tailnet(device, auth_url).await;
         Ok(self.status().await)
+    }
+
+    #[cfg(not(all(
+        feature = "embedded-tailscale",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(
+                target_os = "linux",
+                any(target_arch = "x86_64", target_arch = "aarch64")
+            ),
+            all(target_os = "windows", target_arch = "x86_64")
+        )
+    )))]
+    pub async fn begin_tailnet_sign_in(
+        &self,
+        _hostname: Option<String>,
+        _auth_key: Option<String>,
+    ) -> CompanionResult<CompanionStatus> {
+        Err("Embedded Tailscale is not available on this platform".into())
     }
 
     pub async fn sign_out_tailnet(&self) -> CompanionResult<CompanionStatus> {
@@ -4711,6 +4815,20 @@ fn validate_tailnet_hostname(value: &str) -> CompanionResult<String> {
     Ok(value)
 }
 
+#[cfg(any(
+    test,
+    all(
+        feature = "embedded-tailscale",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(
+                target_os = "linux",
+                any(target_arch = "x86_64", target_arch = "aarch64")
+            ),
+            all(target_os = "windows", target_arch = "x86_64")
+        )
+    )
+))]
 fn validate_tailnet_auth_key(value: &str) -> CompanionResult<String> {
     let key = value.trim();
     match key.strip_prefix("tskey-auth-") {
@@ -5124,6 +5242,62 @@ mod tests {
         assert!(validate_tailnet_auth_key("tskey-api-example-123").is_err());
         assert!(validate_tailnet_auth_key("tskey-auth-").is_err());
         assert!(validate_tailnet_auth_key("tskey-auth-invalid key").is_err());
+    }
+
+    #[cfg(all(
+        feature = "embedded-tailscale",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(
+                target_os = "linux",
+                any(target_arch = "x86_64", target_arch = "aarch64")
+            ),
+            all(target_os = "windows", target_arch = "x86_64")
+        )
+    ))]
+    #[tokio::test]
+    async fn rejected_tailnet_enrollment_leaves_custom_listener_running() {
+        let directory = tempfile::tempdir().unwrap();
+        let library = AppState::initialize(directory.path()).await.unwrap();
+        let controller = CompanionController::new(directory.path(), library, None).unwrap();
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let address = format!("127.0.0.1:{port}");
+        let public_url = format!("http://{address}");
+        controller.inner.lock().await.config.port = port;
+        controller
+            .set_network(
+                "custom",
+                Some("127.0.0.1".into()),
+                Some(public_url.clone()),
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(controller.set_enabled(true).await.unwrap().running);
+        let config_path = directory.path().join("companion.json");
+        let saved = std::fs::read(&config_path).unwrap();
+
+        let result = controller
+            .switch_to_embedded_tailnet("volum", async {
+                assert!(controller.status().await.running);
+                Err("Tailscale rejected the auth key".into())
+            })
+            .await;
+        assert_eq!(
+            result.err().as_deref(),
+            Some("Tailscale rejected the auth key")
+        );
+        assert!(std::fs::read(&config_path).unwrap() == saved);
+        let status = controller.status().await;
+        assert_eq!(status.network_mode, "custom");
+        assert_eq!(status.public_url.as_deref(), Some(public_url.as_str()));
+        assert!(status.running);
+        assert!(tokio::net::TcpStream::connect(address).await.is_ok());
+        controller.stop().await;
     }
 
     #[test]

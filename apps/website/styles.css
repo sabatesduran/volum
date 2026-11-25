@@ -405,7 +405,7 @@ main section[id] { scroll-margin-top: 65px; }
   .site-header, .site-header.is-scrolled { height: 66px; }
   .nav-shell { grid-template-columns: 1fr auto; }
   .nav-toggle { display: grid; justify-self: end; }
-  .site-nav { position: fixed; inset: 66px 12px auto; display: grid; gap: 0; padding: 8px; border: 1px solid var(--line); border-radius: 15px; transform: translateY(-14px); visibility: hidden; opacity: 0; background: rgb(19 20 17 / .97); box-shadow: 0 22px 60px rgb(0 0 0 / .45); transition: 160ms ease; }
+  .site-nav { position: fixed; inset: 66px 12px auto; display: grid; gap: 0; max-height: calc(100dvh - 78px); overflow-y: auto; overscroll-behavior: contain; padding: 8px; border: 1px solid var(--line); border-radius: 15px; transform: translateY(-14px); visibility: hidden; opacity: 0; background: rgb(19 20 17 / .97); box-shadow: 0 22px 60px rgb(0 0 0 / .45); transition: 160ms ease; }
   .site-nav.is-open { transform: none; visibility: visible; opacity: 1; }
   .site-nav a { padding: 13px 12px; border-radius: 8px; }
   .site-nav a:hover, .site-nav a[aria-current="location"] { background: var(--night-3); }

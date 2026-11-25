@@ -1,4 +1,3 @@
-use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use sqlx::Row;
 use std::{
     sync::{
@@ -14,6 +13,7 @@ use tauri::{
     AppHandle, Manager, State,
 };
 use uuid::Uuid;
+use volum_server::timestamps::{self, SignedDuration, Timestamp};
 use volum_server::{companion::CompanionStatus, indexing, state::AppState};
 
 use crate::backups;
@@ -169,7 +169,7 @@ pub async fn persist_enabled(state: &AppState, enabled: bool) -> Result<(), Stri
         .bind(Uuid::new_v4().to_string())
         .bind(PREFERENCE_KEY)
         .bind(serde_json::to_string(&value).map_err(|error| error.to_string())?)
-        .bind(chrono::Utc::now().to_rfc3339())
+        .bind(timestamps::now_rfc3339())
         .execute(&state.pool)
         .await
         .map_err(|error| error.to_string())?;
@@ -365,8 +365,9 @@ async fn load_snapshot(app: &AppHandle) -> Result<MenuBarSnapshot, String> {
     let root_issues = roots.get("issues");
     let scanning = scans.iter().any(|status| status.state == "scanning");
     let library = format_library_status(&scans, root_count, root_issues);
-    let companion_text = format_companion_status(&companion_status, Utc::now());
-    let (backup, backup_action, backup_enabled) = format_backup_status(&backup_status, Utc::now());
+    let companion_text = format_companion_status(&companion_status, Timestamp::now());
+    let (backup, backup_action, backup_enabled) =
+        format_backup_status(&backup_status, Timestamp::now());
     let projects = project_label(project_count);
     let mobile_tooltip = if companion_status.running {
         "mobile access online"
@@ -483,7 +484,7 @@ fn format_library_status(
     }
 }
 
-fn format_companion_status(status: &CompanionStatus, now: DateTime<Utc>) -> String {
+fn format_companion_status(status: &CompanionStatus, now: Timestamp) -> String {
     if status.running {
         let active = status
             .devices
@@ -492,11 +493,8 @@ fn format_companion_status(status: &CompanionStatus, now: DateTime<Utc>) -> Stri
                 device
                     .last_seen_at
                     .as_deref()
-                    .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
-                    .is_some_and(|seen| {
-                        now.signed_duration_since(seen.with_timezone(&Utc))
-                            <= ChronoDuration::minutes(2)
-                    })
+                    .and_then(timestamps::parse_rfc3339)
+                    .is_some_and(|seen| now.duration_since(seen) <= SignedDuration::from_mins(2))
             })
             .count();
         let paired = status.devices.len();
@@ -525,7 +523,7 @@ fn format_companion_status(status: &CompanionStatus, now: DateTime<Utc>) -> Stri
     }
 }
 
-fn format_backup_status(status: &BackupMenuStatus, now: DateTime<Utc>) -> (String, String, bool) {
+fn format_backup_status(status: &BackupMenuStatus, now: Timestamp) -> (String, String, bool) {
     if status.running {
         return ("Backups: Running…".into(), "Backing up…".into(), false);
     }
@@ -549,29 +547,24 @@ fn format_backup_status(status: &BackupMenuStatus, now: DateTime<Utc>) -> (Strin
     let summary = status
         .last_success_at
         .as_deref()
-        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
-        .map(|value| {
-            format!(
-                "Last backup: {}",
-                relative_time(value.with_timezone(&Utc), now)
-            )
-        })
+        .and_then(timestamps::parse_rfc3339)
+        .map(|value| format!("Last backup: {}", relative_time(value, now)))
         .unwrap_or_else(|| "Backups: Never run".into());
     (summary, "Back up now".into(), true)
 }
 
-fn relative_time(value: DateTime<Utc>, now: DateTime<Utc>) -> String {
-    let elapsed = now.signed_duration_since(value);
-    if elapsed < ChronoDuration::minutes(1) {
+fn relative_time(value: Timestamp, now: Timestamp) -> String {
+    let elapsed = now.duration_since(value);
+    if elapsed < SignedDuration::from_mins(1) {
         "just now".into()
-    } else if elapsed < ChronoDuration::hours(1) {
-        format!("{}m ago", elapsed.num_minutes())
-    } else if elapsed < ChronoDuration::days(1) {
-        format!("{}h ago", elapsed.num_hours())
-    } else if elapsed < ChronoDuration::days(2) {
+    } else if elapsed < SignedDuration::from_hours(1) {
+        format!("{}m ago", elapsed.as_mins())
+    } else if elapsed < SignedDuration::from_hours(24) {
+        format!("{}h ago", elapsed.as_hours())
+    } else if elapsed < SignedDuration::from_hours(2 * 24) {
         "yesterday".into()
     } else {
-        format!("{}d ago", elapsed.num_days())
+        format!("{}d ago", elapsed.as_hours() / 24)
     }
 }
 
@@ -633,10 +626,8 @@ mod tests {
     use super::*;
     use volum_server::{companion::CompanionDevice, domain::ScanStatus};
 
-    fn timestamp(value: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(value)
-            .unwrap()
-            .with_timezone(&Utc)
+    fn timestamp(value: &str) -> Timestamp {
+        timestamps::parse_rfc3339(value).unwrap()
     }
 
     #[tokio::test]

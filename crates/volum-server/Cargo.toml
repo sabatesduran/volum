@@ -12,7 +12,7 @@ serde_json.workspace = true
 sqlx.workspace = true
 tokio.workspace = true
 uuid.workspace = true
-chrono.workspace = true
+jiff.workspace = true
 log.workspace = true
 walkdir = "2"
 notify = "8"
@@ -26,7 +26,7 @@ regex = "1"
 reqwest = { workspace = true, features = ["brotli", "deflate", "gzip", "json", "query", "rustls", "stream"] }
 tokio-util.workspace = true
 percent-encoding = "2"
-trash = "5"
+trash = "5.4"
 axum = "0.8"
 tower = { version = "0.5", features = ["limit", "util"] }
 tower-http = { version = "0.6", features = ["fs", "request-id", "timeout", "trace"] }

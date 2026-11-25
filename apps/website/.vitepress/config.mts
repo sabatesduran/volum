@@ -54,6 +54,7 @@ export default defineConfig({
       { text: "Companion", link: "/companion/overview" },
       { text: "Self-host", link: "/server/" },
       { text: "Reference", link: "/reference/architecture" },
+      { text: "Changelog", link: "/changelog" },
       { text: "Volum", link: "https://volum.didac.dev/" },
     ],
     sidebar: {

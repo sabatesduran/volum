@@ -1,8 +1,8 @@
+use crate::timestamps;
 use crate::{
     domain::*, events::EventEmitter, indexing, parsers, previews, project_docs, state::AppState,
     web_sources,
 };
-use chrono::{NaiveDate, Utc};
 use serde_json::json;
 use sqlx::Row;
 use std::collections::{HashMap, HashSet};
@@ -350,7 +350,7 @@ pub(crate) async fn list_models_impl(
     let where_sql = format!(" WHERE {trash_condition} AND (? = '' OR m.id IN (SELECT model_id FROM model_search WHERE model_search MATCH ?)) AND (? = '' OR m.folder_id IN (SELECT descendant.id FROM folders descendant JOIN folders selected ON selected.id = ? WHERE descendant.root_id = selected.root_id AND (descendant.relative_path = selected.relative_path OR substr(descendant.relative_path, 1, length(selected.relative_path) + 1) = selected.relative_path || '/'))) AND (? = '' OR EXISTS (SELECT 1 FROM collection_items ci WHERE ci.model_id = m.id AND ci.collection_id = ?)) AND (? = 0 OR m.favorite = 1) AND (? = 0 OR m.last_opened_at IS NOT NULL) AND (? = '' OR EXISTS (SELECT 1 FROM model_assets fma JOIN assets fa ON fa.id = fma.asset_id WHERE fma.model_id = m.id AND CASE fa.extension WHEN 'stp' THEN 'step' ELSE fa.extension END = ?)) AND (? = '' OR (? = 'available' AND m.missing_since IS NULL) OR (? = 'offline' AND m.missing_since IS NOT NULL)) AND (? = '' OR EXISTS (SELECT 1 FROM model_tags mt WHERE mt.model_id = m.id AND mt.tag_id = ?)) AND (? = '' OR EXISTS (SELECT 1 FROM model_assets sfma JOIN assets sfa ON sfa.id = sfma.asset_id WHERE sfma.model_id = m.id AND CASE sfa.extension WHEN 'stp' THEN 'step' ELSE sfa.extension END = ?)) AND (? = '' OR (? = 'available' AND m.missing_since IS NULL) OR (? = 'offline' AND m.missing_since IS NOT NULL)) AND (? = '' OR EXISTS (SELECT 1 FROM model_tags smt WHERE smt.model_id = m.id AND smt.tag_id = ?)) AND (? = '' OR date({date_column}) >= date(?)) AND (? = '' OR date({date_column}) <= date(?)) AND (? = 0 OR EXISTS (SELECT 1 FROM model_assets dma JOIN assets da ON da.id = dma.asset_id LEFT JOIN asset_geometry dg ON dg.asset_id = da.id WHERE dma.model_id = m.id AND ((da.content_hash IS NOT NULL AND EXISTS (SELECT 1 FROM model_assets oma JOIN assets oa ON oa.id = oma.asset_id WHERE oma.model_id != m.id AND oa.content_hash = da.content_hash)) OR (dg.geometry_hash IS NOT NULL AND EXISTS (SELECT 1 FROM model_assets oma JOIN asset_geometry og ON og.asset_id = oma.asset_id WHERE oma.model_id != m.id AND og.geometry_hash = dg.geometry_hash))))) AND ({rich_smart_sql}) AND ({project_filter_sql}) ");
     let count_sql = format!("SELECT COUNT(*) FROM models m JOIN folders f ON f.id = m.folder_id LEFT JOIN assets pa ON pa.id = m.primary_asset_id{where_sql}");
     let total: i64 = if query.cursor.is_none() && offset == 0 {
-        sqlx::query_scalar(&count_sql)
+        sqlx::query_scalar(sqlx::AssertSqlSafe(count_sql.as_str()))
             .bind(&search)
             .bind(&search_match)
             .bind(&folder)
@@ -407,7 +407,7 @@ pub(crate) async fn list_models_impl(
         None => where_sql,
     };
     let data_sql = format!("SELECT m.id, m.display_name, m.folder_id, f.name folder_name, f.relative_path, m.primary_asset_id, COALESCE(pa.extension, '') primary_extension, m.favorite, m.added_at, COALESCE(m.asset_modified_at, m.updated_at) modified_at, m.last_opened_at, m.missing_since, m.bundle_mode, m.storage_mode, (SELECT pp.id FROM project_photos pp WHERE pp.model_id = m.id AND pp.is_cover = 1 LIMIT 1) cover_photo_id, m.asset_count, COALESCE(pa.metadata_json, '{{}}') metadata_json FROM models m JOIN folders f ON f.id = m.folder_id LEFT JOIN assets pa ON pa.id = m.primary_asset_id{page_where_sql} ORDER BY {order} LIMIT ? OFFSET ?");
-    let rows = sqlx::query(&data_sql)
+    let rows = sqlx::query(sqlx::AssertSqlSafe(data_sql.as_str()))
         .bind(&search)
         .bind(&search_match)
         .bind(&folder)
@@ -702,10 +702,11 @@ pub(crate) async fn list_collections_impl(state: &AppState) -> CommandResult<Vec
         });
     }
     if !smart_count_queries.is_empty() {
-        let smart_counts = sqlx::query(&smart_count_queries.join(" UNION ALL "))
-            .fetch_all(&state.pool)
-            .await
-            .map_err(db_error)?;
+        let smart_counts =
+            sqlx::query(sqlx::AssertSqlSafe(smart_count_queries.join(" UNION ALL ")))
+                .fetch_all(&state.pool)
+                .await
+                .map_err(db_error)?;
         let counts = smart_counts
             .into_iter()
             .map(|row| {
@@ -1112,7 +1113,7 @@ pub async fn get_duplicate_stats(state: &AppState) -> CommandResult<DuplicateSta
 }
 
 pub(crate) async fn get_duplicate_stats_impl(state: &AppState) -> CommandResult<DuplicateStats> {
-    let row = sqlx::query(&format!("WITH matches AS ({}) SELECT COUNT(*) groups, COALESCE(SUM(model_count), 0) models, COALESCE(SUM(model_count - 1), 0) redundant_copies FROM matches", duplicate_matches_sql()))
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!("WITH matches AS ({}) SELECT COUNT(*) groups, COALESCE(SUM(model_count), 0) models, COALESCE(SUM(model_count - 1), 0) redundant_copies FROM matches", duplicate_matches_sql())))
         .fetch_one(&state.pool)
         .await
         .map_err(db_error)?;
@@ -1556,7 +1557,7 @@ async fn duplicate_match_rows_page(
         "WITH matches AS ({}) SELECT match_kind, match_value, byte_size, model_count, latest_modified, COUNT(*) OVER() total_count FROM matches ORDER BY latest_modified DESC, match_kind, match_value LIMIT ? OFFSET ?",
         duplicate_matches_sql()
     );
-    let rows = sqlx::query(&sql)
+    let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(limit)
         .bind(offset)
         .fetch_all(pool)
@@ -1601,7 +1602,7 @@ async fn duplicate_models_for_values(
         )
     };
     let sql = format!("SELECT {value_column} match_value, m.id, m.display_name, m.folder_id, f.name folder_name, f.relative_path, m.primary_asset_id, COALESCE(pa.extension, '') primary_extension, m.favorite, m.added_at, COALESCE(m.asset_modified_at, m.updated_at) modified_at, m.last_opened_at, m.missing_since, m.bundle_mode, m.storage_mode, (SELECT pp.id FROM project_photos pp WHERE pp.model_id = m.id AND pp.is_cover = 1 LIMIT 1) cover_photo_id, m.asset_count, COALESCE(pa.metadata_json, '{{}}') metadata_json FROM models m JOIN folders f ON f.id = m.folder_id LEFT JOIN assets pa ON pa.id = m.primary_asset_id JOIN model_assets matching_ma ON matching_ma.model_id = m.id JOIN assets matching_asset ON matching_asset.id = matching_ma.asset_id{geometry_join} WHERE {value_column} IN (SELECT value FROM json_each(?)) AND matching_asset.missing_since IS NULL GROUP BY match_value, m.id ORDER BY match_value, lower(m.display_name), f.relative_path");
-    let rows = sqlx::query(&sql)
+    let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(serde_json::to_string(values).map_err(|error| error.to_string())?)
         .fetch_all(pool)
         .await
@@ -2651,7 +2652,7 @@ async fn count_smart_collection(
     rule: &SmartCollectionRule,
     pool: &sqlx::SqlitePool,
 ) -> CommandResult<i64> {
-    sqlx::query_scalar(&smart_collection_count_sql(rule)?)
+    sqlx::query_scalar(sqlx::AssertSqlSafe(smart_collection_count_sql(rule)?))
         .fetch_one(pool)
         .await
         .map_err(db_error)
@@ -2810,18 +2811,21 @@ fn custom_field_rule_sql(rule: &QueryRule) -> CommandResult<String> {
         match rule.operator.as_str() {
             "is" | "isNot" => format!("CAST({value_sql} AS TEXT) = {quoted}"),
             "before" => {
-                NaiveDate::parse_from_str(value, "%Y-%m-%d")
-                    .map_err(|_| "Custom date rules need a valid calendar date".to_string())?;
+                if !timestamps::is_calendar_date(value) {
+                    return Err("Custom date rules need a valid calendar date".into());
+                }
                 format!("date(CAST({value_sql} AS TEXT)) < date({quoted})")
             }
             "after" => {
-                NaiveDate::parse_from_str(value, "%Y-%m-%d")
-                    .map_err(|_| "Custom date rules need a valid calendar date".to_string())?;
+                if !timestamps::is_calendar_date(value) {
+                    return Err("Custom date rules need a valid calendar date".into());
+                }
                 format!("date(CAST({value_sql} AS TEXT)) > date({quoted})")
             }
             "on" => {
-                NaiveDate::parse_from_str(value, "%Y-%m-%d")
-                    .map_err(|_| "Custom date rules need a valid calendar date".to_string())?;
+                if !timestamps::is_calendar_date(value) {
+                    return Err("Custom date rules need a valid calendar date".into());
+                }
                 format!("date(CAST({value_sql} AS TEXT)) = date({quoted})")
             }
             _ => return Err("Unknown custom text rule operator".into()),
@@ -2863,8 +2867,9 @@ fn boolean_condition(
 }
 
 fn date_rule_sql(column: &str, operator: &str, value: &str) -> CommandResult<String> {
-    NaiveDate::parse_from_str(value, "%Y-%m-%d")
-        .map_err(|_| "Date rules need a valid calendar date".to_string())?;
+    if !timestamps::is_calendar_date(value) {
+        return Err("Date rules need a valid calendar date".into());
+    }
     let comparison = match operator {
         "before" => "<",
         "after" => ">",
@@ -3214,7 +3219,7 @@ pub(crate) fn reveal(path: &Path) -> CommandResult<()> {
 }
 
 fn now() -> String {
-    Utc::now().to_rfc3339()
+    timestamps::now_rfc3339()
 }
 
 fn write_json_atomic(destination: &Path, document: &serde_json::Value) -> CommandResult<()> {

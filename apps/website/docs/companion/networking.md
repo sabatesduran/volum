@@ -11,7 +11,7 @@ Volum connects clients directly to the canonical Desktop or `volumd` server. Tai
 
 | Route | URL | Protection | Notes |
 | --- | --- | --- | --- |
-| Volum Tailscale | `http://volum.example-tailnet.ts.net` | Tailscale WireGuard tunnel | Embedded in supported Desktop builds |
+| Tailscale | `http://volum.example-tailnet.ts.net` | Tailscale WireGuard tunnel | Embedded in supported Desktop builds |
 | System Tailscale | `http://100.x.y.z:43821` or MagicDNS | Tailscale WireGuard tunnel | Uses the separately installed Desktop app |
 | Private LAN | `http://192.168.x.y:43821` | Your trusted local network | Do not use on guest or untrusted Wi-Fi |
 | WireGuard or ZeroTier | Private `http://` IP or DNS name | The VPN tunnel | Configure the private listener IP manually |
@@ -20,15 +20,15 @@ Volum connects clients directly to the canonical Desktop or `volumd` server. Tai
 
 Any trusted HTTPS origin is accepted. Plain HTTP is accepted only for loopback, private IPv4/IPv6, link-local, Tailscale, or a hostname that resolves entirely to private addresses. Volum blocks public HTTP even when a pairing payload requests it.
 
-## Volum Tailscale mode
+## Tailscale mode
 
 1. Install and connect Tailscale on the client device.
 2. Open **Settings → Mobile access**.
-3. Select **Volum Tailscale**, choose a preferred hostname, and select **Sign in to Tailscale**.
+3. Select **Tailscale**, choose a preferred hostname, and select **Sign in to Tailscale**.
 4. Authorize Volum in the browser. Volum creates a persistent, non-ephemeral node identity and listens only inside the tailnet.
 5. Pair your client using the URL shown by Volum. When typing it manually, include `http://` so the client uses the embedded listener's port rather than the legacy Companion port. The assigned hostname may include a collision suffix.
 
-To join without browser sign-in, create a Tailscale **auth key** in the Tailscale admin console, enter it under **Volum Tailscale**, and choose **Connect using auth key**. Volum saves the resulting node identity, not the auth key.
+To join without browser sign-in, create a Tailscale **auth key** in the Tailscale admin console, enter it under **Tailscale**, and choose **Connect using auth key**. Volum saves the resulting node identity, not the auth key.
 
 The embedded Rust Tailscale runtime is experimental and available only on supported Desktop targets. Its application URL is HTTP, but traffic remains encrypted by Tailscale. Existing QR codes with the `tailscale-http` transport remain compatible.
 

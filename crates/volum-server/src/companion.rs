@@ -1083,7 +1083,7 @@ impl CompanionController {
         let state_path = self.inner.lock().await.tailnet_state_path.clone();
         let mut tailnet_config = Config::default_with_key_file(&state_path)
             .await
-            .map_err(|error| format!("Could not load the Volum Tailscale identity: {error}"))?;
+            .map_err(|error| format!("Could not load the Tailscale identity: {error}"))?;
         secure_tailnet_state_file(&state_path)?;
         tailnet_config.client_name = Some("volum".into());
         tailnet_config.requested_hostname = Some(config.tailnet_hostname.clone());
@@ -1103,7 +1103,7 @@ impl CompanionController {
         )
         .await
         .map_err(|_| "Tailscale did not respond while starting the Volum node".to_string())?
-        .map_err(|_| "Could not start the Volum Tailscale node".to_string())?;
+        .map_err(|_| "Could not start the Tailscale node".to_string())?;
         let auth = tokio::time::timeout(
             Duration::from_secs(TAILNET_START_TIMEOUT_SECONDS),
             device.is_authorized(),
@@ -1202,7 +1202,7 @@ impl CompanionController {
                     ) => node,
                 }
                 .map_err(|_| "Tailscale did not assign Volum an address in time".to_string())?
-                .map_err(|error| format!("Could not read the Volum Tailscale identity: {error}"))?;
+                .map_err(|error| format!("Could not read the Tailscale identity: {error}"))?;
                 let ip = node.tailnet_address.ipv4.addr();
                 let dns_name = node.fqdn_opt(false);
                 let listener = device
@@ -1543,7 +1543,7 @@ impl CompanionController {
         let state_path = self.inner.lock().await.tailnet_state_path.clone();
         if let Err(error) = std::fs::remove_file(&state_path) {
             if error.kind() != std::io::ErrorKind::NotFound {
-                let message = format!("Could not remove the Volum Tailscale identity: {error}");
+                let message = format!("Could not remove the Tailscale identity: {error}");
                 let mut inner = self.inner.lock().await;
                 inner.tailnet_state = "error".into();
                 inner.last_error = Some(message.clone());
@@ -4657,7 +4657,7 @@ fn secure_tailnet_state_file(path: &FilePath) -> CompanionResult<()> {
     use std::os::unix::fs::PermissionsExt;
 
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-        .map_err(|error| format!("Could not protect the Volum Tailscale identity: {error}"))
+        .map_err(|error| format!("Could not protect the Tailscale identity: {error}"))
 }
 
 #[cfg(all(

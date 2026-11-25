@@ -197,7 +197,7 @@ export function CompanionSettings() {
       <div className="companion-network">
         <div className="settings-subheading"><h3>{t("Connection network")}</h3><p>{t("Give Volum its own Tailscale address, use the system Tailscale app, or configure another private route.")}</p></div>
         <div className="companion-network__modes" role="radiogroup" aria-label={t("Connection network")}>
-          <button disabled={networkBusy || !status?.tailnetAvailable} className={networkMode === "embedded-tailscale" ? "is-active" : ""} role="radio" aria-checked={networkMode === "embedded-tailscale"} onClick={() => setNetworkMode("embedded-tailscale")}><ShieldCheck size={16} /><span><strong>{t("Volum Tailscale")}</strong><small>{t("Built in")}</small></span></button>
+          <button disabled={networkBusy || !status?.tailnetAvailable} className={networkMode === "embedded-tailscale" ? "is-active" : ""} role="radio" aria-checked={networkMode === "embedded-tailscale"} onClick={() => setNetworkMode("embedded-tailscale")}><ShieldCheck size={16} /><span><strong>{t("Tailscale")}</strong><small>{t("Built in")}</small></span></button>
           <button disabled={networkBusy} className={networkMode === "system-tailscale" ? "is-active" : ""} role="radio" aria-checked={networkMode === "system-tailscale"} onClick={() => { setNetworkMode("system-tailscale"); setTailnetAuthKey(""); }}><Wifi size={16} /><span><strong>{t("System Tailscale")}</strong><small>{t("Detect installed app")}</small></span></button>
           <button disabled={networkBusy} className={networkMode === "custom" ? "is-active" : ""} role="radio" aria-checked={networkMode === "custom"} onClick={() => { setNetworkMode("custom"); setTailnetAuthKey(""); }}><Globe2 size={16} /><span><strong>{t("Custom")}</strong><small>{t("LAN, VPN, or HTTPS")}</small></span></button>
         </div>
@@ -261,7 +261,7 @@ export function CompanionSettings() {
           <button className="icon-button" onClick={() => void revoke(device.id, device.name)} aria-label={t("Revoke {name}", { name: device.name })}><Trash2 size={15} /></button>
         </div>)}
       </div> : status?.enabled && <div className="companion-empty"><Smartphone size={20} /><span><strong>{t("No paired devices")}</strong><small>{t("Pair your phone to start browsing this library.")}</small></span></div>}
-      <p className="settings-footnote">{t(networkMode === "embedded-tailscale" ? "Volum Tailscale listens only inside your tailnet." : networkMode === "system-tailscale" ? "System Tailscale listens only on this computer’s installed Tailscale address." : "Custom mode listens only on the private IP you choose and advertises the separate client address above.")} {t("The desktop app must be running. Public HTTP is always blocked; use HTTPS outside a private network.")}</p>
+      <p className="settings-footnote">{t(networkMode === "embedded-tailscale" ? "The built-in Tailscale connection listens only inside your tailnet." : networkMode === "system-tailscale" ? "System Tailscale listens only on this computer’s installed Tailscale address." : "Custom mode listens only on the private IP you choose and advertises the separate client address above.")} {t("The desktop app must be running. Public HTTP is always blocked; use HTTPS outside a private network.")}</p>
       {pairing && <PairingDialog pairing={pairing} onClose={() => setPairing(undefined)} />}
     </section>
   );

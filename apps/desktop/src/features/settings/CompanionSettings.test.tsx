@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setAppLanguage } from "../../lib/i18n";
 import type { CompanionStatus } from "../../types";
@@ -38,6 +38,14 @@ describe("Companion Tailscale setup", () => {
   });
 
   afterEach(cleanup);
+
+  it.each(["en", "ca", "es"] as const)("labels the built-in option Tailscale in %s", async (language) => {
+    setAppLanguage(language);
+    const client = new QueryClient();
+    render(<QueryClientProvider client={client}><CompanionSettings /></QueryClientProvider>);
+    const selected = await screen.findByRole("radio", { checked: true });
+    expect(within(selected).getByText("Tailscale", { exact: true })).toBeTruthy();
+  });
 
   it("opens and can reopen the Tailscale browser approval URL", async () => {
     const tailnetAuthUrl = "https://login.tailscale.com/a/example";

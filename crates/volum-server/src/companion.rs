@@ -108,6 +108,7 @@ pub struct CompanionController {
 
 struct ControllerInner {
     config: CompanionConfig,
+    enable_revision: u64,
     config_path: PathBuf,
     tailnet_state_path: PathBuf,
     pairing: Option<PairingSession>,
@@ -922,6 +923,7 @@ impl CompanionController {
             app,
             inner: Arc::new(Mutex::new(ControllerInner {
                 config,
+                enable_revision: 0,
                 config_path,
                 tailnet_state_path,
                 pairing: None,
@@ -1428,9 +1430,12 @@ impl CompanionController {
     pub async fn set_enabled(&self, enabled: bool) -> CompanionResult<CompanionStatus> {
         {
             let mut inner = self.inner.lock().await;
-            inner.config.enabled = enabled;
+            let mut config = inner.config.clone();
+            config.enabled = enabled;
+            persist_config(&inner.config_path, &config)?;
+            inner.config = config;
+            inner.enable_revision = inner.enable_revision.wrapping_add(1);
             inner.last_error = None;
-            persist_config(&inner.config_path, &inner.config)?;
         }
         if enabled {
             let _ = self.start().await;
@@ -1600,21 +1605,15 @@ impl CompanionController {
         hostname: &str,
         preparation: impl Future<Output = CompanionResult<(tailscale::Device, Option<String>)>>,
     ) -> CompanionResult<CompanionStatus> {
+        let enable_revision = self.inner.lock().await.enable_revision;
         let _start_guard = self.start_lock.lock().await;
         if self.inner.lock().await.config.network_mode == "embedded-tailscale" {
             self.stop_server().await;
         }
         let (device, auth_url) = preparation.await?;
-        let saved = {
-            let mut inner = self.inner.lock().await;
-            let mut config = inner.config.clone();
-            config.network_mode = "embedded-tailscale".into();
-            config.tailnet_hostname = hostname.to_owned();
-            config.bind_address = None;
-            config.public_url = None;
-            config.enabled = true;
-            persist_config(&inner.config_path, &config).map(|()| inner.config = config)
-        };
+        let saved = self
+            .save_tailnet_enrollment(hostname, enable_revision)
+            .await;
         if let Err(error) = saved {
             let _ = device.shutdown(Some(Duration::from_secs(2))).await;
             return Err(error);
@@ -1622,6 +1621,37 @@ impl CompanionController {
         self.stop_server().await;
         self.serve_embedded_tailnet(device, auth_url).await;
         Ok(self.status().await)
+    }
+
+    #[cfg(all(
+        feature = "embedded-tailscale",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(
+                target_os = "linux",
+                any(target_arch = "x86_64", target_arch = "aarch64")
+            ),
+            all(target_os = "windows", target_arch = "x86_64")
+        )
+    ))]
+    async fn save_tailnet_enrollment(
+        &self,
+        hostname: &str,
+        enable_revision: u64,
+    ) -> CompanionResult<()> {
+        let mut inner = self.inner.lock().await;
+        if inner.enable_revision != enable_revision {
+            return Err("Mobile access settings changed during Tailscale sign-in".into());
+        }
+        let mut config = inner.config.clone();
+        config.network_mode = "embedded-tailscale".into();
+        config.tailnet_hostname = hostname.to_owned();
+        config.bind_address = None;
+        config.public_url = None;
+        config.enabled = true;
+        persist_config(&inner.config_path, &config)?;
+        inner.config = config;
+        Ok(())
     }
 
     #[cfg(not(all(
@@ -5317,6 +5347,45 @@ mod tests {
         assert_eq!(transport_for_url("https://volum.example.com"), "https");
     }
 
+    #[cfg(all(
+        feature = "embedded-tailscale",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(
+                target_os = "linux",
+                any(target_arch = "x86_64", target_arch = "aarch64")
+            ),
+            all(target_os = "windows", target_arch = "x86_64")
+        )
+    ))]
+    #[tokio::test]
+    async fn tailnet_enrollment_cannot_overwrite_a_newer_disable_request() {
+        let directory = tempfile::tempdir().unwrap();
+        let library = AppState::initialize(directory.path()).await.unwrap();
+        let controller = CompanionController::new(directory.path(), library, None).unwrap();
+        let revision = controller.inner.lock().await.enable_revision;
+        let start_guard = controller.start_lock.lock().await;
+        let pending_disable = tokio::spawn({
+            let controller = controller.clone();
+            async move { controller.set_enabled(false).await.unwrap() }
+        });
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while controller.inner.lock().await.enable_revision == revision {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(controller
+            .save_tailnet_enrollment("volum", revision)
+            .await
+            .is_err());
+        let saved = load_config(&directory.path().join("companion.json")).unwrap();
+        assert!(!saved.enabled);
+        drop(start_guard);
+        assert!(!pending_disable.await.unwrap().enabled);
+    }
+
     #[test]
     fn media_etags_are_stable_and_support_revalidation() {
         let response = binary_response(b"media".to_vec(), "image/png", &HeaderMap::new()).unwrap();
@@ -5407,6 +5476,7 @@ mod tests {
             .await
             .unwrap();
         let inner = ControllerInner {
+            enable_revision: 0,
             config: CompanionConfig {
                 enabled: false,
                 server_id: "server".into(),

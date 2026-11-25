@@ -36,10 +36,18 @@ describe("normalizeServerUrl", () => {
   });
 
   it("normalizes full URLs and preserves explicit ports", () => {
-    expect(normalizeServerUrl(" http://100.81.102.15/ ")).toBe("http://100.81.102.15:43821");
+    expect(normalizeServerUrl(" http://100.81.102.15/ ")).toBe("http://100.81.102.15");
+    expect(normalizeServerUrl("http://volum.example.ts.net")).toBe("http://volum.example.ts.net");
     expect(normalizeServerUrl("https://volum.example.ts.net:1234")).toBe("https://volum.example.ts.net:1234");
     expect(normalizeServerUrl("volum.example.com")).toBe("https://volum.example.com");
     expect(normalizeServerUrl("http://192.168.1.20:44000")).toBe("http://192.168.1.20:44000");
+  });
+
+  it("accepts embedded Tailscale addresses with a manually entered HTTP port", () => {
+    expect(normalizeServerUrl("volum.example.ts.net:80")).toBe("http://volum.example.ts.net");
+    expect(normalizeServerUrl("100.81.102.15:80")).toBe("http://100.81.102.15");
+    expect(normalizeServerUrl("[fd7a:115c:a1e0::1]:80")).toBe("http://[fd7a:115c:a1e0::1]");
+    expect(normalizeServerUrl("volum.example.ts.net:43821")).toBe("http://volum.example.ts.net:43821");
   });
 
   it("accepts raw and bracketed Tailscale IPv6 addresses", () => {

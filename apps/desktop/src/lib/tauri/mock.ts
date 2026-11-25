@@ -98,7 +98,10 @@ let companionStatus: CompanionStatus = {
   port: 43821,
   organizationWrites: false,
   photoUploads: false,
-  networkMode: "automatic",
+  networkMode: "embedded-tailscale",
+  tailnetAvailable: true,
+  tailnetState: "signed-out",
+  tailnetHostname: "volum",
   devices: []
 };
 let customFields: CustomFieldDefinition[] = [
@@ -141,10 +144,10 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
       companionStatus = {
         ...companionStatus,
         enabled,
-        running: enabled,
-        tailnetIp: enabled ? "100.64.0.10" : undefined,
-        dnsName: enabled ? "volum-desktop.example.ts.net" : undefined,
-        baseUrl: enabled ? "http://100.64.0.10:43821" : undefined
+        running: enabled && companionStatus.tailnetState === "connected",
+        tailnetIp: enabled && companionStatus.tailnetState === "connected" ? "100.64.0.10" : undefined,
+        dnsName: enabled && companionStatus.tailnetState === "connected" ? "volum.example.ts.net" : undefined,
+        baseUrl: enabled && companionStatus.tailnetState === "connected" ? "http://volum.example.ts.net:43821" : undefined
       };
       return companionStatus as T;
     }
@@ -157,15 +160,38 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
       return companionStatus as T;
     }
     case "set_companion_network": {
-      const networkMode = args.mode === "custom" ? "custom" : "automatic";
+      const networkMode = args.mode === "custom" ? "custom" : args.mode === "system-tailscale" ? "system-tailscale" : "embedded-tailscale";
       companionStatus = {
         ...companionStatus,
         networkMode,
+        tailnetHostname: String(args.tailnetHostname ?? companionStatus.tailnetHostname),
         bindAddress: networkMode === "custom" ? String(args.bindAddress ?? "") : undefined,
         publicUrl: networkMode === "custom" ? String(args.publicUrl ?? "") : undefined,
         baseUrl: networkMode === "custom" ? String(args.publicUrl ?? "") : companionStatus.baseUrl,
-        transport: networkMode === "custom" ? (String(args.publicUrl ?? "").startsWith("https://") ? "https" : "private-http") : "tailscale-http",
+        transport: networkMode === "custom" ? (String(args.publicUrl ?? "").startsWith("https://") ? "https" : "private-http") : "tailscale-http"
       };
+      return companionStatus as T;
+    }
+    case "begin_companion_tailnet_sign_in": {
+      const hostname = String(args.hostname ?? "volum");
+      companionStatus = {
+        ...companionStatus,
+        enabled: true,
+        running: true,
+        networkMode: "embedded-tailscale",
+        tailnetHostname: hostname,
+        tailnetState: "connected",
+        tailnetIp: "100.64.0.10",
+        dnsName: `${hostname}.example.ts.net`,
+        baseUrl: `http://${hostname}.example.ts.net`,
+        port: 80,
+        transport: "tailscale-http",
+        tailnetAuthUrl: undefined,
+      };
+      return companionStatus as T;
+    }
+    case "sign_out_companion_tailnet": {
+      companionStatus = { ...companionStatus, enabled: false, running: false, tailnetState: "signed-out", tailnetIp: undefined, dnsName: undefined, baseUrl: undefined, tailnetAuthUrl: undefined };
       return companionStatus as T;
     }
     case "create_companion_pairing": {

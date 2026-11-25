@@ -31,6 +31,8 @@ tokio.workspace = true
 tokio-util.workspace = true
 futures-util.workspace = true
 ring = "0.17.14"
+zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
+quick-xml = "0.42"
 
 [target.'cfg(target_os = "ios")'.dependencies]
 keyring = { version = "3", default-features = false, features = ["apple-native"] }

@@ -11,7 +11,8 @@ Volum connects clients directly to the canonical Desktop or `volumd` server. Tai
 
 | Route | URL | Protection | Notes |
 | --- | --- | --- | --- |
-| Tailscale | `http://100.x.y.z:43821` or MagicDNS | Tailscale WireGuard tunnel | Detected automatically on Desktop |
+| Tailscale | `http://volum.example-tailnet.ts.net` | Tailscale WireGuard tunnel | Embedded in supported Desktop builds |
+| System Tailscale | `http://100.x.y.z:43821` or MagicDNS | Tailscale WireGuard tunnel | Uses the separately installed Desktop app |
 | Private LAN | `http://192.168.x.y:43821` | Your trusted local network | Do not use on guest or untrusted Wi-Fi |
 | WireGuard or ZeroTier | Private `http://` IP or DNS name | The VPN tunnel | Configure the private listener IP manually |
 | Twingate or another private access network | Private `http://` DNS name, or HTTPS | The private access route | HTTP names must resolve only to private addresses |
@@ -19,14 +20,21 @@ Volum connects clients directly to the canonical Desktop or `volumd` server. Tai
 
 Any trusted HTTPS origin is accepted. Plain HTTP is accepted only for loopback, private IPv4/IPv6, link-local, Tailscale, or a hostname that resolves entirely to private addresses. Volum blocks public HTTP even when a pairing payload requests it.
 
-## Automatic Tailscale mode
+## Tailscale mode
 
-1. Install and connect Tailscale on the Desktop and client.
+1. Install and connect Tailscale on the client device.
 2. Open **Settings → Mobile access**.
-3. Select **Automatic**, save, and enable access.
-4. Volum discovers the Desktop's Tailscale address and listens only there.
+3. Select **Tailscale**, choose a preferred hostname, and select **Sign in to Tailscale**.
+4. Authorize Volum in the browser. Volum creates a persistent, non-ephemeral node identity and listens only inside the tailnet.
+5. Pair your client using the URL shown by Volum. When typing it manually, include `http://` so the client uses the embedded listener's port rather than the legacy Companion port. The assigned hostname may include a collision suffix.
 
-Existing QR codes with the `tailscale-http` transport remain compatible.
+To join without browser sign-in, create a Tailscale **auth key** in the Tailscale admin console, enter it under **Tailscale**, and choose **Connect using auth key**. Volum saves the resulting node identity, not the auth key.
+
+The embedded Rust Tailscale runtime is experimental and available only on supported Desktop targets. Its application URL is HTTP, but traffic remains encrypted by Tailscale. Existing QR codes with the `tailscale-http` transport remain compatible.
+
+## System Tailscale mode
+
+Install and connect the regular Tailscale app on both the Desktop and client, select **System Tailscale**, save, and enable access. Volum discovers the Desktop's Tailscale address and listens only there.
 
 ## Custom private or HTTPS mode
 

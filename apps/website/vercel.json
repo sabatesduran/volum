@@ -1,7 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "npm run build",
-  "ignoreCommand": "[ -n \"$VERCEL_GIT_PREVIOUS_SHA\" ] && git diff --quiet \"$VERCEL_GIT_PREVIOUS_SHA\" HEAD -- . ../../CHANGELOG.md",
+  "ignoreCommand": "sh scripts/vercel-ignore-build.sh",
   "outputDirectory": "dist",
   "cleanUrls": true,
   "trailingSlash": false,

@@ -249,6 +249,8 @@ pub fn run() {
             companion_commands::set_companion_organization_writes,
             companion_commands::set_companion_photo_uploads,
             companion_commands::set_companion_network,
+            companion_commands::begin_companion_tailnet_sign_in,
+            companion_commands::sign_out_companion_tailnet,
             companion_commands::create_companion_pairing,
             companion_commands::revoke_companion_device,
             remote::get_backend_connection,

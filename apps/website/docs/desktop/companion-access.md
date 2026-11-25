@@ -5,27 +5,26 @@ description: Make a Desktop library available to trusted mobile and Desktop clie
 
 # Companion Access
 
-Companion Access turns an existing Volum Desktop into the canonical host for trusted devices. It is disabled by default. Automatic mode listens only on the detected Tailscale address; Custom mode listens on a private IP you choose and advertises a separate private HTTP or HTTPS URL.
+Companion Access turns an existing Volum Desktop into the canonical host for trusted devices. It is disabled by default. **Tailscale** gives the Desktop app its own private Tailscale identity and MagicDNS address. **System Tailscale** uses an already installed Tailscale app. **Custom** listens on a private IP you choose and advertises a separate private HTTP or HTTPS URL.
 
 ## Before you begin
 
-For the easiest setup, install and sign in to [Tailscale](https://tailscale.com/) on:
+For the easiest setup, install and sign in to [Tailscale](https://tailscale.com/) on each phone, tablet, or remote Desktop that will connect. Volum Desktop can join the tailnet itself, so the separate Tailscale desktop app is not required when the built-in **Tailscale** option is available.
 
-- the Desktop that owns the library;
-- each phone, tablet, or remote Desktop that will connect.
-
-The devices must belong to a Tailnet allowed by your Tailscale ACLs. Tailscale is recommended but not required: LAN, WireGuard, Twingate, ZeroTier, and trusted HTTPS routes are supported through Custom mode.
+The devices and Volum host must belong to a tailnet allowed by your Tailscale ACLs. Tailscale is recommended but not required: LAN, WireGuard, Twingate, ZeroTier, and trusted HTTPS routes are supported through Custom mode.
 
 ## Enable access
 
 1. Open **Settings** on the canonical Desktop.
 2. Open **Mobile access**. The page heading is **Companion Access**.
-3. Keep **Automatic** for Tailscale, or choose **Custom**.
-4. In Custom mode, enter the private IP on this computer that Volum should listen on, then enter the URL clients will use. These values are separate so a reverse proxy or VPN hostname can advertise a different address.
-5. Save the network settings and turn Companion Access on.
-6. Wait for **Available on your selected network** and confirm the displayed URL.
+3. Keep **Tailscale**, choose a preferred hostname, and select **Sign in to Tailscale**.
+4. Authorize the new Volum device in the browser. For manual setup instead, enter a Tailscale auth key and select **Connect using auth key** in step 3. If your tailnet requires device approval, approve the new device in the Tailscale admin console.
+5. Return to Volum and wait for **Available on your selected network**. Volum displays the assigned address, such as `http://volum.example-tailnet.ts.net`.
+6. Alternatively, choose **System Tailscale** to use the separately installed Tailscale app, or choose **Custom** and enter the private listener IP plus the URL clients will use.
 
-If Automatic mode cannot find a Tailscale address, verify that Tailscale is connected or switch to Custom mode. Volum refuses wildcard and public listener IPs. Public routes must use HTTPS.
+Tailscale may add a suffix such as `volum-1` when the preferred hostname is already in use. Volum always advertises the address actually assigned. Embedded Tailscale is experimental and is shown only on platforms supported by the bundled Rust implementation. If it is unavailable, use System Tailscale or Custom. Volum refuses wildcard and public listener IPs. Public routes must use HTTPS.
+
+The embedded address currently uses HTTP inside the encrypted Tailscale tunnel. Do not expose it directly to the public internet.
 
 ## Choose write permissions
 

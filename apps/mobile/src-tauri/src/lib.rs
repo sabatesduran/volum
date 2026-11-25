@@ -13,7 +13,7 @@ use ring::{
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    io::{Read, Write},
+    io::{Read, Seek, SeekFrom, Write},
     net::IpAddr,
     path::PathBuf,
     sync::{
@@ -33,6 +33,7 @@ const MAX_MEDIA_RESPONSE_BYTES: usize = 30 * 1024 * 1024;
 const MAX_UPLOAD_BYTES: u64 = 500 * 1024 * 1024;
 const MAX_PHOTO_UPLOAD_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_LOCAL_PREVIEW_BYTES: u64 = 100 * 1024 * 1024;
+const SUPPORTED_MODEL_EXTENSIONS: &[&str] = &["stl", "3mf", "obj", "step", "stp"];
 const MEDIA_ENVELOPE_MAGIC: &[u8; 4] = b"VMC1";
 const LOCAL_PREVIEW_ENVELOPE_MAGIC: &[u8; 4] = b"VLP1";
 const CREDENTIAL_VAULT_MAGIC: &[u8; 4] = b"VCV1";
@@ -118,6 +119,7 @@ struct LocalStlStageRequest {
 struct LocalStlFile {
     cache_path: String,
     filename: String,
+    extension: String,
     byte_size: u64,
 }
 
@@ -323,7 +325,7 @@ async fn companion_stage_local_stl(
     state: tauri::State<'_, MobileState>,
 ) -> Result<LocalStlFile, String> {
     if request.file_path.is_some() == request.opened_id.is_some() {
-        return Err("Choose one STL file to preview".into());
+        return Err("Choose one 3D file to preview".into());
     }
     let (file_path, trusted_open) = if let Some(opened_id) = request.opened_id.as_deref() {
         let path = state
@@ -332,18 +334,17 @@ async fn companion_stage_local_stl(
             .map_err(|_| "The incoming file queue is unavailable".to_string())?
             .files
             .remove(opened_id)
-            .ok_or_else(|| "The shared STL is no longer available".to_string())?;
+            .ok_or_else(|| "The shared 3D file is no longer available".to_string())?;
         (path, true)
     } else {
         (
             request
                 .file_path
                 .clone()
-                .ok_or_else(|| "Choose an STL file to preview".to_string())?,
+                .ok_or_else(|| "Choose a 3D file to preview".to_string())?,
             false,
         )
     };
-    let filename = local_stl_filename(request.suggested_filename.as_deref(), &file_path);
     let mut options = OpenOptions::new();
     options.read(true);
     let mut source = if trusted_open {
@@ -351,60 +352,93 @@ async fn companion_stage_local_stl(
     } else {
         open_selected_file(&app, &file_path, options)
     }
-    .map_err(|_| "The selected STL is no longer available".to_string())?;
-    let staged = copy_local_stl(&app, &state, &mut source);
+    .map_err(|_| "The selected 3D file is no longer available".to_string())?;
+    #[cfg(target_os = "android")]
+    let display_name = match &file_path {
+        FilePath::Url(url) if url.scheme() == "content" => android_model_display_name(url.as_str()),
+        _ => None,
+    };
+    let suggested = request.suggested_filename.as_deref();
+    #[cfg(target_os = "android")]
+    let suggested = display_name.as_deref().into_iter().chain(suggested);
+    let staged = (|| {
+        let (filename, extension) = local_model_filename(suggested, &file_path)?;
+        let (cache_path, byte_size) = copy_local_model(&app, &state, &mut source, extension)?;
+        Ok(LocalStlFile {
+            cache_path: cache_path.to_string_lossy().into_owned(),
+            filename,
+            extension: extension.into(),
+            byte_size,
+        })
+    })();
     drop(source);
     #[cfg(target_os = "ios")]
     if let FilePath::Url(url) = file_path {
         let _ = app.fs().stop_accessing_security_scoped_resource(url);
     }
-    let (cache_path, byte_size) = staged?;
-    Ok(LocalStlFile {
-        cache_path: cache_path.to_string_lossy().into_owned(),
-        filename,
-        byte_size,
-    })
+    staged
 }
 
-fn copy_local_stl(
+fn copy_local_model(
     app: &tauri::AppHandle,
     state: &MobileState,
     source: &mut std::fs::File,
+    extension: &str,
 ) -> Result<(PathBuf, u64), String> {
     let reported_size = source.metadata().ok().map(|metadata| metadata.len());
     if reported_size.is_some_and(|size| size > MAX_UPLOAD_BYTES) {
         return Err("3D files can be at most 500 MB".into());
     }
 
-    let id = state.next_local_file_id.fetch_add(1, Ordering::Relaxed);
     let cache_directory = app
         .path()
         .app_cache_dir()
         .map_err(|error| error.to_string())?;
     std::fs::create_dir_all(&cache_directory).map_err(|error| error.to_string())?;
-    let cache_path = cache_directory.join(format!("volum-local-{id}.stl"));
-    let mut target = std::fs::File::create(&cache_path)
-        .map_err(|_| "Volum could not prepare the selected STL".to_string())?;
+    let (cache_path, mut target) = (0..32)
+        .find_map(|_| {
+            let id = state.next_local_file_id.fetch_add(1, Ordering::Relaxed);
+            let path = cache_directory.join(format!("volum-local-{id}.{extension}"));
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            match options.open(&path) {
+                Ok(file) => Some(Ok((path, file))),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
+                Err(_) => Some(Err(
+                    "Volum could not prepare the selected 3D file".to_string()
+                )),
+            }
+        })
+        .transpose()?
+        .ok_or_else(|| "Volum could not allocate temporary 3D storage".to_string())?;
     let copy_result = (|| {
         let copied = std::io::copy(
             &mut std::io::Read::by_ref(source).take(MAX_UPLOAD_BYTES + 1),
             &mut target,
         )
-        .map_err(|_| "Volum could not prepare the selected STL".to_string())?;
+        .map_err(|_| "Volum could not prepare the selected 3D file".to_string())?;
         target
             .flush()
-            .map_err(|_| "Volum could not prepare the selected STL".to_string())?;
+            .map_err(|_| "Volum could not prepare the selected 3D file".to_string())?;
         if copied == 0 {
-            return Err("Choose a non-empty STL file".into());
+            return Err("Choose a non-empty 3D file".into());
         }
         if copied > MAX_UPLOAD_BYTES {
             return Err("3D files can be at most 500 MB".into());
         }
         if reported_size.is_some_and(|size| size > 0 && size != copied) {
-            return Err("The selected STL changed while it was being opened".into());
+            return Err("The selected 3D file changed while it was being opened".into());
         }
-        if !looks_like_stl(&cache_path, copied) {
-            return Err("The selected file is not a valid STL".into());
+        if !looks_like_model(&cache_path, copied, extension) {
+            return Err(format!(
+                "The selected file is not a valid {}",
+                extension.to_ascii_uppercase()
+            ));
         }
         Ok(copied)
     })();
@@ -425,18 +459,24 @@ async fn companion_preview_local_stl(
     cache_path: String,
     app: tauri::AppHandle,
 ) -> Result<tauri::ipc::Response, String> {
-    let path = validated_local_stl_path(&app, &cache_path)?;
+    let path = validated_local_model_path(&app, &cache_path)?;
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
     let metadata = std::fs::metadata(&path)
-        .map_err(|_| "The local STL preview is no longer available".to_string())?;
+        .map_err(|_| "The local 3D preview is no longer available".to_string())?;
     if metadata.len() > MAX_LOCAL_PREVIEW_BYTES {
-        return Err("This STL is too large for an on-device preview. You can still save it to Volum Desktop.".into());
+        return Err("This 3D file is too large for an on-device preview. You can still save it to Volum Desktop.".into());
     }
     let bytes = tokio::fs::read(&path)
         .await
-        .map_err(|_| "The local STL preview is no longer available".to_string())?;
-    let preview = tokio::task::spawn_blocking(move || local_preview::stl_preview(&bytes))
-        .await
-        .map_err(|_| "The on-device STL preview stopped unexpectedly".to_string())??;
+        .map_err(|_| "The local 3D preview is no longer available".to_string())?;
+    let preview =
+        tokio::task::spawn_blocking(move || local_preview::model_preview(&bytes, &extension))
+            .await
+            .map_err(|_| "The on-device 3D preview stopped unexpectedly".to_string())??;
     let mut envelope = Vec::with_capacity(8 + preview.payload.len());
     envelope.extend_from_slice(LOCAL_PREVIEW_ENVELOPE_MAGIC);
     envelope.extend_from_slice(&preview.triangle_count.to_le_bytes());
@@ -446,48 +486,65 @@ async fn companion_preview_local_stl(
 
 #[tauri::command]
 fn companion_remove_local_stl(cache_path: String, app: tauri::AppHandle) -> Result<bool, String> {
-    let path = validated_local_stl_path(&app, &cache_path)?;
+    let path = validated_local_model_path(&app, &cache_path)?;
     match std::fs::remove_file(path) {
         Ok(()) => Ok(true),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(_) => Err("Volum could not remove the temporary STL".into()),
+        Err(_) => Err("Volum could not remove the temporary 3D file".into()),
     }
 }
 
-fn local_stl_filename(suggested: Option<&str>, path: &FilePath) -> String {
-    let candidate = suggested
-        .filter(|value| !value.trim().is_empty())
-        .map(str::to_string)
-        .or_else(|| match path {
-            FilePath::Path(path) => path
-                .file_name()
-                .and_then(|value| value.to_str())
-                .map(str::to_string),
-            FilePath::Url(url) => url
-                .path_segments()
-                .and_then(Iterator::last)
-                .filter(|value| !value.is_empty())
-                .and_then(percent_decode_filename),
-        })
-        .unwrap_or_else(|| "Shared model.stl".into());
-    let basename = PathBuf::from(candidate)
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("Shared model.stl")
-        .trim()
-        .rsplit(':')
-        .next()
-        .unwrap_or("Shared model.stl")
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or("Shared model.stl")
-        .trim()
-        .to_string();
-    if basename.to_ascii_lowercase().ends_with(".stl") {
-        basename
-    } else {
-        format!("{}.stl", basename.trim_end_matches('.'))
+fn local_model_filename<'a>(
+    suggested: impl IntoIterator<Item = &'a str>,
+    path: &FilePath,
+) -> Result<(String, &'static str), String> {
+    let path_filename = match path {
+        FilePath::Path(path) => path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(str::to_string),
+        FilePath::Url(url) => url
+            .path_segments()
+            .and_then(Iterator::last)
+            .and_then(percent_decode_filename),
+    };
+    let mut extensionless = None;
+    let mut has_basename = false;
+    for candidate in suggested
+        .into_iter()
+        .map(str::to_owned)
+        .chain(path_filename)
+    {
+        let basename = candidate
+            .rsplit(['/', '\\', ':'])
+            .next()
+            .unwrap_or_default()
+            .trim();
+        if basename.is_empty() {
+            continue;
+        }
+        has_basename = true;
+        if let Some(extension) = model_extension(basename) {
+            return Ok((basename.to_owned(), extension));
+        }
+        let stem = basename.trim_end_matches('.');
+        if !stem.is_empty() && !stem.contains('.') && extensionless.is_none() {
+            extensionless = Some(stem.to_owned());
+        }
     }
+    if !has_basename || extensionless.is_some() {
+        let stem = extensionless.as_deref().unwrap_or("Shared model");
+        return Ok((format!("{stem}.stl"), "stl"));
+    }
+    Err("Choose an STL, 3MF, OBJ, STEP, or STP file".into())
+}
+
+fn model_extension(filename: &str) -> Option<&'static str> {
+    let extension = filename.rsplit_once('.')?.1;
+    SUPPORTED_MODEL_EXTENSIONS
+        .iter()
+        .copied()
+        .find(|candidate| extension.eq_ignore_ascii_case(candidate))
 }
 
 fn percent_decode_filename(value: &str) -> Option<String> {
@@ -508,28 +565,83 @@ fn percent_decode_filename(value: &str) -> Option<String> {
     String::from_utf8(bytes).ok()
 }
 
-fn looks_like_stl(path: &std::path::Path, byte_size: u64) -> bool {
+fn looks_like_model(path: &std::path::Path, byte_size: u64, extension: &str) -> bool {
     let Ok(mut file) = std::fs::File::open(path) else {
         return false;
     };
-    let header_size = usize::try_from(byte_size.min(64 * 1024)).unwrap_or(64 * 1024);
+    let sniff_bytes = 1024 * 1024_u64;
+    let header_size = usize::try_from(byte_size.min(sniff_bytes)).unwrap_or(sniff_bytes as usize);
     let mut header = vec![0_u8; header_size];
     if file.read_exact(&mut header).is_err() {
         return false;
     }
-    if byte_size >= 84 && header.len() >= 84 {
+    if extension == "stl" && byte_size >= 84 && header.len() >= 84 {
         let count = u32::from_le_bytes(header[80..84].try_into().unwrap()) as u64;
+        let expected = 84_u64.saturating_add(count.saturating_mul(50));
         if count > 0
-            && 84_u64.saturating_add(count.saturating_mul(50)) <= byte_size.saturating_add(2)
+            && byte_size >= expected.saturating_sub(2)
+            && byte_size <= expected.saturating_add(2)
         {
             return true;
         }
     }
+    if extension == "3mf" {
+        if !header.starts_with(b"PK\x03\x04") || file.seek(SeekFrom::Start(0)).is_err() {
+            return false;
+        }
+        let Ok(mut archive) = zip::ZipArchive::new(file) else {
+            return false;
+        };
+        if archive.len() > 10_000 {
+            return false;
+        }
+        return (0..archive.len()).any(|index| {
+            archive.by_index(index).ok().is_some_and(|entry| {
+                entry
+                    .name()
+                    .ok()
+                    .is_some_and(|name| name.to_ascii_lowercase().ends_with(".model"))
+            })
+        });
+    }
     let text = String::from_utf8_lossy(&header).to_ascii_lowercase();
-    text.trim_start().starts_with("solid") && text.contains("facet") && text.contains("vertex")
+    match extension {
+        "stl" => {
+            text.trim_start().starts_with("solid")
+                && text.contains("facet")
+                && text.contains("vertex")
+        }
+        "obj" => {
+            let mut tail = Vec::new();
+            if byte_size > sniff_bytes && file.seek(SeekFrom::End(-(sniff_bytes as i64))).is_ok() {
+                let _ = file.read_to_end(&mut tail);
+            }
+            let tail = String::from_utf8_lossy(&tail).to_ascii_lowercase();
+            let has_record = |source: &str, record: &str| {
+                source
+                    .lines()
+                    .any(|line| line.split_whitespace().next() == Some(record))
+            };
+            (has_record(&text, "v") || has_record(&tail, "v"))
+                && (has_record(&text, "f") || has_record(&tail, "f"))
+        }
+        "step" | "stp" => looks_like_step(&text),
+        _ => false,
+    }
 }
 
-fn validated_local_stl_path(app: &tauri::AppHandle, value: &str) -> Result<PathBuf, String> {
+fn looks_like_step(text: &str) -> bool {
+    text.contains("iso-10303-21")
+        && text.contains("header;")
+        && text.match_indices("data").any(|(index, keyword)| {
+            !text[..index].ends_with(|c: char| c.is_ascii_alphanumeric() || c == '_')
+                && text[index + keyword.len()..]
+                    .trim_start()
+                    .starts_with([';', '('])
+        })
+}
+
+fn validated_local_model_path(app: &tauri::AppHandle, value: &str) -> Result<PathBuf, String> {
     let path = PathBuf::from(value);
     let directory = app
         .path()
@@ -539,9 +651,9 @@ fn validated_local_stl_path(app: &tauri::AppHandle, value: &str) -> Result<PathB
         || !path
             .file_name()
             .and_then(|value| value.to_str())
-            .is_some_and(|name| name.starts_with("volum-local-") && name.ends_with(".stl"))
+            .is_some_and(|name| name.starts_with("volum-local-") && model_extension(name).is_some())
     {
-        return Err("The local STL preview path is invalid".into());
+        return Err("The local 3D preview path is invalid".into());
     }
     Ok(path)
 }
@@ -1137,6 +1249,39 @@ fn platform_vault_password(legacy: Option<&str>) -> Result<String, String> {
 }
 
 #[cfg(target_os = "android")]
+fn android_model_display_name(url: &str) -> Option<String> {
+    use jni::objects::{JObject, JString, JValue};
+    use std::mem::ManuallyDrop;
+
+    let context = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(context.vm().cast()) }.ok()?;
+    let mut env = vm.attach_current_thread().ok()?;
+    let context_object = ManuallyDrop::new(unsafe { JObject::from_raw(context.context().cast()) });
+    let result = env.with_local_frame(4, |env| -> jni::errors::Result<Option<String>> {
+        let class = env.get_object_class(&*context_object)?;
+        let uri = env.new_string(url)?;
+        let value = env
+            .call_static_method(
+                class,
+                "modelDisplayName",
+                "(Landroid/content/Context;Ljava/lang/String;)Ljava/lang/String;",
+                &[JValue::Object(&*context_object), JValue::Object(&uri)],
+            )?
+            .l()?;
+        if value.is_null() {
+            return Ok(None);
+        }
+        let value = JString::from(value);
+        let name = env.get_string(&value)?.into();
+        Ok(Some(name))
+    });
+    if result.is_err() && env.exception_check().unwrap_or(false) {
+        let _ = env.exception_clear();
+    }
+    result.ok().flatten()
+}
+
+#[cfg(target_os = "android")]
 fn platform_vault_password(legacy: Option<&str>) -> Result<String, String> {
     use jni::objects::{JObject, JString, JValue};
     use std::mem::ManuallyDrop;
@@ -1317,7 +1462,7 @@ fn write_private(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
     std::fs::rename(temporary, path).map_err(|error| error.to_string())
 }
 
-fn cleanup_local_stls(app: &tauri::AppHandle) {
+fn cleanup_local_models(app: &tauri::AppHandle) {
     let Ok(directory) = app.path().app_cache_dir() else {
         return;
     };
@@ -1329,15 +1474,17 @@ fn cleanup_local_stls(app: &tauri::AppHandle) {
         .unwrap_or(std::time::UNIX_EPOCH);
     for entry in entries.flatten() {
         let path = entry.path();
-        let is_local_stl = path
+        let is_local_model = path
             .file_name()
             .and_then(|value| value.to_str())
-            .is_some_and(|name| name.starts_with("volum-local-") && name.ends_with(".stl"));
+            .is_some_and(|name| {
+                name.starts_with("volum-local-") && model_extension(name).is_some()
+            });
         let stale = entry
             .metadata()
             .and_then(|metadata| metadata.modified())
             .is_ok_and(|modified| modified < stale_before);
-        if is_local_stl && stale {
+        if is_local_model && stale {
             let _ = std::fs::remove_file(path);
         }
     }
@@ -1377,7 +1524,7 @@ pub fn run() {
                 .join("stronghold.salt");
             app.handle()
                 .plugin(tauri_plugin_stronghold::Builder::with_argon2(&salt_path).build())?;
-            cleanup_local_stls(app.handle());
+            cleanup_local_models(app.handle());
             Ok(())
         });
     #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -1428,7 +1575,7 @@ pub fn run() {
                 }
             }
             if queued {
-                let _ = app.emit("volum://opened-stl", ());
+                let _ = app.emit("volum://opened-model", ());
             }
         }
     });
@@ -1503,6 +1650,53 @@ mod tests {
         );
         assert!(validate_upload_filename("../part.stl").is_err());
         assert!(validate_upload_filename("part.zip").is_err());
+    }
+
+    #[test]
+    fn recognizes_every_supported_local_model_extension() {
+        for filename in ["part.stl", "part.3MF", "part.obj", "part.step", "part.STP"] {
+            assert!(model_extension(filename).is_some(), "{filename}");
+        }
+        assert!(model_extension("part.zip").is_none());
+        assert!(model_extension("part.stl.exe").is_none());
+    }
+
+    #[test]
+    fn resolves_display_names_for_opaque_model_uris() {
+        let opaque = FilePath::Url("content://provider/document/128".parse().unwrap());
+        assert_eq!(
+            local_model_filename(Some("Build plate.3MF"), &opaque).unwrap(),
+            ("Build plate.3MF".into(), "3mf")
+        );
+        assert_eq!(
+            local_model_filename(Some("Shared bracket"), &opaque).unwrap(),
+            ("Shared bracket.stl".into(), "stl")
+        );
+        assert_eq!(
+            local_model_filename(["Unnamed document", "Shared part.step"], &opaque).unwrap(),
+            ("Shared part.step".into(), "step")
+        );
+        let named = FilePath::Url(
+            "content://provider/document/Download%3Agear.obj"
+                .parse()
+                .unwrap(),
+        );
+        assert_eq!(
+            local_model_filename(Some("128"), &named).unwrap(),
+            ("gear.obj".into(), "obj")
+        );
+    }
+
+    #[test]
+    fn recognizes_named_step_data_sections() {
+        assert!(looks_like_step(
+            "iso-10303-21;\nheader;\nendsec;\ndata('parts',('example_schema'));"
+        ));
+        assert!(looks_like_step("iso-10303-21; header; endsec; data;"));
+        assert!(looks_like_step(
+            "iso-10303-21; header; endsec; /* section */ data;"
+        ));
+        assert!(!looks_like_step("iso-10303-21; header; endsec; metadata;"));
     }
 
     #[test]

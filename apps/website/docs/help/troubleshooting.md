@@ -23,7 +23,8 @@ Plain HTTP is accepted only when the address is private or the hostname resolves
 
 ## Desktop Companion Access says it needs attention
 
-- In Automatic mode, confirm Tailscale is installed, signed in, and connected.
+- In the built-in **Tailscale** mode, reopen the browser sign-in link and check whether the device requires approval in the Tailscale admin console.
+- In System Tailscale mode, confirm Tailscale is installed, signed in, and connected.
 - In Custom mode, confirm the listener IP belongs to this computer and is private, and confirm the advertised URL is reachable by clients.
 - Turn Companion Access off and on after the selected network interface becomes available.
 - Check whether another process is already using port `43821`.

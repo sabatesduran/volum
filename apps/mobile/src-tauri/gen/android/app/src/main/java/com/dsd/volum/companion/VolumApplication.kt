@@ -2,6 +2,8 @@ package com.dsd.volum.companion
 
 import android.app.Application
 import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -20,6 +22,20 @@ class VolumApplication : Application() {
     private const val PREFERENCES = "volum-secure-vault"
     private const val CIPHERTEXT = "vault-password"
     private const val IV = "vault-password-iv"
+
+    @Keep
+    @JvmStatic
+    fun modelDisplayName(context: Context, fileUri: String): String? =
+      context.contentResolver.query(
+        Uri.parse(fileUri),
+        arrayOf(OpenableColumns.DISPLAY_NAME),
+        null,
+        null,
+        null,
+      )?.use { cursor ->
+        val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+        if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
+      }
 
     @Keep
     @JvmStatic

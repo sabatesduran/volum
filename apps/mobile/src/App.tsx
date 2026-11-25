@@ -351,11 +351,11 @@ export function App() {
     const selected = await open({
       multiple: false,
       directory: false,
-      title: t("Choose an STL file to preview"),
-      filters: [{ name: t("STL files"), extensions: ["stl"] }],
+      title: t("Choose an STL, 3MF, OBJ, STEP, or STP file"),
+      filters: [{ name: t("3D files"), extensions: ["stl", "3mf", "obj", "step", "stp"] }],
     });
     if (!selected || Array.isArray(selected)) return;
-    await previewSelectedStl(selected, filenameFromFilePath(selected) || "model.stl");
+    await previewSelectedStl(selected, filenameFromFilePath(selected));
   }, [previewSelectedStl]);
   const discardLocalFile = useCallback(() => {
     const current = localFileRef.current;
@@ -392,7 +392,7 @@ export function App() {
         if (active) setStagingLocalFile(false);
       }
     };
-    void listen("volum://opened-stl", () => { void drain(); })
+    void listen("volum://opened-model", () => { void drain(); })
       .then((stop) => {
         if (!active) stop();
         else {
@@ -447,7 +447,7 @@ export function App() {
   };
   let content;
   if (stagingLocalFile && !localFile) {
-    content = <main className="local-stl-opening"><Brand /><LoaderCircle className="spin" /><strong>{t("Opening STL on this device…")}</strong><span>{t("Nothing is being uploaded.")}</span></main>;
+    content = <main className="local-stl-opening"><Brand /><LoaderCircle className="spin" /><strong>{t("Opening 3D file on this device…")}</strong><span>{t("Nothing is being uploaded.")}</span></main>;
   } else if (localFile && pairingForLocalFile) {
     content = <PairingScreen
       onPaired={(next) => { setCredential(next); setVerified(true); setPairingForLocalFile(false); }}
@@ -476,5 +476,5 @@ export function App() {
       ? <CompanionApp credential={credential} initialProjectId={initialProjectId} onInitialProjectOpened={() => setInitialProjectId(undefined)} onCredentialChange={setCredential} onUnpair={() => void unpair()} onPreviewStl={previewSelectedStl} verified={verified} onVerified={handleVerified} onRevoked={handleRevoked} />
       : <PairingScreen onPaired={(next) => { setCredential(next); setVerified(true); }} onDemo={() => { setCredential(demoCredential); setVerified(true); }} />;
   }
-  return <>{content}{incomingError && <div className="sheet-scrim"><section className="mobile-sheet incoming-file-error" role="alertdialog" aria-modal="true"><header><div><span className="eyebrow">{t("OPEN STL")}</span><h2>{t("This file could not be opened")}</h2></div><button className="round-button" aria-label={t("Close")} onClick={() => setIncomingError("")}><X /></button></header><div className="error-banner"><CircleAlert />{incomingError}</div><button className="button button--primary button--large sheet-submit" onClick={() => setIncomingError("")}>{t("Continue")}</button></section></div>}</>;
+  return <>{content}{incomingError && <div className="sheet-scrim"><section className="mobile-sheet incoming-file-error" role="alertdialog" aria-modal="true"><header><div><span className="eyebrow">{t("OPEN 3D FILE")}</span><h2>{t("This file could not be opened")}</h2></div><button className="round-button" aria-label={t("Close")} onClick={() => setIncomingError("")}><X /></button></header><div className="error-banner"><CircleAlert />{incomingError}</div><button className="button button--primary button--large sheet-submit" onClick={() => setIncomingError("")}>{t("Continue")}</button></section></div>}</>;
 }

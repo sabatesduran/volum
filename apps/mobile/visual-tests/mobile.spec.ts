@@ -179,7 +179,7 @@ test("capture mode has an unmistakable selected state", async ({ page }) => {
   await expect(page.getByText("WORKSHOP CAPTURE")).toHaveCount(0);
   await expect(page.locator(".mobile-header .brand")).toHaveCount(0);
   const photo = page.getByRole("tab", { name: "Photo" });
-  const file = page.getByRole("tab", { name: "STL file" });
+  const file = page.getByRole("tab", { name: "3D file" });
   await expect(photo).toHaveAttribute("aria-selected", "true");
   await expect(photo).toHaveClass(/is-active/);
   await file.click();
@@ -190,7 +190,7 @@ test("capture mode has an unmistakable selected state", async ({ page }) => {
   await expect(page).toHaveScreenshot("capture-file-selected.png");
 });
 
-test("local STL preview stays on device until save", async ({ page }) => {
+test("local 3D preview stays on device until save", async ({ page }) => {
   await page.goto("/visual.html?screen=local-stl");
   await expect(page.getByRole("heading", { name: "3DBenchy" })).toBeVisible();
   await expect(page.getByText("60 mm × 31 mm × 48 mm")).toBeVisible();

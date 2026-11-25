@@ -130,7 +130,7 @@ function RaycasterSettings() {
   return null;
 }
 
-function LoadedModel({ credential, assetId, revision, plateIndex, offlinePayload, localPayload, selectedObjectId, isolatedObjectId, hideBuildPlate = false, onObjectSelect, onLoaded, onStatus }: { credential?: Credential; assetId?: string; revision: string; plateIndex?: number; offlinePayload?: ArrayBuffer; localPayload?: ArrayBuffer; selectedObjectId?: number; isolatedObjectId?: number; hideBuildPlate?: boolean; onObjectSelect?: (objectId?: number) => void; onLoaded: (object?: THREE.Object3D) => void; onStatus: (status: "ready" | "error", message?: string) => void }) {
+function LoadedModel({ credential, assetId, revision, plateIndex, offlinePayload, localPayload, selectedObjectId, isolatedObjectId, hideBuildPlate = false, onObjectSelect, onLoaded, onPayload, onStatus }: { credential?: Credential; assetId?: string; revision: string; plateIndex?: number; offlinePayload?: ArrayBuffer; localPayload?: ArrayBuffer; selectedObjectId?: number; isolatedObjectId?: number; hideBuildPlate?: boolean; onObjectSelect?: (objectId?: number) => void; onLoaded: (object?: THREE.Object3D) => void; onPayload?: (payload?: ArrayBuffer) => void; onStatus: (status: "ready" | "error", message?: string) => void }) {
   const [object, setObject] = useState<THREE.Object3D>();
   const invalidate = useThree((state) => state.invalidate);
   useEffect(() => {
@@ -138,11 +138,13 @@ function LoadedModel({ credential, assetId, revision, plateIndex, offlinePayload
     let loaded: THREE.Object3D | undefined;
     setObject(undefined);
     onLoaded(undefined);
+    onPayload?.(undefined);
     void viewerPayload(credential, assetId, revision, plateIndex, offlinePayload, localPayload).then((buffer) => {
       loaded = normalizeObject(parseViewerMesh(buffer, t), hideBuildPlate, t);
       if (!active) return;
       setObject(loaded);
       onLoaded(loaded);
+      onPayload?.(buffer);
       onStatus("ready");
     }).catch((error: unknown) => {
       if (active) onStatus("error", error instanceof Error ? error.message : String(error));
@@ -150,9 +152,10 @@ function LoadedModel({ credential, assetId, revision, plateIndex, offlinePayload
     return () => {
       active = false;
       onLoaded(undefined);
+      onPayload?.(undefined);
       if (loaded) disposeViewerObject(loaded);
     };
-  }, [assetId, credential, hideBuildPlate, localPayload, offlinePayload, onLoaded, onStatus, plateIndex, revision]);
+  }, [assetId, credential, hideBuildPlate, localPayload, offlinePayload, onLoaded, onPayload, onStatus, plateIndex, revision]);
   useEffect(() => {
     if (!object) return;
     object.traverse((child) => {
@@ -180,7 +183,7 @@ function LoadedModel({ credential, assetId, revision, plateIndex, offlinePayload
   return object ? <primitive object={object} onClick={selectObject} /> : null;
 }
 
-export function MobileModelViewer({ credential, assetId, revision = "local", plateIndex, offlinePayload, localPayload, resetSignal, selectedObjectId, isolatedObjectId, focusObjectId, focusSignal = 0, capture = false, modelOrientation = [0, 0, 0, 1], interactionEnabled = true, fitToFrame = false, hideBuildPlate = false, onObjectSelect, onObjects, onStatus }: { credential?: Credential; assetId?: string; revision?: string; plateIndex?: number; offlinePayload?: ArrayBuffer; localPayload?: ArrayBuffer; resetSignal: number; selectedObjectId?: number; isolatedObjectId?: number; focusObjectId?: number; focusSignal?: number; capture?: boolean; modelOrientation?: [number, number, number, number]; interactionEnabled?: boolean; fitToFrame?: boolean; hideBuildPlate?: boolean; onObjectSelect?: (objectId?: number) => void; onObjects?: (objects: ViewerObject[]) => void; onStatus: (status: "ready" | "error", message?: string) => void }) {
+export function MobileModelViewer({ credential, assetId, revision = "local", plateIndex, offlinePayload, localPayload, resetSignal, selectedObjectId, isolatedObjectId, focusObjectId, focusSignal = 0, capture = false, modelOrientation = [0, 0, 0, 1], interactionEnabled = true, fitToFrame = false, hideBuildPlate = false, onObjectSelect, onObjects, onPayload, onStatus }: { credential?: Credential; assetId?: string; revision?: string; plateIndex?: number; offlinePayload?: ArrayBuffer; localPayload?: ArrayBuffer; resetSignal: number; selectedObjectId?: number; isolatedObjectId?: number; focusObjectId?: number; focusSignal?: number; capture?: boolean; modelOrientation?: [number, number, number, number]; interactionEnabled?: boolean; fitToFrame?: boolean; hideBuildPlate?: boolean; onObjectSelect?: (objectId?: number) => void; onObjects?: (objects: ViewerObject[]) => void; onPayload?: (payload?: ArrayBuffer) => void; onStatus: (status: "ready" | "error", message?: string) => void }) {
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [message, setMessage] = useState("");
   const [loadedObject, setLoadedObject] = useState<THREE.Object3D>();
@@ -202,7 +205,7 @@ export function MobileModelViewer({ credential, assetId, revision = "local", pla
   }, [loadedObject, onObjects]);
   return <div className="mobile-model-viewer" onContextMenu={(event) => event.preventDefault()}>
     <Canvas flat dpr={capture ? 3 : [1, 1.5]} camera={{ position: [3.2, 2.35, 4.1], fov: 34 }} frameloop="demand" gl={{ antialias: true, alpha: true, preserveDrawingBuffer: capture, powerPreference: "high-performance" }} onPointerMissed={() => { if (!isolatedObjectId) onObjectSelect?.(undefined); }}>
-      <group quaternion={modelOrientation}><LoadedModel credential={credential} assetId={assetId} revision={revision} plateIndex={plateIndex} offlinePayload={offlinePayload} localPayload={localPayload} selectedObjectId={selectedObjectId} isolatedObjectId={isolatedObjectId} hideBuildPlate={hideBuildPlate} onObjectSelect={onObjectSelect} onLoaded={setLoadedObject} onStatus={handleStatus} /></group>
+      <group quaternion={modelOrientation}><LoadedModel credential={credential} assetId={assetId} revision={revision} plateIndex={plateIndex} offlinePayload={offlinePayload} localPayload={localPayload} selectedObjectId={selectedObjectId} isolatedObjectId={isolatedObjectId} hideBuildPlate={hideBuildPlate} onObjectSelect={onObjectSelect} onLoaded={setLoadedObject} onPayload={onPayload} onStatus={handleStatus} /></group>
       <Controls resetSignal={resetSignal} focusBounds={focusBounds} focusSignal={focusSignal} enabled={interactionEnabled} fitObject={loadedObject} fitToFrame={fitToFrame} />
       <RaycasterSettings />
     </Canvas>

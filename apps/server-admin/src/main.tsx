@@ -91,11 +91,12 @@ function LoginScreen({ host, onLogin }: { host: Bootstrap; onLogin: (credential:
   </main>;
 }
 
-function PairingDialog({ pairing, qrUrl, paired, purpose, onCopy, onClose, onRefresh }: {
+function PairingDialog({ pairing, qrUrl, paired, purpose, copyFailed, onCopy, onClose, onRefresh }: {
   pairing: Pairing;
   qrUrl: string;
   paired: boolean;
   purpose: "device" | "migration";
+  copyFailed: boolean;
   onCopy: () => void;
   onClose: () => void;
   onRefresh: () => void;
@@ -112,15 +113,32 @@ function PairingDialog({ pairing, qrUrl, paired, purpose, onCopy, onClose, onRef
   const seconds = String(remaining % 60).padStart(2, "0");
   return <div className="dialog-scrim" role="presentation" onClick={onClose}>
     <section className="pairing-dialog" role="dialog" aria-modal="true" aria-labelledby="pair-title" onClick={(event) => event.stopPropagation()}>
-      <header><div><h2 id="pair-title">{purpose === "migration" ? "Move a Desktop library" : "Pair a device"}</h2><p>{purpose === "migration" ? "Copy this one-time code into Volum Desktop’s Move library to NAS assistant." : "Open Volum on your phone and scan this code."}</p></div><button className="icon-button" aria-label="Close" onClick={onClose}><X /></button></header>
+      <header><div><h2 id="pair-title">{purpose === "migration" ? "Move a Desktop library" : "Pair a device"}</h2><p>{purpose === "migration" ? "Copy this one-time code into Volum Desktop’s Move library to NAS assistant." : "Scan this code in Volum on your phone, or copy the pairing data into Volum Desktop."}</p></div><button className="icon-button" aria-label="Close" onClick={onClose}><X /></button></header>
       {paired ? <div className="pairing-result"><span><Check /></span><h3>Device connected</h3><p>The one-time code has been consumed.</p></div> : expired ? <div className="pairing-result is-expired"><span><Clock3 /></span><h3>Code expired</h3><p>Create another one-time code to continue.</p><button className="primary-button" onClick={onRefresh}><RefreshCw />Create new code</button></div> : <>
         {purpose === "device" && <div className="qr-stage">{qrUrl ? <img src={qrUrl} alt="Volum pairing QR code" /> : <LoaderCircle className="spin" />}</div>}
         <div className="pairing-meta"><span><Clock3 />Expires in {minutes}:{seconds}</span><span><ShieldCheck />Works once</span></div>
         <button className="secondary-button" onClick={onCopy}><Copy />Copy pairing data</button>
+        {copyFailed && <div className="pairing-fallback"><p role="alert">This browser blocked automatic copying. Select the pairing data below and copy it manually.</p><textarea aria-label="Pairing data" readOnly rows={4} value={pairing.qrPayload} onFocus={(event) => event.currentTarget.select()} /></div>}
         <p className="pairing-help">{purpose === "migration" ? "The NAS must not contain projects. Volum verifies the complete transfer before this server becomes canonical." : "The phone connects automatically. If that fails, it can review the server address and retry. Keep this code private until it expires."}</p>
       </>}
     </section>
   </div>;
+}
+
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const field = document.createElement("textarea");
+    field.value = text;
+    field.setAttribute("readonly", "");
+    field.style.position = "fixed";
+    field.style.opacity = "0";
+    document.body.append(field);
+    field.select();
+    try { return document.execCommand("copy"); } catch { return false; } finally { field.remove(); }
+  }
 }
 
 function DeviceIcon({ device }: { device: Device }) {
@@ -137,6 +155,7 @@ function DevicesApp({ host, credential, onSignedOut }: { host: Bootstrap; creden
   const [qrUrl, setQrUrl] = useState("");
   const [pairingClientIds, setPairingClientIds] = useState<string[]>([]);
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
 
   const handleUnauthorized = useCallback(async (reason: unknown) => {
     if (reason instanceof WebApiError && reason.status === 401) {
@@ -177,7 +196,7 @@ function DevicesApp({ host, credential, onSignedOut }: { host: Bootstrap; creden
   ));
 
   const beginPairing = async (purpose: "device" | "migration" = "device") => {
-    setBusy("pair"); setError(""); setCopied(false);
+    setBusy("pair"); setError(""); setCopied(false); setCopyFailed(false);
     try {
       const next = await (purpose === "migration" ? createMigrationPairing(credential) : createPairing(credential));
       setPairingPurpose(purpose);
@@ -208,8 +227,9 @@ function DevicesApp({ host, credential, onSignedOut }: { host: Bootstrap; creden
   };
   const copyPairing = async () => {
     if (!pairing) return;
-    try { await navigator.clipboard.writeText(pairing.qrPayload); setCopied(true); }
-    catch { setError("The browser could not copy the pairing data."); }
+    setCopyFailed(false);
+    if (await copyText(pairing.qrPayload)) setCopied(true);
+    else setCopyFailed(true);
   };
 
   const clients = useMemo(() => devices.filter((device) => device.role !== "admin"), [devices]);
@@ -232,7 +252,7 @@ function DevicesApp({ host, credential, onSignedOut }: { host: Bootstrap; creden
       </section>
       <footer>Volum protocol {host.protocolVersion} · {host.publicUrl}</footer>
     </main>
-    {pairing && <PairingDialog pairing={pairing} qrUrl={qrUrl} paired={paired} purpose={pairingPurpose} onCopy={() => void copyPairing()} onClose={() => setPairing(undefined)} onRefresh={() => void beginPairing(pairingPurpose)} />}
+    {pairing && <PairingDialog pairing={pairing} qrUrl={qrUrl} paired={paired} purpose={pairingPurpose} copyFailed={copyFailed} onCopy={() => void copyPairing()} onClose={() => setPairing(undefined)} onRefresh={() => void beginPairing(pairingPurpose)} />}
     {copied && <div className="toast" role="status"><Check />Pairing data copied</div>}
   </div>;
 }

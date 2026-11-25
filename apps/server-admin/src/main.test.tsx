@@ -126,6 +126,25 @@ describe("server administrator", () => {
     expect((await screen.findByRole("status")).textContent).toContain("Pairing data copied");
   });
 
+  it("shows selectable pairing data when the browser blocks copying", async () => {
+    mocks.loadCredential.mockResolvedValue(credential);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn().mockRejectedValue(new Error("insecure context")) },
+    });
+    Object.defineProperty(document, "execCommand", { configurable: true, value: vi.fn().mockReturnValue(false) });
+    render(<App />);
+    await screen.findByText("Workshop phone");
+
+    fireEvent.click(screen.getByRole("button", { name: "Pair device" }));
+    await screen.findByRole("dialog", { name: "Pair a device" });
+    fireEvent.click(screen.getByRole("button", { name: "Copy pairing data" }));
+
+    const field = await screen.findByRole("textbox", { name: "Pairing data" });
+    expect((field as HTMLTextAreaElement).value).toBe("pairing-payload");
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
   it("revokes a paired device after confirmation and refreshes the list", async () => {
     mocks.loadCredential.mockResolvedValue(credential);
     render(<App />);

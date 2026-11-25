@@ -498,11 +498,6 @@ fn local_model_filename<'a>(
     suggested: impl IntoIterator<Item = &'a str>,
     path: &FilePath,
 ) -> Result<(String, &'static str), String> {
-    fn supported_basename(candidate: &str) -> Option<(String, &'static str)> {
-        let basename = candidate.rsplit(['/', '\\', ':']).next()?.trim();
-        model_extension(basename).map(|extension| (basename.to_owned(), extension))
-    }
-
     let path_filename = match path {
         FilePath::Path(path) => path
             .file_name()
@@ -513,11 +508,35 @@ fn local_model_filename<'a>(
             .and_then(Iterator::last)
             .and_then(percent_decode_filename),
     };
-    suggested
+    let mut extensionless = None;
+    let mut has_basename = false;
+    for candidate in suggested
         .into_iter()
-        .find_map(supported_basename)
-        .or_else(|| path_filename.as_deref().and_then(supported_basename))
-        .ok_or_else(|| "Choose an STL, 3MF, OBJ, STEP, or STP file".into())
+        .map(str::to_owned)
+        .chain(path_filename)
+    {
+        let basename = candidate
+            .rsplit(['/', '\\', ':'])
+            .next()
+            .unwrap_or_default()
+            .trim();
+        if basename.is_empty() {
+            continue;
+        }
+        has_basename = true;
+        if let Some(extension) = model_extension(basename) {
+            return Ok((basename.to_owned(), extension));
+        }
+        let stem = basename.trim_end_matches('.');
+        if !stem.is_empty() && !stem.contains('.') && extensionless.is_none() {
+            extensionless = Some(stem.to_owned());
+        }
+    }
+    if !has_basename || extensionless.is_some() {
+        let stem = extensionless.as_deref().unwrap_or("Shared model");
+        return Ok((format!("{stem}.stl"), "stl"));
+    }
+    Err("Choose an STL, 3MF, OBJ, STEP, or STP file".into())
 }
 
 fn model_extension(filename: &str) -> Option<&'static str> {
@@ -1640,7 +1659,10 @@ mod tests {
             local_model_filename(Some("Build plate.3MF"), &opaque).unwrap(),
             ("Build plate.3MF".into(), "3mf")
         );
-        assert!(local_model_filename(None, &opaque).is_err());
+        assert_eq!(
+            local_model_filename(Some("Shared bracket"), &opaque).unwrap(),
+            ("Shared bracket.stl".into(), "stl")
+        );
         assert_eq!(
             local_model_filename(["Unnamed document", "Shared part.step"], &opaque).unwrap(),
             ("Shared part.step".into(), "step")

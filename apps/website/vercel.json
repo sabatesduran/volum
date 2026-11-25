@@ -6,6 +6,11 @@
   "trailingSlash": false,
   "redirects": [
     {
+      "source": "/changelog",
+      "destination": "/docs/changelog",
+      "permanent": false
+    },
+    {
       "source": "/:path*",
       "has": [
         {

@@ -5,7 +5,10 @@ pub use jiff::{SignedDuration, Timestamp};
 /// Formats a UTC timestamp as RFC 3339 with a `+00:00` offset and 0, 3, 6 or 9
 /// fractional digits, matching the strings Volum has always stored.
 pub fn rfc3339(value: Timestamp) -> String {
-    let nanos = value.subsec_nanosecond().unsigned_abs();
+    let nanos = value
+        .subsec_nanosecond()
+        .rem_euclid(1_000_000_000)
+        .unsigned_abs();
     let fraction = if nanos == 0 {
         String::new()
     } else if nanos.is_multiple_of(1_000_000) {
@@ -58,6 +61,10 @@ mod tests {
         assert_eq!(
             at("2026-09-21T14:00:01.123456789+02:00"),
             "2026-09-21T12:00:01.123456789+00:00"
+        );
+        assert_eq!(
+            at("1969-12-31T23:59:59.750Z"),
+            "1969-12-31T23:59:59.750+00:00"
         );
         assert_eq!(
             compact(parse_rfc3339("2026-09-21T12:00:01.9Z").unwrap()),

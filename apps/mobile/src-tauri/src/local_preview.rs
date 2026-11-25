@@ -691,6 +691,7 @@ fn parse_3mf(bytes: &[u8]) -> Result<Mesh, String> {
     }
     let root = parts
         .get(&root_path)
+        .or_else(|| super::percent_decode_filename(&root_path).and_then(|path| parts.get(&path)))
         .ok_or_else(|| "3MF root model is missing".to_string())?;
     let instances = if root.build.is_empty() {
         root.objects
@@ -737,7 +738,11 @@ fn three_mf_start_part(source: impl Read) -> Result<Option<String>, String> {
                     return Err("3MF has an invalid StartPart relationship".into());
                 }
                 let path = xml_attr(&event, "Target")
-                    .and_then(|path| super::percent_decode_filename(path.trim_start_matches('/')))
+                    .and_then(|path| {
+                        quick_xml::escape::unescape(&path)
+                            .ok()
+                            .map(|path| path.trim_start_matches('/').to_owned())
+                    })
                     .filter(|path| !path.is_empty())
                     .ok_or_else(|| "3MF StartPart has no model path".to_string())?;
                 target = Some(path);

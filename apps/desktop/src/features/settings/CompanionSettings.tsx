@@ -91,6 +91,7 @@ export function CompanionSettings() {
   const [bindAddress, setBindAddress] = useState("");
   const [publicUrl, setPublicUrl] = useState("");
   const [tailnetHostname, setTailnetHostname] = useState("volum");
+  const [tailnetAuthKey, setTailnetAuthKey] = useState("");
   const { data: status, isLoading } = useQuery({
     queryKey: ["companion-status"],
     queryFn: api.companionStatus,
@@ -114,28 +115,35 @@ export function CompanionSettings() {
     onSuccess: (next) => { queryClient.setQueryData(["companion-status"], next); setError(""); },
     onError: (reason) => setError(reason instanceof Error ? reason.message : String(reason))
   });
+  const savedNetworkMode = status?.networkMode;
+  const savedBindAddress = status?.bindAddress;
+  const savedPublicUrl = status?.publicUrl;
+  const savedTailnetHostname = status?.tailnetHostname;
   useEffect(() => {
-    if (!status) return;
-    setNetworkMode(status.networkMode ?? "embedded-tailscale");
-    setBindAddress(status.bindAddress ?? "");
-    setPublicUrl(status.publicUrl ?? status.baseUrl ?? "");
-    setTailnetHostname(status.tailnetHostname || "volum");
-  }, [status]);
+    if (!savedNetworkMode) return;
+    setNetworkMode(savedNetworkMode);
+    setBindAddress(savedBindAddress ?? "");
+    setPublicUrl(savedPublicUrl ?? "");
+    setTailnetHostname(savedTailnetHostname || "volum");
+  }, [savedNetworkMode, savedBindAddress, savedPublicUrl, savedTailnetHostname]);
+  const openTailnetSignIn = (url: string) => {
+    void api.openExternal(url).catch(() => setError(t("Could not open the browser. Try opening Tailscale sign-in again.")));
+  };
   const networkMutation = useMutation({
     mutationFn: () => api.setCompanionNetwork(networkMode, networkMode === "custom" ? bindAddress : undefined, networkMode === "custom" ? publicUrl : undefined, networkMode === "embedded-tailscale" ? tailnetHostname : undefined),
     onSuccess: (next) => {
       queryClient.setQueryData(["companion-status"], next);
       setError(next.lastError ?? "");
-      if (next.tailnetAuthUrl) void api.openExternal(next.tailnetAuthUrl);
     },
     onError: (reason) => setError(reason instanceof Error ? reason.message : String(reason))
   });
   const tailnetSignIn = useMutation({
-    mutationFn: () => api.beginCompanionTailnetSignIn(tailnetHostname),
+    gcTime: 0,
+    mutationFn: ({ hostname, authKey }: { hostname: string; authKey?: string }) => api.beginCompanionTailnetSignIn(hostname, authKey),
     onSuccess: (next) => {
       queryClient.setQueryData(["companion-status"], next);
       setError(next.lastError ?? "");
-      if (next.tailnetAuthUrl) void api.openExternal(next.tailnetAuthUrl);
+      if (next.tailnetAuthUrl) openTailnetSignIn(next.tailnetAuthUrl);
     },
     onError: (reason) => setError(reason instanceof Error ? reason.message : String(reason))
   });
@@ -144,6 +152,8 @@ export function CompanionSettings() {
     onSuccess: (next) => { queryClient.setQueryData(["companion-status"], next); setError(""); },
     onError: (reason) => setError(reason instanceof Error ? reason.message : String(reason))
   });
+  const networkBusy = toggle.isPending || networkMutation.isPending || tailnetSignIn.isPending || tailnetSignOut.isPending;
+  const canStartTailnet = status?.tailnetAvailable && (!status.enabled || status.networkMode !== "embedded-tailscale" || status.tailnetState === "signed-out" || status.tailnetState === "stopped" || status.tailnetState === "error");
   const runningLabel = useMemo(() => {
     if (isLoading) return t("Checking…");
     if (status?.running) return t("Available on your selected network");
@@ -172,9 +182,9 @@ export function CompanionSettings() {
           className={`settings-switch ${status?.enabled ? "is-on" : ""}`}
           role="switch"
           aria-checked={Boolean(status?.enabled)}
-          disabled={isLoading || toggle.isPending || tailnetSignIn.isPending}
+          disabled={isLoading || networkBusy}
           onClick={() => {
-            if (!status?.enabled && status?.networkMode === "embedded-tailscale") tailnetSignIn.mutate();
+            if (!status?.enabled && status?.networkMode === "embedded-tailscale") tailnetSignIn.mutate({ hostname: status.tailnetHostname });
             else toggle.mutate(!status?.enabled);
           }}
         ><span /></button>
@@ -187,18 +197,26 @@ export function CompanionSettings() {
       <div className="companion-network">
         <div className="settings-subheading"><h3>{t("Connection network")}</h3><p>{t("Give Volum its own Tailscale address, use the system Tailscale app, or configure another private route.")}</p></div>
         <div className="companion-network__modes" role="radiogroup" aria-label={t("Connection network")}>
-          <button disabled={status ? !status.tailnetAvailable : false} className={networkMode === "embedded-tailscale" ? "is-active" : ""} role="radio" aria-checked={networkMode === "embedded-tailscale"} onClick={() => setNetworkMode("embedded-tailscale")}><ShieldCheck size={16} /><span><strong>{t("Volum Tailscale")}</strong><small>{t("Built in")}</small></span></button>
-          <button className={networkMode === "system-tailscale" ? "is-active" : ""} role="radio" aria-checked={networkMode === "system-tailscale"} onClick={() => setNetworkMode("system-tailscale")}><Wifi size={16} /><span><strong>{t("System Tailscale")}</strong><small>{t("Detect installed app")}</small></span></button>
-          <button className={networkMode === "custom" ? "is-active" : ""} role="radio" aria-checked={networkMode === "custom"} onClick={() => setNetworkMode("custom")}><Globe2 size={16} /><span><strong>{t("Custom")}</strong><small>{t("LAN, VPN, or HTTPS")}</small></span></button>
+          <button disabled={networkBusy || !status?.tailnetAvailable} className={networkMode === "embedded-tailscale" ? "is-active" : ""} role="radio" aria-checked={networkMode === "embedded-tailscale"} onClick={() => setNetworkMode("embedded-tailscale")}><ShieldCheck size={16} /><span><strong>{t("Volum Tailscale")}</strong><small>{t("Built in")}</small></span></button>
+          <button disabled={networkBusy} className={networkMode === "system-tailscale" ? "is-active" : ""} role="radio" aria-checked={networkMode === "system-tailscale"} onClick={() => { setNetworkMode("system-tailscale"); setTailnetAuthKey(""); }}><Wifi size={16} /><span><strong>{t("System Tailscale")}</strong><small>{t("Detect installed app")}</small></span></button>
+          <button disabled={networkBusy} className={networkMode === "custom" ? "is-active" : ""} role="radio" aria-checked={networkMode === "custom"} onClick={() => { setNetworkMode("custom"); setTailnetAuthKey(""); }}><Globe2 size={16} /><span><strong>{t("Custom")}</strong><small>{t("LAN, VPN, or HTTPS")}</small></span></button>
         </div>
         {networkMode === "embedded-tailscale" && <div className="companion-network__fields">
           <label><span>{t("Preferred Tailscale hostname")}</span><input value={tailnetHostname} onChange={(event) => setTailnetHostname(event.target.value.toLowerCase())} placeholder="volum" autoCapitalize="off" autoCorrect="off" /></label>
           {!status?.tailnetAvailable && <p>{t("Embedded Tailscale is not available in this build. Use System Tailscale or Custom instead.")}</p>}
           {status?.tailnetAvailable && <>
             <p><ShieldCheck size={14} />{t("Volum joins your tailnet as its own private device. Tailscale encrypts the connection.")}</p>
-            {status.networkMode === "embedded-tailscale" && status.tailnetState === "needs-login" && status.tailnetAuthUrl && <button className="button button--primary" onClick={() => void api.openExternal(status.tailnetAuthUrl!)}><Globe2 size={15} />{t("Open Tailscale sign-in")}</button>}
-            {status.networkMode === "embedded-tailscale" && status.tailnetState === "connected" && <button className="button button--quiet" disabled={tailnetSignOut.isPending} onClick={() => { if (window.confirm(t("Sign Volum out of Tailscale? Paired devices will lose this route."))) tailnetSignOut.mutate(); }}><WifiOff size={15} />{t("Sign out of Tailscale")}</button>}
-            {(!status.enabled || status.networkMode !== "embedded-tailscale" || status.tailnetState === "signed-out" || status.tailnetState === "stopped" || status.tailnetState === "error") && <button className="button button--primary" disabled={tailnetSignIn.isPending || !tailnetHostname.trim()} onClick={() => tailnetSignIn.mutate()}>{tailnetSignIn.isPending ? <LoaderCircle className="spin" /> : <Globe2 size={15} />}{t("Sign in to Tailscale")}</button>}
+            {status.networkMode === "embedded-tailscale" && status.tailnetState === "needs-login" && status.tailnetAuthUrl && <button className="button button--primary" disabled={networkBusy} onClick={() => openTailnetSignIn(status.tailnetAuthUrl!)}><Globe2 size={15} />{t("Open Tailscale sign-in")}</button>}
+            {status.networkMode === "embedded-tailscale" && status.tailnetState === "connected" && <button className="button button--quiet" disabled={networkBusy} onClick={() => { if (window.confirm(t("Sign Volum out of Tailscale? Paired devices will lose this route."))) tailnetSignOut.mutate(); }}><WifiOff size={15} />{t("Sign out of Tailscale")}</button>}
+            {canStartTailnet && <button className="button button--primary" disabled={networkBusy || !tailnetHostname.trim()} onClick={() => { setTailnetAuthKey(""); tailnetSignIn.mutate({ hostname: tailnetHostname }); }}><Globe2 size={15} />{t("Sign in to Tailscale")}</button>}
+            {(canStartTailnet || status.tailnetState === "needs-login") && <>
+              <label><span>{t("Tailscale auth key")}</span><input type="password" value={tailnetAuthKey} disabled={networkBusy} onChange={(event) => setTailnetAuthKey(event.target.value)} autoComplete="off" /></label>
+              <button className="button button--quiet" disabled={networkBusy || !tailnetHostname.trim() || !tailnetAuthKey.trim()} onClick={() => {
+                const authKey = tailnetAuthKey;
+                setTailnetAuthKey("");
+                tailnetSignIn.mutate({ hostname: tailnetHostname, authKey }, { onSettled: () => tailnetSignIn.reset() });
+              }}>{t("Connect using auth key")}</button>
+            </>}
           </>}
         </div>}
         {networkMode === "system-tailscale" && <div className="companion-network__fields">
@@ -209,7 +227,7 @@ export function CompanionSettings() {
           <label><span>{t("Address clients will use")}</span><input value={publicUrl} onChange={(event) => setPublicUrl(event.target.value)} placeholder="https://volum.example.com" autoCapitalize="off" autoCorrect="off" /></label>
           <p><ShieldCheck size={14} />{publicUrl.trim().startsWith("https://") ? t("HTTPS protects this connection.") : t("Private HTTP relies on your network or VPN for encryption. Public HTTP is blocked.")}</p>
         </div>}
-        <button className="button button--quiet" disabled={networkMutation.isPending || (networkMode === "embedded-tailscale" && (!status?.tailnetAvailable || !tailnetHostname.trim())) || (networkMode === "custom" && (!bindAddress.trim() || !publicUrl.trim()))} onClick={() => networkMutation.mutate()}>{networkMutation.isPending ? <LoaderCircle className="spin" /> : <Check size={15} />}{t("Save network settings")}</button>
+        <button className="button button--quiet" disabled={networkBusy || (networkMode === "embedded-tailscale" && (!status?.tailnetAvailable || !tailnetHostname.trim())) || (networkMode === "custom" && (!bindAddress.trim() || !publicUrl.trim()))} onClick={() => networkMutation.mutate()}>{networkMutation.isPending ? <LoaderCircle className="spin" /> : <Check size={15} />}{t("Save network settings")}</button>
       </div>
       {status?.enabled && <div className="companion-permission">
         <span className="companion-permission__icon"><PencilLine size={17} /></span>

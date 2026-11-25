@@ -26,7 +26,9 @@ Any trusted HTTPS origin is accepted. Plain HTTP is accepted only for loopback, 
 2. Open **Settings → Mobile access**.
 3. Select **Volum Tailscale**, choose a preferred hostname, and select **Sign in to Tailscale**.
 4. Authorize Volum in the browser. Volum creates a persistent, non-ephemeral node identity and listens only inside the tailnet.
-5. Use the assigned MagicDNS address shown by Volum. The assigned hostname may include a collision suffix.
+5. Pair your client using the URL shown by Volum. When typing it manually, include `http://` so the client uses the embedded listener's port rather than the legacy Companion port. The assigned hostname may include a collision suffix.
+
+To join without browser sign-in, create a Tailscale **auth key** in the Tailscale admin console, enter it under **Volum Tailscale**, and choose **Connect using auth key**. Volum saves the resulting node identity, not the auth key.
 
 The embedded Rust Tailscale runtime is experimental and available only on supported Desktop targets. Its application URL is HTTP, but traffic remains encrypted by Tailscale. Existing QR codes with the `tailscale-http` transport remain compatible.
 

@@ -267,15 +267,16 @@ export function normalizeServerUrl(value: string): string {
   let url: URL;
   const hasScheme = /^https?:\/\//i.test(input);
   const rawIpv6 = !hasScheme && !input.startsWith("[") && (input.match(/:/g)?.length ?? 0) > 1;
-  const bracketedIpv6 = !hasScheme && /^\[[0-9a-f:]+\](?::\d+)?$/i.test(input);
+  const bracketedIpv6 = !hasScheme && /^\[[0-9a-f:]+\](?::\d+)?\/?$/i.test(input);
   const privateIpv4 = /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/.test(input);
-  const localName = /(?:\.local|\.ts\.net)$/i.test(input);
+  const localName = /(?:\.local|\.ts\.net)(?::\d+)?\/?$/i.test(input);
   try { url = new URL(hasScheme ? input : rawIpv6 ? `http://[${input}]` : bracketedIpv6 || privateIpv4 || localName ? `http://${input}` : `https://${input}`); }
   catch { throw new CompanionError("That server address is not valid."); }
   if (url.username || url.password || url.search || url.hash || (url.pathname && url.pathname !== "/")) {
     throw new CompanionError("Enter only the Volum server origin, without a path, query, or credentials.");
   }
-  if (!hasScheme && !url.port && url.protocol === "http:") url.port = "43821";
+  const hasPort = !rawIpv6 && /:\d+\/?$/.test(input);
+  if (!hasScheme && !hasPort && url.protocol === "http:") url.port = "43821";
   return url.origin;
 }
 

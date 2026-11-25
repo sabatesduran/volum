@@ -18,7 +18,7 @@ The devices and Volum host must belong to a tailnet allowed by your Tailscale AC
 1. Open **Settings** on the canonical Desktop.
 2. Open **Mobile access**. The page heading is **Companion Access**.
 3. Keep **Volum Tailscale**, choose a preferred hostname, and select **Sign in to Tailscale**.
-4. Authorize the new Volum device in the browser. If your tailnet requires device approval, approve it in the Tailscale admin console.
+4. Authorize the new Volum device in the browser. For manual setup instead, enter a Tailscale auth key and select **Connect using auth key** in step 3. If your tailnet requires device approval, approve the new device in the Tailscale admin console.
 5. Return to Volum and wait for **Available on your selected network**. Volum displays the assigned address, such as `http://volum.example-tailnet.ts.net`.
 6. Alternatively, choose **System Tailscale** to use the separately installed Tailscale app, or choose **Custom** and enter the private listener IP plus the URL clients will use.
 

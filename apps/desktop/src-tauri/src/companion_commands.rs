@@ -48,9 +48,10 @@ pub async fn set_companion_network(
 #[tauri::command]
 pub async fn begin_companion_tailnet_sign_in(
     hostname: Option<String>,
+    auth_key: Option<String>,
     controller: State<'_, CompanionController>,
 ) -> Result<CompanionStatus, String> {
-    controller.begin_tailnet_sign_in(hostname).await
+    controller.begin_tailnet_sign_in(hostname, auth_key).await
 }
 
 #[tauri::command]

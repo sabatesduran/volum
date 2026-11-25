@@ -934,6 +934,10 @@ impl CompanionController {
     }
 
     async fn start(&self) -> CompanionResult<()> {
+        self.start_with_auth_key(None).await
+    }
+
+    async fn start_with_auth_key(&self, auth_key: Option<String>) -> CompanionResult<()> {
         let _start_guard = self.start_lock.lock().await;
         let stale_server = {
             let mut inner = self.inner.lock().await;
@@ -948,7 +952,7 @@ impl CompanionController {
         }
         let config = self.inner.lock().await.config.clone();
         if config.network_mode == "embedded-tailscale" {
-            return match self.start_embedded_tailnet(config).await {
+            return match self.start_embedded_tailnet(config, auth_key).await {
                 Ok(()) => Ok(()),
                 Err(error) => self.fail_start(error).await,
             };
@@ -1069,7 +1073,11 @@ impl CompanionController {
             all(target_os = "windows", target_arch = "x86_64")
         )
     ))]
-    async fn start_embedded_tailnet(&self, config: CompanionConfig) -> CompanionResult<()> {
+    async fn start_embedded_tailnet(
+        &self,
+        config: CompanionConfig,
+        auth_key: Option<String>,
+    ) -> CompanionResult<()> {
         use tailscale::{AuthState, Config, Device};
 
         let state_path = self.inner.lock().await.tailnet_state_path.clone();
@@ -1088,23 +1096,46 @@ impl CompanionController {
             inner.last_error = None;
         }
 
+        let using_auth_key = auth_key.is_some();
         let device = tokio::time::timeout(
             Duration::from_secs(TAILNET_START_TIMEOUT_SECONDS),
-            Device::new(&tailnet_config, None),
+            Device::new(&tailnet_config, auth_key),
         )
         .await
         .map_err(|_| "Tailscale did not respond while starting the Volum node".to_string())?
-        .map_err(|error| format!("Could not start the Volum Tailscale node: {error}"))?;
+        .map_err(|_| "Could not start the Volum Tailscale node".to_string())?;
         let auth = tokio::time::timeout(
             Duration::from_secs(TAILNET_START_TIMEOUT_SECONDS),
             device.is_authorized(),
         )
-        .await
-        .map_err(|_| "Tailscale did not respond while checking sign-in".to_string())?
-        .map_err(|error| format!("Could not check Tailscale sign-in: {error}"))?;
+        .await;
+        let auth = match auth {
+            Ok(Ok(AuthState::NotAuthorized(_))) | Ok(Err(_)) if using_auth_key => {
+                let _ = device.shutdown(Some(Duration::from_secs(2))).await;
+                return Err(
+                    "Could not connect using the Tailscale auth key. Check the key and try again."
+                        .into(),
+                );
+            }
+            Ok(Ok(state)) => state,
+            Ok(Err(error)) => {
+                let _ = device.shutdown(Some(Duration::from_secs(2))).await;
+                return Err(format!("Could not check Tailscale sign-in: {error}"));
+            }
+            Err(_) => {
+                let _ = device.shutdown(Some(Duration::from_secs(2))).await;
+                return Err("Tailscale did not respond while checking sign-in".into());
+            }
+        };
         let authorized = matches!(auth, AuthState::Authorized);
         if let AuthState::NotAuthorized(url) = auth {
-            let auth_url = validate_tailnet_auth_url(url.as_str())?;
+            let auth_url = match validate_tailnet_auth_url(url.as_str()) {
+                Ok(url) => url,
+                Err(error) => {
+                    let _ = device.shutdown(Some(Duration::from_secs(2))).await;
+                    return Err(error);
+                }
+            };
             let mut inner = self.inner.lock().await;
             inner.tailnet_state = "needs-login".into();
             inner.tailnet_auth_url = Some(auth_url);
@@ -1131,12 +1162,13 @@ impl CompanionController {
                             _ = shutdown.cancelled() => return Ok(()),
                             _ = tokio::time::sleep(Duration::from_secs(2)) => {}
                         }
-                        let next = match tokio::time::timeout(
-                            Duration::from_secs(TAILNET_START_TIMEOUT_SECONDS),
-                            device.is_authorized(),
-                        )
-                        .await
-                        {
+                        let next = match tokio::select! {
+                            _ = shutdown.cancelled() => return Ok(()),
+                            next = tokio::time::timeout(
+                                Duration::from_secs(TAILNET_START_TIMEOUT_SECONDS),
+                                device.is_authorized(),
+                            ) => next,
+                        } {
                             Ok(Ok(value)) => value,
                             Ok(Err(error)) => {
                                 return Err(format!(
@@ -1162,15 +1194,17 @@ impl CompanionController {
                     inner.tailnet_state = "connecting".into();
                     inner.tailnet_auth_url = None;
                 }
-                let ip = device.ipv4_addr().await.map_err(|error| {
-                    format!("Tailscale did not assign Volum an address: {error}")
-                })?;
-                let node = device.self_node().await.map_err(|error| {
-                    format!("Could not read the Volum Tailscale identity: {error}")
-                })?;
-                let dns_name = node
-                    .fqdn_opt(false)
-                    .ok_or_else(|| "Tailscale did not assign Volum a MagicDNS name".to_string())?;
+                let node = tokio::select! {
+                    _ = shutdown.cancelled() => return Ok(()),
+                    node = tokio::time::timeout(
+                        Duration::from_secs(TAILNET_START_TIMEOUT_SECONDS),
+                        device.self_node(),
+                    ) => node,
+                }
+                .map_err(|_| "Tailscale did not assign Volum an address in time".to_string())?
+                .map_err(|error| format!("Could not read the Volum Tailscale identity: {error}"))?;
+                let ip = node.tailnet_address.ipv4.addr();
+                let dns_name = node.fqdn_opt(false);
                 let listener = device
                     .tcp_listen(SocketAddr::new(IpAddr::V4(ip), EMBEDDED_TAILNET_PORT))
                     .await
@@ -1183,8 +1217,11 @@ impl CompanionController {
                         return Ok(());
                     }
                     inner.tailnet_ip = Some(ip.to_string());
-                    inner.dns_name = Some(dns_name.clone());
-                    inner.base_url = Some(format!("http://{dns_name}"));
+                    inner.base_url = Some(format!(
+                        "http://{}",
+                        dns_name.as_deref().unwrap_or(&ip.to_string())
+                    ));
+                    inner.dns_name = dns_name;
                     inner.tailnet_state = "connected".into();
                     inner.last_error = None;
                     inner.headless = false;
@@ -1223,7 +1260,11 @@ impl CompanionController {
             all(target_os = "windows", target_arch = "x86_64")
         )
     )))]
-    async fn start_embedded_tailnet(&self, _config: CompanionConfig) -> CompanionResult<()> {
+    async fn start_embedded_tailnet(
+        &self,
+        _config: CompanionConfig,
+        _auth_key: Option<String>,
+    ) -> CompanionResult<()> {
         Err("Embedded Tailscale is not available on this platform".into())
     }
 
@@ -1469,12 +1510,17 @@ impl CompanionController {
     pub async fn begin_tailnet_sign_in(
         &self,
         hostname: Option<String>,
+        auth_key: Option<String>,
     ) -> CompanionResult<CompanionStatus> {
         if !embedded_tailnet_available() {
             return Err("Embedded Tailscale is not available on this platform".into());
         }
         let hostname =
             validate_tailnet_hostname(hostname.as_deref().unwrap_or(DEFAULT_TAILNET_HOSTNAME))?;
+        let auth_key = auth_key
+            .as_deref()
+            .map(validate_tailnet_auth_key)
+            .transpose()?;
         {
             let mut inner = self.inner.lock().await;
             inner.config.network_mode = "embedded-tailscale".into();
@@ -1488,7 +1534,7 @@ impl CompanionController {
             persist_config(&inner.config_path, &inner.config)?;
         }
         self.stop().await;
-        self.start().await?;
+        self.start_with_auth_key(auth_key).await?;
         Ok(self.status().await)
     }
 
@@ -4640,6 +4686,35 @@ fn validate_tailnet_hostname(value: &str) -> CompanionResult<String> {
     Ok(value)
 }
 
+fn validate_tailnet_auth_key(value: &str) -> CompanionResult<String> {
+    let key = value.trim();
+    match key.strip_prefix("tskey-auth-") {
+        Some(suffix)
+            if !suffix.is_empty()
+                && suffix
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-') =>
+        {
+            Ok(key.to_owned())
+        }
+        _ => Err("Enter a valid Tailscale auth key (tskey-auth-…).".into()),
+    }
+}
+
+#[cfg(any(
+    test,
+    all(
+        feature = "embedded-tailscale",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(
+                target_os = "linux",
+                any(target_arch = "x86_64", target_arch = "aarch64")
+            ),
+            all(target_os = "windows", target_arch = "x86_64")
+        )
+    )
+))]
 fn validate_tailnet_auth_url(value: &str) -> CompanionResult<String> {
     let url = reqwest::Url::parse(value)
         .map_err(|_| "Tailscale returned an invalid sign-in address".to_string())?;
@@ -4977,6 +5052,17 @@ mod tests {
         assert!(validate_tailnet_auth_url("http://login.tailscale.com/a/example").is_err());
         assert!(validate_tailnet_auth_url("https://user@example.com/a/example").is_err());
         assert!(validate_tailnet_auth_url("not a url").is_err());
+    }
+
+    #[test]
+    fn embedded_tailnet_accepts_only_auth_keys() {
+        assert_eq!(
+            validate_tailnet_auth_key(" tskey-auth-example-123 ").unwrap(),
+            "tskey-auth-example-123"
+        );
+        assert!(validate_tailnet_auth_key("tskey-api-example-123").is_err());
+        assert!(validate_tailnet_auth_key("tskey-auth-").is_err());
+        assert!(validate_tailnet_auth_key("tskey-auth-invalid key").is_err());
     }
 
     #[test]

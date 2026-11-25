@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Camera, Check, Copy, Globe2, Laptop, LoaderCircle, PencilLine, QrCode, ShieldCheck, Smartphone, Trash2, Wifi, WifiOff } from "lucide-react";
+import { Camera, Check, ChevronDown, CircleAlert, Copy, ExternalLink, Globe2, KeyRound, Laptop, LoaderCircle, PencilLine, QrCode, Settings2, ShieldCheck, Smartphone, Trash2, Wifi, WifiOff } from "lucide-react";
 import QRCode from "qrcode";
 import { Dialog } from "../../components/Dialog";
 import { ExperimentalBadge } from "../../components/ExperimentalBadge";
@@ -154,14 +154,26 @@ export function CompanionSettings() {
   });
   const networkBusy = toggle.isPending || networkMutation.isPending || tailnetSignIn.isPending || tailnetSignOut.isPending;
   const canStartTailnet = status?.tailnetAvailable && (!status.enabled || status.networkMode !== "embedded-tailscale" || status.tailnetState === "signed-out" || status.tailnetState === "stopped" || status.tailnetState === "error");
-  const runningLabel = useMemo(() => {
-    if (isLoading) return t("Checking…");
-    if (status?.running) return t("Available on your selected network");
-    if (status?.tailnetState === "needs-login") return t("Finish signing in to Tailscale");
-    if (status?.tailnetState === "connecting") return t("Connecting to Tailscale…");
-    if (status?.enabled) return t("Needs attention");
-    return t("Off");
-  }, [isLoading, status?.enabled, status?.running, status?.tailnetState]);
+  const failure = error || status?.lastError;
+  const pendingSignIn = status?.tailnetState === "needs-login";
+  const signInUrl = pendingSignIn ? status?.tailnetAuthUrl : undefined;
+  const connecting = tailnetSignIn.isPending || status?.tailnetState === "connecting";
+  const needsAttention = Boolean(failure || status?.enabled);
+  const connection = isLoading ? {
+    icon: LoaderCircle, tone: "is-connecting", title: t("Checking…"), detail: "",
+  } : connecting ? {
+    icon: LoaderCircle, tone: "is-connecting", title: t("Connecting to Tailscale…"), detail: t("Waiting for Tailscale to assign this Desktop an address."),
+  } : status?.running ? {
+    icon: Wifi, tone: "is-running", title: t("Available on your selected network"),
+    detail: t(status.transport === "https" ? "Protected by HTTPS and a Volum device token." : status.transport === "tailscale-http" ? "Protected by Tailscale and a Volum device token." : "Protected by your private network or VPN and a Volum device token."),
+  } : pendingSignIn ? {
+    icon: ExternalLink, tone: "is-pending", title: t("Finish signing in to Tailscale"), detail: t("Approve this Desktop in your browser, then return here to pair your phone."),
+  } : needsAttention ? {
+    icon: CircleAlert, tone: "is-error", title: t("Needs attention"), detail: failure || t("Check the selected network and try connecting again."),
+  } : {
+    icon: WifiOff, tone: "is-off", title: t("Off"), detail: t("Turn on access while Volum Desktop is running to connect your phone."),
+  };
+  const StatusIcon = connection.icon;
 
   const pairDevice = async () => {
     setError("");
@@ -181,6 +193,7 @@ export function CompanionSettings() {
         <button
           className={`settings-switch ${status?.enabled ? "is-on" : ""}`}
           role="switch"
+          aria-label={t("Mobile access")}
           aria-checked={Boolean(status?.enabled)}
           disabled={isLoading || networkBusy}
           onClick={() => {
@@ -189,45 +202,55 @@ export function CompanionSettings() {
           }}
         ><span /></button>
       </div>
-      <div className={`companion-status ${status?.running ? "is-running" : ""}`}>
-        <span className="companion-status__icon">{status?.running ? <Wifi size={20} /> : <WifiOff size={20} />}</span>
-        <div><strong>{runningLabel}</strong><small>{status?.running ? t(status.transport === "https" ? "Protected by HTTPS and a Volum device token." : status.transport === "tailscale-http" ? "Protected by Tailscale and a Volum device token." : "Protected by your private network or VPN and a Volum device token.") : t("Turn on access while Volum Desktop is running to connect your phone.")}</small></div>
-        {status?.baseUrl && <code>{status.baseUrl}</code>}
+      <div className={`companion-status ${connection.tone}`}>
+        <span className="companion-status__icon" aria-hidden="true"><StatusIcon size={18} className={connection.tone === "is-connecting" ? "spin" : undefined} /></span>
+        <div role="status"><strong>{connection.title}</strong>{connection.detail && <small>{connection.detail}</small>}{status?.running && status.baseUrl && <code>{status.baseUrl}</code>}</div>
+        {signInUrl && <button className="button button--quiet" disabled={networkBusy} onClick={() => openTailnetSignIn(signInUrl)}><ExternalLink size={14} />{t("Reopen sign-in")}</button>}
       </div>
       <div className="companion-network">
-        <div className="settings-subheading"><h3>{t("Connection network")}</h3><p>{t("Give Volum its own Tailscale address, use the system Tailscale app, or configure another private route.")}</p></div>
+        <div className="companion-network__heading"><h3>{t("Connection network")}</h3><p>{t("Give Volum its own Tailscale address, use the system Tailscale app, or configure another private route.")}</p></div>
         <div className="companion-network__modes" role="radiogroup" aria-label={t("Connection network")}>
           <button disabled={networkBusy || !status?.tailnetAvailable} className={networkMode === "embedded-tailscale" ? "is-active" : ""} role="radio" aria-checked={networkMode === "embedded-tailscale"} onClick={() => setNetworkMode("embedded-tailscale")}><ShieldCheck size={16} /><span><strong>{t("Tailscale")}</strong><small>{t("Built in")}</small></span></button>
           <button disabled={networkBusy} className={networkMode === "system-tailscale" ? "is-active" : ""} role="radio" aria-checked={networkMode === "system-tailscale"} onClick={() => { setNetworkMode("system-tailscale"); setTailnetAuthKey(""); }}><Wifi size={16} /><span><strong>{t("System Tailscale")}</strong><small>{t("Detect installed app")}</small></span></button>
           <button disabled={networkBusy} className={networkMode === "custom" ? "is-active" : ""} role="radio" aria-checked={networkMode === "custom"} onClick={() => { setNetworkMode("custom"); setTailnetAuthKey(""); }}><Globe2 size={16} /><span><strong>{t("Custom")}</strong><small>{t("LAN, VPN, or HTTPS")}</small></span></button>
         </div>
-        {networkMode === "embedded-tailscale" && <div className="companion-network__fields">
-          <label><span>{t("Preferred Tailscale hostname")}</span><input value={tailnetHostname} onChange={(event) => setTailnetHostname(event.target.value.toLowerCase())} placeholder="volum" autoCapitalize="off" autoCorrect="off" /></label>
+        {networkMode === "embedded-tailscale" && <div className="companion-network__panel">
           {!status?.tailnetAvailable && <p>{t("Embedded Tailscale is not available in this build. Use System Tailscale or Custom instead.")}</p>}
           {status?.tailnetAvailable && <>
-            <p><ShieldCheck size={14} />{t("Volum joins your tailnet as its own private device. Tailscale encrypts the connection.")}</p>
-            {status.networkMode === "embedded-tailscale" && status.tailnetState === "needs-login" && status.tailnetAuthUrl && <button className="button button--primary" disabled={networkBusy} onClick={() => openTailnetSignIn(status.tailnetAuthUrl!)}><Globe2 size={15} />{t("Open Tailscale sign-in")}</button>}
-            {status.networkMode === "embedded-tailscale" && status.tailnetState === "connected" && <button className="button button--quiet" disabled={networkBusy} onClick={() => { if (window.confirm(t("Sign Volum out of Tailscale? Paired devices will lose this route."))) tailnetSignOut.mutate(); }}><WifiOff size={15} />{t("Sign out of Tailscale")}</button>}
-            {canStartTailnet && <button className="button button--primary" disabled={networkBusy || !tailnetHostname.trim()} onClick={() => { setTailnetAuthKey(""); tailnetSignIn.mutate({ hostname: tailnetHostname }); }}><Globe2 size={15} />{t("Sign in to Tailscale")}</button>}
-            {(canStartTailnet || status.tailnetState === "needs-login") && <>
-              <label><span>{t("Tailscale auth key")}</span><input type="password" value={tailnetAuthKey} disabled={networkBusy} onChange={(event) => setTailnetAuthKey(event.target.value)} autoComplete="off" /></label>
-              <button className="button button--quiet" disabled={networkBusy || !tailnetHostname.trim() || !tailnetAuthKey.trim()} onClick={() => {
-                const authKey = tailnetAuthKey;
-                setTailnetAuthKey("");
-                tailnetSignIn.mutate({ hostname: tailnetHostname, authKey }, { onSettled: () => tailnetSignIn.reset() });
-              }}>{t("Connect using auth key")}</button>
-            </>}
+            {canStartTailnet && <div className="companion-network__enrollment">
+              <div><span className="companion-network__badge">{t("Recommended")}</span><p>{t("Authorize this Desktop in your browser to connect it to your tailnet.")}</p></div>
+              <button className="button button--primary" disabled={networkBusy || !tailnetHostname.trim()} onClick={() => { setTailnetAuthKey(""); tailnetSignIn.mutate({ hostname: tailnetHostname }); }}><ExternalLink size={15} />{t("Sign in with browser")}</button>
+            </div>}
+            {status.networkMode === "embedded-tailscale" && status.tailnetState === "connected" && <div className="companion-network__enrollment">
+              <p>{t("Volum joins your tailnet as its own private device. Tailscale encrypts the connection.")}</p>
+              <button className="button button--quiet" disabled={networkBusy} onClick={() => { if (window.confirm(t("Sign Volum out of Tailscale? Paired devices will lose this route."))) tailnetSignOut.mutate(); }}><WifiOff size={15} />{t("Sign out of Tailscale")}</button>
+            </div>}
+            {(canStartTailnet || pendingSignIn) && <details className="companion-network__disclosure" onToggle={(event) => { if (!event.currentTarget.open) setTailnetAuthKey(""); }}>
+              <summary><KeyRound size={15} />{t("Use an auth key")}<ChevronDown size={14} /></summary>
+              <div className="companion-network__key">
+                <label><span>{t("Tailscale auth key")}</span><input type="password" value={tailnetAuthKey} disabled={networkBusy} onChange={(event) => setTailnetAuthKey(event.target.value)} autoComplete="off" /></label>
+                <button className="button button--quiet" disabled={networkBusy || !tailnetHostname.trim() || !tailnetAuthKey.trim()} onClick={() => {
+                  const authKey = tailnetAuthKey;
+                  setTailnetAuthKey("");
+                  tailnetSignIn.mutate({ hostname: tailnetHostname, authKey }, { onSettled: () => tailnetSignIn.reset() });
+                }}>{t("Connect using auth key")}</button>
+              </div>
+            </details>}
+            <details className="companion-network__disclosure">
+              <summary><Settings2 size={15} />{t("Advanced settings")}<ChevronDown size={14} /></summary>
+              <label className="companion-network__hostname"><span>{t("Preferred Tailscale hostname")}</span><input value={tailnetHostname} onChange={(event) => setTailnetHostname(event.target.value.toLowerCase())} placeholder="volum" autoCapitalize="off" autoCorrect="off" /></label>
+            </details>
           </>}
         </div>}
-        {networkMode === "system-tailscale" && <div className="companion-network__fields">
-          <p><ShieldCheck size={14} />{t("Use the Tailscale app already installed and signed in on this computer.")}</p>
+        {networkMode === "system-tailscale" && <div className="companion-network__panel">
+          <p className="companion-network__hint"><Wifi size={15} />{t("Use the Tailscale app already installed and signed in on this computer.")}</p>
         </div>}
-        {networkMode === "custom" && <div className="companion-network__fields">
+        {networkMode === "custom" && <div className="companion-network__panel companion-network__fields">
           <label><span>{t("Listen on this private IP")}</span><input value={bindAddress} onChange={(event) => setBindAddress(event.target.value)} placeholder="192.168.1.20" autoCapitalize="off" autoCorrect="off" /></label>
           <label><span>{t("Address clients will use")}</span><input value={publicUrl} onChange={(event) => setPublicUrl(event.target.value)} placeholder="https://volum.example.com" autoCapitalize="off" autoCorrect="off" /></label>
-          <p><ShieldCheck size={14} />{publicUrl.trim().startsWith("https://") ? t("HTTPS protects this connection.") : t("Private HTTP relies on your network or VPN for encryption. Public HTTP is blocked.")}</p>
+          <p className="companion-network__hint"><ShieldCheck size={14} />{publicUrl.trim().startsWith("https://") ? t("HTTPS protects this connection.") : t("Private HTTP relies on your network or VPN for encryption. Public HTTP is blocked.")}</p>
         </div>}
-        <button className="button button--quiet" disabled={networkBusy || (networkMode === "embedded-tailscale" && (!status?.tailnetAvailable || !tailnetHostname.trim())) || (networkMode === "custom" && (!bindAddress.trim() || !publicUrl.trim()))} onClick={() => networkMutation.mutate()}>{networkMutation.isPending ? <LoaderCircle className="spin" /> : <Check size={15} />}{t("Save network settings")}</button>
+        <div className="companion-network__actions"><button className="button button--quiet" disabled={networkBusy || (networkMode === "embedded-tailscale" && (!status?.tailnetAvailable || !tailnetHostname.trim())) || (networkMode === "custom" && (!bindAddress.trim() || !publicUrl.trim()))} onClick={() => networkMutation.mutate()}>{networkMutation.isPending ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}{t("Save network settings")}</button></div>
       </div>
       {status?.enabled && <div className="companion-permission">
         <span className="companion-permission__icon"><PencilLine size={17} /></span>
@@ -251,7 +274,7 @@ export function CompanionSettings() {
           onClick={() => photoToggle.mutate(!status.photoUploads)}
         ><span /></button>
       </div>}
-      {(error || status?.lastError) && <div className="form-error">{error || status?.lastError}</div>}
+      {failure && connection.tone !== "is-error" && <div className="form-error" role="alert">{failure}</div>}
       {status?.enabled && <div className="companion-actions"><button className="button button--primary" disabled={!status.running} onClick={() => void pairDevice()}><QrCode size={16} />{t("Pair a device")}</button><span><ShieldCheck size={14} />{t("No Volum cloud or relay")}</span></div>}
       {status?.devices.length ? <div className="companion-devices">
         <div className="settings-subheading"><h3>{t("Paired devices")}</h3><p>{t("Revoke a device at any time. Access stops on its next request.")}</p></div>

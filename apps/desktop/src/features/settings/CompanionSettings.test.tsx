@@ -25,7 +25,7 @@ const status: CompanionStatus = {
 async function openSettings() {
   const client = new QueryClient();
   render(<QueryClientProvider client={client}><CompanionSettings /></QueryClientProvider>);
-  await screen.findByRole("button", { name: "Sign in to Tailscale" });
+  await screen.findByRole("button", { name: "Sign in with browser" });
   return client;
 }
 
@@ -53,8 +53,11 @@ describe("Companion Tailscale setup", () => {
       ...status, enabled: true, tailnetState: "needs-login", tailnetAuthUrl,
     });
     await openSettings();
-    fireEvent.click(screen.getByRole("button", { name: "Sign in to Tailscale" }));
-    const reopen = await screen.findByRole("button", { name: "Open Tailscale sign-in" });
+    fireEvent.click(screen.getByRole("button", { name: "Sign in with browser" }));
+    const reopen = await screen.findByRole("button", { name: "Reopen sign-in" });
+    const connection = within(screen.getByRole("status"));
+    expect(connection.getByText("Approve this Desktop in your browser, then return here to pair your phone.")).toBeTruthy();
+    expect(connection.queryByText(/Turn on access/)).toBeNull();
     expect(mocks.beginCompanionTailnetSignIn).toHaveBeenCalledWith("volum", undefined);
     expect(mocks.openExternal).toHaveBeenCalledWith(tailnetAuthUrl);
     fireEvent.click(reopen);
@@ -67,6 +70,10 @@ describe("Companion Tailscale setup", () => {
     });
     const key = "tskey-auth-example";
     await openSettings();
+    const disclosure = screen.getByText("Use an auth key").closest("details")!;
+    expect(disclosure.open).toBe(false);
+    fireEvent.click(within(disclosure).getByText("Use an auth key"));
+    expect(disclosure.open).toBe(true);
     const input = screen.getByLabelText("Tailscale auth key") as HTMLInputElement;
     fireEvent.change(input, { target: { value: key } });
     fireEvent.click(screen.getByRole("button", { name: "Connect using auth key" }));

@@ -7184,6 +7184,9 @@ dependencies = [
 name = "volumd"
 version = "0.3.0"
 dependencies = [
+ "reqwest",
+ "serde_json",
+ "tempfile",
  "tokio",
  "tracing-subscriber",
  "volum-server",
